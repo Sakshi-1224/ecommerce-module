@@ -1,6 +1,29 @@
 import Product from "../models/Product.js";
 import Category from "../models/Category.js";
+export const getSingleProduct = async (req, res) => {
+  try {
+    const { id } = req.params;
 
+    const product = await Product.findByPk(id, {
+      include: {
+        model: Category
+      }
+    });
+
+    if (!product) {
+      return res.status(404).json({
+        message: "Product not found"
+      });
+    }
+
+    res.json(product);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      message: "Failed to fetch product"
+    });
+  }
+};
 export const getProducts = async (req, res) => {
   try {
     const { category, sort } = req.query;

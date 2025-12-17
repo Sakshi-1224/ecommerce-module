@@ -103,6 +103,22 @@ app.get("/api/products", async (req, res) => {
 });
 
 
+app.get("/api/products/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const response = await axios.get(
+      `http://localhost:5002/api/products/${id}`
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    console.error("Product Service Error:", err.message);
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Product service error",
+    });
+  }
+});
+
+
 app.post("/api/cart/add", async (req, res) => {
   try {
     const response = await axios.post(

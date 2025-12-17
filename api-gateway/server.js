@@ -86,11 +86,12 @@ app.get("/api/auth/me", async (req, res) => {
   }
 });
 
-// PRODUCT SERVICE - GET PRODUCTS
+// PRODUCT SERVICE - GET PRODUCTS (forward query params)
 app.get("/api/products", async (req, res) => {
   try {
     const response = await axios.get(
-      "http://localhost:5002/api/products"
+      "http://localhost:5002/api/products",
+      { params: req.query }
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -100,6 +101,93 @@ app.get("/api/products", async (req, res) => {
     });
   }
 });
+
+
+
+
+app.post("/api/cart/add", async (req, res) => {
+  try {
+    const response = await axios.post(
+      `${CART_SERVICE_URL}/add`,
+      req.body
+    );
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    console.error("Cart Service Error (add):", err.message);
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Cart service error",
+    });
+  }
+});
+
+
+
+app.put("/api/cart/update/:id", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${CART_SERVICE_URL}/update/${req.params.id}`,
+      req.body
+    );
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    console.error("Cart Service Error (update):", err.message);
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Cart service error",
+    });
+  }
+});
+
+
+app.get("/api/cart/:userId", async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${CART_SERVICE_URL}/${req.params.userId}`
+    );
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    console.error("Cart Service Error (get):", err.message);
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Cart service error",
+    });
+  }
+});
+
+
+app.delete("/api/cart/remove/:id", async (req, res) => {
+  try {
+    const response = await axios.delete(
+      `${CART_SERVICE_URL}/remove/${req.params.id}`
+    );
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    console.error("Cart Service Error (remove):", err.message);
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Cart service error",
+    });
+  }
+});
+
+// PRODUCT SERVICE - GET SINGLE PRODUCT
+app.get("/api/products/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const response = await axios.get(
+      `http://localhost:5002/api/products/${id}`
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    console.error("Product Service Error:", err.message);
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Product service error",
+    });
+  }
+});
+
+
 
 app.listen(5000, () => {
   console.log("API Gateway running on port 5000");
