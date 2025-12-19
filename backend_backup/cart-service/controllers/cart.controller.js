@@ -6,7 +6,15 @@ const PRODUCT_SERVICE_URL = "http://localhost:5002/api/products";
 /* ---------------- ADD TO CART ---------------- */
 export const addToCart = async (req, res) => {
   try {
-    const { userId, productId } = req.body;
+    const { userId, productId, quantity = 1 } = req.body; // Add quantity here
+
+    // Validate request body
+    if (!userId) {
+      return res.status(400).json({ message: "User ID is required" });
+    }
+    if (!productId) {
+      return res.status(400).json({ message: "Product ID is required" });
+    }
 
     // fetch single product
     const { data: product } = await axios.get(
@@ -17,8 +25,8 @@ export const addToCart = async (req, res) => {
       return res.status(404).json({ message: "Product not found" });
     }
 
-    if (product.stock < 1) {
-      return res.status(400).json({ message: "Out of stock" });
+    if (product.stock < quantity) { // Check against requested quantity
+      return res.status(400).json({ message: "Insufficient stock" });
     }
 
     const existing = await CartItem.findOne({
@@ -26,13 +34,13 @@ export const addToCart = async (req, res) => {
     });
 
     if (existing) {
-      if (existing.quantity + 1 > product.stock) {
+      if (existing.quantity + quantity > product.stock) {
         return res.status(400).json({
           message: "Cannot add more than available stock"
         });
       }
 
-      existing.quantity += 1;
+      existing.quantity += quantity; // Add the requested quantity
       await existing.save();
       return res.json(existing);
     }
@@ -40,7 +48,7 @@ export const addToCart = async (req, res) => {
     const item = await CartItem.create({
       userId,
       productId,
-      quantity: 1
+      quantity: quantity // Use the requested quantity
     });
 
     res.status(201).json(item);
