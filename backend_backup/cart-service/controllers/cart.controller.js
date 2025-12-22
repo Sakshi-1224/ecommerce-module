@@ -1,6 +1,8 @@
 import CartItem from "../models/CartItem.js";
 import axios from "axios";
+import dotenv from "dotenv";
 
+dotenv.config();
 const PRODUCT_SERVICE_URL = "http://localhost:5002/api/products";
 
 /* ---------------- ADD TO CART ---------------- */
@@ -94,6 +96,10 @@ export const getCart = async (req, res) => {
   try {
     const { userId } = req.params;
 
+    if (!userId) {
+      return res.status(400).json({ message: "User ID is required" });
+    }
+
     const cartItems = await CartItem.findAll({
       where: { userId }
     });
@@ -102,29 +108,61 @@ export const getCart = async (req, res) => {
     const detailedCart = [];
 
     for (const item of cartItems) {
-      const { data: product } = await axios.get(
-        `${PRODUCT_SERVICE_URL}/${item.productId}`
-      );
+      try {
+        const { data: product } = await axios.get(
+          `${PRODUCT_SERVICE_URL}/${item.productId}`
+        );
 
-      const subtotal = product.price * item.quantity;
-      total += subtotal;
+        if (!product) {
+          console.warn(`Product ${item.productId} not found for cart item ${item.id}`);
+          detailedCart.push({
+            cartItemId: item.id,
+            productId: item.productId,
+            name: null,
+            image: null,
+            price: 0,
+            quantity: item.quantity,
+            stock: 0,
+            subtotal: 0,
+            unavailable: true
+          });
+          continue;
+        }
 
-      detailedCart.push({
-        cartItemId: item.id,
-        productId: product.id,
-        name: product.name,
-        image: product.imageUrl,
-        price: product.price,
-        quantity: item.quantity,
-        stock: product.stock,
-        subtotal
-      });
+        const subtotal = product.price * item.quantity;
+        total += subtotal;
+
+        detailedCart.push({
+          cartItemId: item.id,
+          productId: product.id,
+          name: product.name,
+          image: product.imageUrl,
+          price: product.price,
+          quantity: item.quantity,
+          stock: product.stock,
+          subtotal
+        });
+      } catch (err) {
+        console.error(`Failed to fetch product ${item.productId} for cart item ${item.id}:`, err.response?.data || err.message);
+        // push a placeholder item so the rest of the cart still returns
+        detailedCart.push({
+          cartItemId: item.id,
+          productId: item.productId,
+          name: null,
+          image: null,
+          price: 0,
+          quantity: item.quantity,
+          stock: 0,
+          subtotal: 0,
+          unavailable: true
+        });
+      }
     }
 
     res.json({ items: detailedCart, total });
   } catch (err) {
-    console.error(err.message);
-    res.status(500).json({ message: "Failed to fetch cart" });
+    console.error("Get cart error:", err.response?.data || err.message || err);
+    res.status(err.response?.status || 500).json({ message: err.response?.data?.message || "Failed to fetch cart" });
   }
 };
 

@@ -7,12 +7,20 @@ dotenv.config();
 
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+
 
 app.use("/api/products", productRoutes);
+
+
+
+
 
 sequelize.sync().then(() => {
   console.log("Product DB connected");
   app.listen(5002, () => {
     console.log("Product Service running on port 5002");
+    
   });
 });

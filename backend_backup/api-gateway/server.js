@@ -87,6 +87,47 @@ app.get("/api/auth/me", async (req, res) => {
   }
 });
 
+
+app.get("/api/auth/users", async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${USER_SERVICE_URL}/users`,
+      {
+        headers: {
+          Authorization: req.headers.authorization
+        }
+      }
+    );
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "User service error"
+    });
+  }
+});
+
+
+
+app.post("/api/auth/change-password", async (req, res) => {
+  try {
+    const response = await axios.post(
+      `${USER_SERVICE_URL}/change-password`,
+      req.body,
+      {
+        headers: {
+          Authorization: req.headers.authorization,
+        },
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "User service error",
+    });
+  }
+});
+
 // PRODUCT SERVICE - GET PRODUCTS
 app.get("/api/products", async (req, res) => {
   try {
@@ -121,6 +162,8 @@ app.get("/api/products/:id", async (req, res) => {
 
 app.post("/api/cart/add", async (req, res) => {
   try {
+    console.log("API Gateway - Add to cart:", req.body); // Add this
+    
     const response = await axios.post(
       `${CART_SERVICE_URL}/add`,
       req.body
@@ -129,12 +172,12 @@ app.post("/api/cart/add", async (req, res) => {
     res.status(response.status).json(response.data);
   } catch (err) {
     console.error("Cart Service Error (add):", err.message);
+    console.error("Error details:", err.response?.data); // Add this
     res.status(err.response?.status || 500).json({
       message: err.response?.data?.message || "Cart service error",
     });
   }
 });
-
 
 
 app.put("/api/cart/update/:id", async (req, res) => {
@@ -184,6 +227,7 @@ app.delete("/api/cart/remove/:id", async (req, res) => {
     });
   }
 });
+
 
 
 app.listen(5000, () => {

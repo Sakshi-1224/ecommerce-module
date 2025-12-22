@@ -1,5 +1,9 @@
 import Product from "../models/Product.js";
 import Category from "../models/Category.js";
+import { uploadImageToMinio } from "../utils/uploadToMinio.js";
+
+
+
 export const getSingleProduct = async (req, res) => {
   try {
     const { id } = req.params;
@@ -50,5 +54,102 @@ export const getProducts = async (req, res) => {
     res.json(products);
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch products" });
+  }
+};
+
+
+//admin only
+
+
+export const createProduct = async (req, res) => {
+  try {
+    const { name, price, description, stock, categoryId } = req.body;
+
+    // Validate required fields
+    if (!name || !price || !categoryId) {
+      return res.status(400).json({ 
+        message: "Name, price, and categoryId are required" 
+      });
+    }
+
+    // Check if category exists
+    const category = await Category.findByPk(categoryId);
+    if (!category) {
+      return res.status(404).json({ 
+        message: "Category not found" 
+      });
+    }
+
+    let imageUrl = null;
+    if (req.file) {
+      try {
+        imageUrl = await uploadImageToMinio(req.file);
+      } catch (uploadError) {
+        console.error("Upload error:", uploadError);
+        return res.status(500).json({ 
+          message: "Image upload failed" 
+        });
+      }
+    }
+
+    const product = await Product.create({
+      name,
+      price,
+      description,
+      stock,
+      CategoryId: categoryId,
+      imageUrl
+    });
+
+    res.status(201).json({
+      message: "Product created successfully",
+      product
+    });
+  } catch (err) {
+    console.error("Product creation error:", err);
+    res.status(500).json({ 
+      message: "Product creation failed",
+      error: err.message 
+    });
+  }
+};
+
+
+
+export const updateProduct = async (req, res) => {
+  try {
+    const product = await Product.findByPk(req.params.id);
+
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    await product.update(req.body);
+
+    res.json({
+      message: "Product updated successfully",
+      product
+    });
+  } catch {
+    res.status(500).json({ message: "Update failed" });
+  }
+};
+
+/**
+ * DELETE /api/products/:id
+ */
+export const deleteProduct = async (req, res) => {
+  try {
+    const product = await Product.findByPk(req.params.id);
+
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    await product.destroy();
+
+    res.json({ message: "Product deleted successfully" });
+  } catch {
+    res.status(500).json({ message: "Delete failed" });
   }
 };
