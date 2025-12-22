@@ -59,7 +59,6 @@ export const addToCart = async (req, res) => {
     res.status(500).json({ message: "Failed to add to cart" });
   }
 };
-
 /* ---------------- UPDATE QUANTITY ---------------- */
 export const updateQuantity = async (req, res) => {
   try {
