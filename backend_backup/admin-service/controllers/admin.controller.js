@@ -3,6 +3,8 @@ import axios from "axios";
 const ORDER = process.env.ORDER_SERVICE_URL;
 const USER = process.env.USER_SERVICE_URL;
 
+/*
+
 export const getAllOrders = async (req, res) => {
   const r = await axios.get(`${ORDER}/admin/all`, {
     headers: { Authorization: req.headers.authorization }
@@ -26,7 +28,7 @@ export const getAllUsers = async (req, res) => {
   res.json(r.data);
 };
 
-
+*/
 
 export const getDashboardData = async (req, res) => {
   try {

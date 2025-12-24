@@ -25,6 +25,10 @@ const Product = sequelize.define("Product", {
   stock: {
     type: DataTypes.INTEGER,
     defaultValue: 0
+  },
+  vendorId: {
+    type: DataTypes.INTEGER,
+    allowNull: true   // NULL = admin product
   }
 });
 

@@ -1,58 +1,233 @@
 import Order from "../models/Order.js";
-
+import OrderItem from "../models/OrderItem.js";
+import { Op } from "sequelize";
 /* USER */
 export const checkout = async (req, res) => {
-  const order = await Order.create({
-    userId: req.user.id,
-    items: req.body.items,
-    amount: req.body.amount,
-    address: req.body.address,
-    paymentMethod: req.body.paymentMethod,
-    payment: req.body.payment || false,
-    date: Date.now()
-  });
-  res.status(201).json(order);
+  try {
+    const { items, amount, address, paymentMethod, payment } = req.body;
+
+    const order = await Order.create({
+      userId: req.user.id,
+      amount,
+      address,
+      paymentMethod,
+      payment,
+      date: Date.now()
+    });
+
+    await OrderItem.bulkCreate(
+      items.map(i => ({
+        orderId: order.id,
+        productId: i.productId,
+        vendorId: i.vendorId || null,
+        quantity: i.quantity,
+        price: i.price
+      }))
+    );
+
+    res.status(201).json({ orderId: order.id });
+  } catch {
+    res.status(500).json({ message: "Checkout failed" });
+  }
 };
 
 export const getUserOrders = async (req, res) => {
-  const orders = await Order.findAll({
-    where: { userId: req.user.id },
-    order: [["createdAt", "DESC"]]
-  });
-  res.json(orders);
+  try {
+    const orders = await Order.findAll({
+      where: { userId: req.user.id },
+      include: OrderItem
+    });
+    res.json(orders);
+  } catch {
+    res.status(500).json({ message: "Failed to fetch orders" });
+  }
 };
 
 export const getOrderById = async (req, res) => {
-  const order = await Order.findByPk(req.params.id);
-  res.json(order);
-};
-
-export const cancelOrder = async (req, res) => {
-  const order = await Order.findByPk(req.params.id);
-  if (order.status !== "Order Placed")
-    return res.status(400).json({ message: "Cannot cancel" });
-
-  order.status = "Cancelled";
-  await order.save();
-  res.json({ message: "Order cancelled" });
+  try {
+    const order = await Order.findOne({
+      where: { id: req.params.id, userId: req.user.id },
+      include: OrderItem
+    });
+    res.json(order);
+  } catch {
+    res.status(500).json({ message: "Failed to fetch order" });
+  }
 };
 
 export const trackOrder = async (req, res) => {
-  const order = await Order.findByPk(req.params.id);
-  res.json({ status: order.status });
+  try {
+    const order = await Order.findOne({
+      where: { id: req.params.id, userId: req.user.id },
+      include: OrderItem
+    });
+    res.json({ status: order.status, items: order.OrderItems });
+  } catch {
+    res.status(500).json({ message: "Tracking failed" });
+  }
+};
+
+export const cancelOrder = async (req, res) => {
+  try {
+    const order = await Order.findOne({
+      where: { id: req.params.id, userId: req.user.id }
+    });
+
+    const progressed = await OrderItem.findOne({
+      where: { orderId: order.id, status: ["PACKED", "SHIPPED", "DELIVERED"] }
+    });
+
+    if (progressed) {
+      return res.status(400).json({ message: "Cannot cancel order now" });
+    }
+
+    order.status = "CANCELLED";
+    await order.save();
+
+    await OrderItem.update(
+      { status: "CANCELLED" },
+      { where: { orderId: order.id } }
+    );
+
+    res.json({ message: "Order cancelled" });
+  } catch {
+    res.status(500).json({ message: "Cancel failed" });
+  }
 };
 
 /* ADMIN */
 export const getAllOrdersAdmin = async (req, res) => {
-  const orders = await Order.findAll({
-    order: [["createdAt", "DESC"]]
-  });
-  res.json(orders);
+  try {
+    const orders = await Order.findAll({ include: OrderItem });
+    res.json(orders);
+  } catch {
+    res.status(500).json({ message: "Failed to fetch all orders" });
+  }
 };
 
 export const updateOrderStatusAdmin = async (req, res) => {
-  const order = await Order.findByPk(req.params.id);
-  order.status = req.body.status;
-  await order.save();
-  res.json({ message: "Status updated", order });
+  try {
+    const order = await Order.findByPk(req.params.id, {
+      include: OrderItem
+    });
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    const notPacked = order.OrderItems.some(
+      item => item.status !== "PACKED"
+    );
+
+    if (notPacked) {
+      return res.status(400).json({
+        message: "All items must be PACKED before shipping"
+      });
+    }
+
+    order.status = req.body.status;
+    await order.save();
+
+    res.json({
+      message: "Order shipped successfully",
+      order
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Status update failed" });
+  }
+};
+
+
+
+/* VENDOR */
+export const getVendorOrders = async (req, res) => {
+
+  try {
+    const items = await OrderItem.findAll({
+      where: { vendorId: req.user.id },
+      include: Order
+    });
+
+    console.log("Items found:", items);
+    res.json(items);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch vendor orders" });
+  }
+};
+
+
+
+export const updateOrderItemStatus = async (req, res) => {
+  try {
+    const item = await OrderItem.findByPk(req.params.id);
+
+    if (!item) {
+      return res.status(404).json({ message: "Order item not found" });
+    }
+
+    if (item.vendorId !== req.user.id) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    if (!req.body.status) {
+      return res.status(400).json({ message: "Status is required" });
+    }
+
+    item.status = req.body.status;
+    await item.save();
+
+    res.json({
+      message: "Order item status updated",
+      item
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Update failed" });
+  }
+};
+
+
+
+
+export const updateAdminOrderItemStatus = async (req, res) => {
+  try {
+    const item = await OrderItem.findByPk(req.params.id);
+
+    if (!item) {
+      return res.status(404).json({ message: "Order item not found" });
+    }
+
+    // Admin items only
+    if (item.vendorId !== null) {
+      return res.status(403).json({ message: "Not an admin item" });
+    }
+
+    item.status = req.body.status;
+    await item.save();
+
+    // 🔥 AUTO UPDATE ORDER STATUS
+    const pending = await OrderItem.findOne({
+      where: {
+        orderId: item.orderId,
+        status: { [Op.ne]: "PACKED" }
+      }
+    });
+
+    if (!pending) {
+      await Order.update(
+        { status: "READY_TO_SHIP" },
+        { where: { id: item.orderId } }
+      );
+    }
+
+    res.json({
+      message: "Admin item updated",
+      item
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Update failed" });
+  }
 };

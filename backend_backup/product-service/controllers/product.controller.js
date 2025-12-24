@@ -98,7 +98,8 @@ export const createProduct = async (req, res) => {
       description,
       stock,
       CategoryId: categoryId,
-      imageUrl
+      imageUrl,
+      vendorId: req.user.role === "vendor" ? req.user.id : null
     });
 
     res.status(201).json({
@@ -124,6 +125,10 @@ export const updateProduct = async (req, res) => {
       return res.status(404).json({ message: "Product not found" });
     }
 
+     if (req.user.role === "vendor" && product.vendorId !== req.user.id) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
     await product.update(req.body);
 
     res.json({
@@ -144,6 +149,10 @@ export const deleteProduct = async (req, res) => {
 
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
+    }
+
+    if (req.user.role === "vendor" && product.vendorId !== req.user.id) {
+      return res.status(403).json({ message: "Unauthorized" });
     }
 
     await product.destroy();
