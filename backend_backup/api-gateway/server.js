@@ -10,6 +10,8 @@ const CART_SERVICE_URL = process.env.CART_SERVICE_URL;
 const ORDER_SERVICE_URL = process.env.ORDER_SERVICE_URL;
 const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL;
 const ADMIN_SERVICE_URL = process.env.ADMIN_SERVICE_URL;
+const VENDOR_SERVICE_URL = process.env.VENDOR_SERVICE_URL;
+const VENDOR_SERVICE_ADMIN_URL = process.env.VENDOR_SERVICE_ADMIN_URL;
 const app = express();
 app.use(express.json());
 
@@ -258,6 +260,23 @@ app.delete("/api/products/:id", async (req, res) => {
 });
 
 
+app.get("/api/products/vendor/my-products", async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${PRODUCT_SERVICE_URL}/vendor/my-products`,
+      {
+        headers: {
+          Authorization: req.headers.authorization
+        }
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Product service error"
+    });
+  }
+});
 
 
 
@@ -616,8 +635,107 @@ app.get("/api/admin/dashboard/stats", async (req, res) => {
 
 
 
+// Vendor Register
+app.post("/api/vendor/register", async (req, res) => {
+  try {
+    const response = await axios.post(
+      `${VENDOR_SERVICE_URL}/register`,
+      req.body
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+// Vendor Login
+app.post("/api/vendor/login", async (req, res) => {
+  try {
+    const response = await axios.post(
+      `${VENDOR_SERVICE_URL}/login`,
+      req.body
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
 
 
+// Vendor Profile
+app.get("/api/vendor/me", async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${VENDOR_SERVICE_URL}/me`,
+      {
+        headers: {
+          Authorization: req.headers.authorization
+        }
+      }
+    );
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+
+
+app.get("/api/admin/vendors", async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${VENDOR_SERVICE_ADMIN_URL}/vendors`,
+      {
+        headers: {
+          Authorization: req.headers.authorization
+        }
+      }
+    );
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+// Approve Vendor
+app.put("/api/admin/vendors/:id/approve", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${VENDOR_SERVICE_ADMIN_URL}/vendors/${req.params.id}/approve`,
+      {},
+      {
+        headers: {
+          Authorization: req.headers.authorization
+        }
+      }
+    );
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+// Reject Vendor
+app.put("/api/admin/vendors/:id/reject", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${VENDOR_SERVICE_ADMIN_URL}/vendors/${req.params.id}/reject`,
+      {},
+      {
+        headers: {
+          Authorization: req.headers.authorization
+        }
+      }
+    );
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
 
 
 app.listen(5000, () => {

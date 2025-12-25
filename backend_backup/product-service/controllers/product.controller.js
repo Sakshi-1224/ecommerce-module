@@ -162,3 +162,17 @@ export const deleteProduct = async (req, res) => {
     res.status(500).json({ message: "Delete failed" });
   }
 };
+
+
+
+export const getVendorProducts = async (req, res) => {
+  try {
+    const products = await Product.findAll({
+      where: { vendorId: req.user.id }
+    });
+
+    res.json(products);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};

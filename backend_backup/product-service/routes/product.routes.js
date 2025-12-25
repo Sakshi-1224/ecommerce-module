@@ -1,8 +1,9 @@
 import express from "express";
 import auth from "../middleware/auth.middleware.js";
+import vendor from "../middleware/vendor.middleware.js";
 import vendorOrAdmin from "../middleware/vendorOrAdmin.middleware.js";
 import { getProducts, getSingleProduct , createProduct,updateProduct,
-  deleteProduct } from "../controllers/product.controller.js";
+  deleteProduct, getVendorProducts } from "../controllers/product.controller.js";
 import upload from "../middleware/upload.js"; 
 const router = express.Router();
 
@@ -18,6 +19,8 @@ router.get("/", getProducts);
 
 router.get("/:id", getSingleProduct);
 
+//vendor products
+router.get("/vendor/my-products", auth, vendor, getVendorProducts);
 
 //admin only
 
