@@ -6,6 +6,7 @@ import {
   // getAllOrders,
   // updateOrderStatus,
   // getAllUsers,
+  changePassword,
   getDashboardData
 } from "../controllers/admin.controller.js";
 /*
@@ -21,6 +22,7 @@ const router = express.Router();
 
 router.post("/login", adminLogin);
 
+router.post("/change-password", authMiddleware, changePassword);
 
 
 
@@ -28,6 +30,8 @@ router.post("/login", adminLogin);
 //router.put("/orders/:id/status", authMiddleware, updateOrderStatus);
 //router.get("/users", authMiddleware, getAllUsers);
 router.get("/dashboard/stats", authMiddleware, getDashboardData);
+
+
 
 /*
 router.get("/vendors", authMiddleware, getAllVendors);
