@@ -116,12 +116,6 @@ export const getCart = async (req, res) => {
       return res.status(400).json({ message: "User ID is required" });
     }
 
-    if (parseInt(userId) !== req.user.id) {
-  return res.status(403).json({
-    message: "Unauthorized access to cart"
-  });
-}
-
     const cartItems = await CartItem.findAll({
       where: { userId }
     });

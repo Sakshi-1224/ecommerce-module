@@ -286,7 +286,12 @@ app.post("/api/cart/add", async (req, res) => {
     
     const response = await axios.post(
       `${CART_SERVICE_URL}/add`,
-      req.body
+      req.body,
+       {
+        headers: {
+          Authorization: req.headers.authorization
+        }
+      }
     );
 
     res.status(response.status).json(response.data);
@@ -304,7 +309,12 @@ app.put("/api/cart/update/:id", async (req, res) => {
   try {
     const response = await axios.put(
       `${CART_SERVICE_URL}/update/${req.params.id}`,
-      req.body
+      req.body,
+       {
+        headers: {
+          Authorization: req.headers.authorization
+        }
+      }
     );
 
     res.status(response.status).json(response.data);
@@ -320,7 +330,12 @@ app.put("/api/cart/update/:id", async (req, res) => {
 app.get("/api/cart/:userId", async (req, res) => {
   try {
     const response = await axios.get(
-      `${CART_SERVICE_URL}/${req.params.userId}`
+      `${CART_SERVICE_URL}/${req.params.userId}`,
+       {
+        headers: {
+          Authorization: req.headers.authorization
+        }
+      }
     );
 
     res.status(response.status).json(response.data);
@@ -336,7 +351,12 @@ app.get("/api/cart/:userId", async (req, res) => {
 app.delete("/api/cart/remove/:id", async (req, res) => {
   try {
     const response = await axios.delete(
-      `${CART_SERVICE_URL}/remove/${req.params.id}`
+      `${CART_SERVICE_URL}/remove/${req.params.id}`,
+       {
+        headers: {
+          Authorization: req.headers.authorization
+        }
+      }
     );
 
     res.status(response.status).json(response.data);
