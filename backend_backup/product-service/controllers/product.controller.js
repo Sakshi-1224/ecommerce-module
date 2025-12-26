@@ -7,7 +7,11 @@ import { uploadImageToMinio } from "../utils/uploadToMinio.js";
 export const getSingleProduct = async (req, res) => {
   try {
     const { id } = req.params;
-
+if (isNaN(id)) {
+  return res.status(400).json({
+    message: "Invalid product ID"
+  });
+}
     const product = await Product.findByPk(id, {
       include: {
         model: Category
@@ -74,6 +78,23 @@ export const createProduct = async (req, res) => {
 
     // Check if category exists
     const category = await Category.findByPk(categoryId);
+    if (price <= 0) {
+  return res.status(400).json({
+    message: "Price must be greater than zero"
+  });
+}
+
+if (stock < 0) {
+  return res.status(400).json({
+    message: "Stock cannot be negative"
+  });
+}
+
+if (isNaN(categoryId)) {
+  return res.status(400).json({
+    message: "Invalid category ID"
+  });
+}
     if (!category) {
       return res.status(404).json({ 
         message: "Category not found" 
@@ -128,6 +149,25 @@ export const updateProduct = async (req, res) => {
      if (req.user.role === "vendor" && product.vendorId !== req.user.id) {
       return res.status(403).json({ message: "Unauthorized" });
     }
+
+    const allowedFields = ["name", "price", "description", "stock"];
+
+const updates = Object.keys(req.body);
+const isValidUpdate = updates.every(field =>
+  allowedFields.includes(field)
+);
+
+if (!isValidUpdate) {
+  return res.status(400).json({
+    message: "Invalid fields in update request"
+  });
+}
+
+if (req.body.price !== undefined && req.body.price <= 0) {
+  return res.status(400).json({
+    message: "Price must be greater than zero"
+  });
+}
 
     await product.update(req.body);
 

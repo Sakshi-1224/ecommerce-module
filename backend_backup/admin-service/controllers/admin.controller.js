@@ -35,14 +35,24 @@ export const getAllUsers = async (req, res) => {
 export const changePassword = async (req, res) => {
   try {
     const { oldPassword, newPassword } = req.body;
-    const adminId = req.admin.id;
+      if (!req.admin || !req.admin.id) {
+      return res.status(401).json({
+        message: "Unauthorized access"
+      });
+    }
+  
 
     if (!oldPassword || !newPassword) {
       return res.status(400).json({
         message: "Old password and new password are required"
       });
     }
-
+    if (oldPassword === newPassword) {
+      return res.status(400).json({
+        message: "New password must be different from old password"
+      });
+    }
+  const adminId = req.admin.id;
     const admin = await Admin.findByPk(adminId);
 
     if (!admin) {
@@ -71,19 +81,33 @@ export const changePassword = async (req, res) => {
 
 export const getDashboardData = async (req, res) => {
   try {
-    const [ordersRes, usersRes] = await Promise.all([
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader) {
+      return res.status(401).json({
+        message: "Authorization header missing"
+      });
+    }
+
+    const [ordersResult, usersResult] = await Promise.allSettled([
       axios.get(`${ORDER}/admin/all`, {
-        headers: { Authorization: req.headers.authorization }
+        headers: { Authorization: authHeader }
       }),
       axios.get(`${USER}/users`, {
-        headers: { Authorization: req.headers.authorization }
+        headers: { Authorization: authHeader }
       })
     ]);
 
-    const orders = ordersRes.data;
-    const users = usersRes.data;
+    const orders =
+      ordersResult.status === "fulfilled"
+        ? ordersResult.value.data
+        : [];
 
-    // 📊 Metrics
+    const users =
+      usersResult.status === "fulfilled"
+        ? usersResult.value.data
+        : [];
+
     const totalOrders = orders.length;
     const totalRevenue = orders.reduce(
       (sum, order) => sum + (order.amount || 0),
@@ -91,15 +115,15 @@ export const getDashboardData = async (req, res) => {
     );
     const activeUsers = users.length;
 
-    // 📋 Recent Orders (last 5)
-    const recentOrders = orders
-      .map(order => ({
-        orderId: order.id,
-        customer: order.address?.name || "User",
-        date: new Date(order.createdAt).toLocaleDateString(),
-        status: order.status,
-        total: order.amount
-      }));
+    const recentOrders = orders.map(order => ({
+      orderId: order.id,
+      customer: order.address?.name || "User",
+      date: order.createdAt
+        ? new Date(order.createdAt).toLocaleDateString()
+        : "N/A",
+      status: order.status,
+      total: order.amount
+    }));
 
     res.json({
       stats: {
@@ -110,7 +134,9 @@ export const getDashboardData = async (req, res) => {
       recentOrders
     });
   } catch (err) {
-    console.error(err.message);
-    res.status(500).json({ message: "Dashboard fetch failed" });
+    console.error(err);
+    res.status(500).json({
+      message: "Dashboard fetch failed"
+    });
   }
 };

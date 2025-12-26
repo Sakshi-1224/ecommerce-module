@@ -6,6 +6,22 @@ export const checkout = async (req, res) => {
   try {
     const { items, amount, address, paymentMethod, payment } = req.body;
 
+      if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: "Cart items are required" });
+    }
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: "Invalid order amount" });
+    }
+
+    if (!address) {
+      return res.status(400).json({ message: "Shipping address is required" });
+    }
+
+    if (!["COD", "RAZORPAY"].includes(paymentMethod)) {
+      return res.status(400).json({ message: "Invalid payment method" });
+    }
+
     const order = await Order.create({
       userId: req.user.id,
       amount,
@@ -49,6 +65,11 @@ export const getOrderById = async (req, res) => {
       where: { id: req.params.id, userId: req.user.id },
       include: OrderItem
     });
+    if (!order) {
+  return res.status(404).json({
+    message: "Order not found"
+  });
+}
     res.json(order);
   } catch {
     res.status(500).json({ message: "Failed to fetch order" });
@@ -61,6 +82,11 @@ export const trackOrder = async (req, res) => {
       where: { id: req.params.id, userId: req.user.id },
       include: OrderItem
     });
+    if (!order) {
+  return res.status(404).json({
+    message: "Order not found"
+  });
+}
     res.json({ status: order.status, items: order.OrderItems });
   } catch {
     res.status(500).json({ message: "Tracking failed" });
@@ -72,6 +98,17 @@ export const cancelOrder = async (req, res) => {
     const order = await Order.findOne({
       where: { id: req.params.id, userId: req.user.id }
     });
+if (!order) {
+  return res.status(404).json({
+    message: "Order not found"
+  });
+}
+
+if (order.status === "CANCELLED") {
+  return res.status(400).json({
+    message: "Order already cancelled"
+  });
+}
 
     const progressed = await OrderItem.findOne({
       where: { orderId: order.id, status: ["PACKED", "SHIPPED", "DELIVERED"] }
@@ -126,6 +163,14 @@ export const updateOrderStatusAdmin = async (req, res) => {
     }
 
     order.status = req.body.status;
+    const allowedStatuses = ["SHIPPED", "DELIVERED"];
+
+if (!allowedStatuses.includes(req.body.status)) {
+  return res.status(400).json({
+    message: "Invalid order status"
+  });
+}
+
     await order.save();
 
     res.json({
@@ -171,11 +216,20 @@ export const updateOrderItemStatus = async (req, res) => {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
+
+
     if (!req.body.status) {
       return res.status(400).json({ message: "Status is required" });
     }
 
     item.status = req.body.status;
+    const allowedStatuses = ["PACKED"];
+
+if (!allowedStatuses.includes(req.body.status)) {
+  return res.status(400).json({
+    message: "Invalid item status"
+  });
+}
     await item.save();
 
     res.json({
@@ -205,9 +259,14 @@ export const updateAdminOrderItemStatus = async (req, res) => {
     }
 
     item.status = req.body.status;
+    if (item.status === "DELIVERED") {
+  return res.status(400).json({
+    message: "Delivered item cannot be updated"
+  });
+}
     await item.save();
 
-    // 🔥 AUTO UPDATE ORDER STATUS
+    //  AUTO UPDATE ORDER STATUS
     const pending = await OrderItem.findOne({
       where: {
         orderId: item.orderId,
@@ -229,5 +288,65 @@ export const updateAdminOrderItemStatus = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Update failed" });
+  }
+};
+
+
+
+
+
+export const placeOrder = async (req, res) => {
+  try {
+    const { amount, address, paymentMethod } = req.body;
+
+     // NEGATIVE CHECKING (IMPORTANT)
+    if (!amount || amount <= 0) {
+      return res.status(400).json({
+        message: "Invalid order amount"
+      });
+    }
+
+    if (!address) {
+      return res.status(400).json({
+        message: "Shipping address is required"
+      });
+    }
+
+    if (!paymentMethod) {
+      return res.status(400).json({
+        message: "Payment method is required"
+      });
+    }
+
+
+    const order = await Order.create({
+      userId: req.user.id,
+      amount,
+      address,
+      paymentMethod,
+      payment: false,
+      status: "PENDING",
+      date: Date.now()
+
+    });
+
+    //  COD FLOW
+    if (paymentMethod === "COD") {
+      order.status = "CONFIRMED";
+      await order.save();
+
+      return res.status(201).json({
+        message: "Order placed successfully with COD",
+        order
+      });
+    }
+
+    //  RAZORPAY FLOW
+    return res.status(201).json({
+      message: "Order created. Proceed to payment.",
+      order
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 };

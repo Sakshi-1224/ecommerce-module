@@ -8,7 +8,8 @@ const PRODUCT_SERVICE_URL = "http://localhost:5002/api/products";
 /* ---------------- ADD TO CART ---------------- */
 export const addToCart = async (req, res) => {
   try {
-    const { userId, productId, quantity = 1 } = req.body; // Add quantity here
+    const userId = req.user.id;
+    const { productId, quantity = 1 } = req.body; // Add quantity here
 
     // Validate request body
     if (!userId) {
@@ -17,11 +18,16 @@ export const addToCart = async (req, res) => {
     if (!productId) {
       return res.status(400).json({ message: "Product ID is required" });
     }
-
+if (!Number.isInteger(quantity) || quantity <= 0) {
+  return res.status(400).json({
+    message: "Quantity must be a positive integer"
+  });
+}
     // fetch single product
     const { data: product } = await axios.get(
       `${PRODUCT_SERVICE_URL}/${productId}`
     );
+  
 
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
@@ -65,7 +71,18 @@ export const updateQuantity = async (req, res) => {
     const { id } = req.params;
     const { quantity } = req.body;
 
+if (!Number.isInteger(quantity) || quantity <= 0) {
+  return res.status(400).json({
+    message: "Quantity must be a positive integer"
+  });
+}
+
     const item = await CartItem.findByPk(id);
+    if (item.userId !== req.user.id) {
+  return res.status(403).json({
+    message: "Unauthorized cart access"
+  });
+}
     if (!item) {
       return res.status(404).json({ message: "Cart item not found" });
     }
@@ -98,6 +115,12 @@ export const getCart = async (req, res) => {
     if (!userId) {
       return res.status(400).json({ message: "User ID is required" });
     }
+
+    if (parseInt(userId) !== req.user.id) {
+  return res.status(403).json({
+    message: "Unauthorized access to cart"
+  });
+}
 
     const cartItems = await CartItem.findAll({
       where: { userId }
@@ -174,6 +197,12 @@ export const removeFromCart = async (req, res) => {
     if (!item) {
       return res.status(404).json({ message: "Item not found" });
     }
+
+ if (item.userId !== req.user.id) {
+  return res.status(403).json({
+    message: "Unauthorized cart access"
+  });
+}
 
     await item.destroy();
     res.json({ message: "Item removed from cart" });

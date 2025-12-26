@@ -13,8 +13,10 @@ import {
   updateOrderStatusAdmin,
   getVendorOrders,
   updateOrderItemStatus,
-  updateAdminOrderItemStatus
+  updateAdminOrderItemStatus,
+  placeOrder
 } from "../controllers/order.controller.js";
+
 
 const router = express.Router();
 
@@ -38,6 +40,6 @@ router.put(
 router.put("/admin/:id/status", auth, admin, updateOrderStatusAdmin);
 
 
-
+router.post("/", auth, placeOrder);
 
 export default router;

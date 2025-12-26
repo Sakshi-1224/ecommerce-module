@@ -1,14 +1,37 @@
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
-
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export const register = async (req, res) => {
+  try{
   const { name,email,phone, password } = req.body;
  if (!name || !email || !phone || !password) {
       return res.status(400).json({
         message: "All fields are required"
       });
     }
+
+    if (!phone || !/^\d{10}$/.test(phone)) {
+  return res.status(400).json({
+    message: "Phone number must be exactly 10 digits"
+  });
+}
+
+if (!emailRegex.test(email)) {
+  return res.status(400).json({
+    message: "Invalid email format"
+  });
+}
+ if (password.length < 6) {
+  return res.status(400).json({
+    message: "Password must be at least 6 characters long"
+  });
+}
+if (!/(?=.*[A-Z])(?=.*\d)/.test(password)) {
+  return res.status(400).json({
+    message: "Password must contain at least one number and one uppercase letter"
+  });
+}
   const existingUser = await User.findOne({ where: { phone } });
   if (existingUser) {
     return res.status(400).json({ message: "User already exists" });
@@ -25,9 +48,17 @@ export const register = async (req, res) => {
   });
 
   res.status(201).json({ message: "User registered successfully" });
+}
+catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: "Internal server error"
+    });
+  }
 };
 
 export const login = async (req, res) => {
+  try{
   const { phone, password } = req.body;
 
   const user = await User.findOne({ where: { phone } });
@@ -53,14 +84,37 @@ export const login = async (req, res) => {
       phone:user.phone
     }
    });
+  }
+  catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: "Internal server error"
+    });
+  }
 };
 
 export const logout = async (req, res) => {
+  try{
   res.json({ message: "Logout successful" });
+  }
+  catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: "Internal server error"
+    });
+  }
 };
 
 export const me = async (req, res) => {
+  try{
   res.json(req.user);
+  }
+  catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: "Internal server error"
+    });
+  }
 };
 
 
