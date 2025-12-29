@@ -172,3 +172,62 @@ export const getAllUsers = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+
+
+
+export const updateProfile = async (req, res) => {
+  try {
+    const { name, email } = req.body;
+    const userId = req.user.id;
+
+    // Nothing to update
+    if (!name && !email) {
+      return res.status(400).json({
+        message: "Nothing to update",
+      });
+    }
+
+    const user = await User.findByPk(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    // Update name only if user changed it
+    if (name && name !== user.name) {
+      user.name = name;
+    }
+
+    // Update email only if user changed it
+    if (email && email !== user.email) {
+      const emailExists = await User.findOne({ where: { email } });
+
+      if (emailExists) {
+        return res.status(400).json({
+          message: "Email already in use",
+        });
+      }
+
+      user.email = email;
+    }
+
+    await user.save();
+
+    res.json({
+      message: "Profile updated successfully",
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      message: "Failed to update profile",
+    });
+  }
+};

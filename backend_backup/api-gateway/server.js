@@ -124,6 +124,26 @@ app.post("/api/auth/change-password", async (req, res) => {
   }
 });
 
+app.put("/api/auth/profile", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${USER_SERVICE_URL}/profile`,
+      req.body,
+      {
+        headers: {
+          Authorization: req.headers.authorization,
+        },
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "User service error",
+    });
+  }
+});
+
+
 // PRODUCT SERVICE - GET PRODUCTS
 app.get("/api/products", async (req, res) => {
   try {

@@ -1,5 +1,5 @@
 import express from "express";
-import { register, login, logout, me,changePassword } from "../controllers/auth.controller.js";
+import { register, login, logout, me,changePassword,updateProfile } from "../controllers/auth.controller.js";
 import authMiddleware from "../middleware/auth.middleware.js";
 import {admin} from "../middleware/admin.middleware.js";
 import { getAllUsers } from "../controllers/auth.controller.js";
@@ -14,5 +14,7 @@ router.post("/change-password", authMiddleware, changePassword);
 
 //admin routes 
 router.get("/users", authMiddleware, admin, getAllUsers);
+
+router.put("/profile", authMiddleware, updateProfile);
 
 export default router;
