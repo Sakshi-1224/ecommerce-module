@@ -14,7 +14,9 @@ import {
   getVendorOrders,
   updateOrderItemStatus,
   updateAdminOrderItemStatus,
-  placeOrder
+  placeOrder,
+   assignDeliveryBoy,
+  reassignDeliveryBoy,
 } from "../controllers/order.controller.js";
 
 
@@ -41,5 +43,9 @@ router.put("/admin/:id/status", auth, admin, updateOrderStatusAdmin);
 
 
 router.post("/", auth, placeOrder);
+
+
+router.post("/:orderId/assign", auth, admin, assignDeliveryBoy);
+router.put("/:orderId/reassign", auth, admin, reassignDeliveryBoy);
 
 export default router;

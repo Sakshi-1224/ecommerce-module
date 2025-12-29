@@ -1,6 +1,15 @@
 import Order from "../models/Order.js";
 import OrderItem from "../models/OrderItem.js";
 import { Op } from "sequelize";
+import DeliveryBoy from "../models/DeliveryBoy.js";
+import DeliveryAssignment from "../models/DeliveryAssignment.js";
+
+
+const validateStatus = (status, allowed) => {
+  return allowed.includes(status);
+};
+
+
 /* USER */
 export const checkout = async (req, res) => {
   try {
@@ -111,7 +120,7 @@ if (order.status === "CANCELLED") {
 }
 
     const progressed = await OrderItem.findOne({
-      where: { orderId: order.id, status: ["PACKED", "SHIPPED", "DELIVERED"] }
+      where: { orderId: order.id, status: ["PACKED", "OUT_FOR_DELIVERY", "DELIVERED"] }
     });
 
     if (progressed) {
@@ -144,37 +153,42 @@ export const getAllOrdersAdmin = async (req, res) => {
 
 export const updateOrderStatusAdmin = async (req, res) => {
   try {
+          const { status } = req.body;
+
+    if (!validateStatus(status, ["OUT_FOR_DELIVERY", "DELIVERED"])) {
+      return res.status(400).json({ message: "Invalid order status" });
+    }
+
     const order = await Order.findByPk(req.params.id, {
       include: OrderItem
     });
 
-    if (!order) {
+    if (!order)
       return res.status(404).json({ message: "Order not found" });
-    }
 
-    const notPacked = order.OrderItems.some(
-      item => item.status !== "PACKED"
-    );
 
-    if (notPacked) {
+  if (order.status === "CANCELLED") {
       return res.status(400).json({
-        message: "All items must be PACKED before shipping"
+        message: "Cancelled order cannot be updated"
       });
     }
 
-    order.status = req.body.status;
-    const allowedStatuses = ["SHIPPED", "DELIVERED"];
 
-if (!allowedStatuses.includes(req.body.status)) {
-  return res.status(400).json({
-    message: "Invalid order status"
-  });
-}
+    const hasUnpackedItems = order.OrderItems.some(
+      item => item.status !== "PACKED"
+    );
 
+    if (hasUnpackedItems) {
+      return res.status(400).json({
+        message: "All items must be PACKED first"
+      });
+    }
+
+    order.status = status;
     await order.save();
 
     res.json({
-      message: "Order shipped successfully",
+      message: `Order status updated to ${status}`,
       order
     });
   } catch (err) {
@@ -194,7 +208,7 @@ export const getVendorOrders = async (req, res) => {
       include: Order
     });
 
-    console.log("Items found:", items);
+ //   console.log("Items found:", items);
     res.json(items);
   } catch (err) {
     console.error(err);
@@ -216,26 +230,25 @@ export const updateOrderItemStatus = async (req, res) => {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
+    if (item.status === "CANCELLED") {
+  return res.status(400).json({
+    message: "Cancelled item cannot be packed"
+  });
+}
 
 
     if (!req.body.status) {
       return res.status(400).json({ message: "Status is required" });
     }
 
-    item.status = req.body.status;
-    const allowedStatuses = ["PACKED"];
+    const { status } = req.body;
+    if (!validateStatus(status, ["PACKED"]))
+      return res.status(400).json({ message: "Only PACKED allowed" });
 
-if (!allowedStatuses.includes(req.body.status)) {
-  return res.status(400).json({
-    message: "Invalid item status"
-  });
-}
+    item.status = status;
     await item.save();
 
-    res.json({
-      message: "Order item status updated",
-      item
-    });
+    res.json({ message: "Item packed successfully", item });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Update failed" });
@@ -258,15 +271,34 @@ export const updateAdminOrderItemStatus = async (req, res) => {
       return res.status(403).json({ message: "Not an admin item" });
     }
 
-    item.status = req.body.status;
+  
+    if (!req.body.status) {
+      return res.status(400).json({ message: "Status is required" });
+    }
+
+    if (item.status === "CANCELLED") {
+  return res.status(400).json({
+    message: "Cancelled item cannot be packed"
+  });
+}
+
+ //   item.status = req.body.status;
     if (item.status === "DELIVERED") {
   return res.status(400).json({
     message: "Delivered item cannot be updated"
   });
 }
+    
+const { status } = req.body;
+    if (!validateStatus(status, ["PACKED"]))
+      return res.status(400).json({ message: "Only PACKED allowed" });
+
+    item.status = status;
     await item.save();
 
+    res.json({ message: "Admin item packed", item });
     //  AUTO UPDATE ORDER STATUS
+    /*
     const pending = await OrderItem.findOne({
       where: {
         orderId: item.orderId,
@@ -280,11 +312,8 @@ export const updateAdminOrderItemStatus = async (req, res) => {
         { where: { id: item.orderId } }
       );
     }
-
-    res.json({
-      message: "Admin item updated",
-      item
-    });
+*/
+    
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Update failed" });
@@ -332,7 +361,7 @@ export const placeOrder = async (req, res) => {
 
     //  COD FLOW
     if (paymentMethod === "COD") {
-      order.status = "CONFIRMED";
+      order.status = "PLACED";
       await order.save();
 
       return res.status(201).json({
@@ -350,3 +379,57 @@ export const placeOrder = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+
+export const assignDeliveryBoy = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { deliveryBoyId } = req.body;
+
+    const deliveryBoy = await DeliveryBoy.findByPk(deliveryBoyId);
+    if (!deliveryBoy || !deliveryBoy.active) {
+      return res.status(400).json({ message: "Delivery boy not available" });
+    }
+
+    await DeliveryAssignment.create({
+      orderId,
+      deliveryBoyId
+    });
+
+    await Order.update(
+      { status: "OUT_FOR_DELIVERY" },
+      { where: { id: orderId } }
+    );
+
+    res.json({ message: "Delivery boy assigned successfully" });
+  } catch (err) {
+    res.status(500).json({ message: "Assignment failed" });
+  }
+};
+
+
+export const reassignDeliveryBoy = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { oldDeliveryBoyId, newDeliveryBoyId, reason } = req.body;
+
+    // mark old assignment failed
+    await DeliveryAssignment.update(
+      { status: "FAILED", reason },
+      { where: { orderId, deliveryBoyId: oldDeliveryBoyId } }
+    );
+
+    // assign new delivery boy
+    await DeliveryAssignment.create({
+      orderId,
+      deliveryBoyId: newDeliveryBoyId,
+      status: "REASSIGNED"
+    });
+
+    res.json({ message: "Delivery boy reassigned successfully" });
+  } catch (err) {
+    res.status(500).json({ message: "Reassignment failed" });
+  }
+};
+
+
