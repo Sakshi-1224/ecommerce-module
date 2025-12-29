@@ -501,6 +501,45 @@ app.get("/api/orders/admin/all", async (req, res) => {
   }
 });
 
+// 👇 ADD THIS ROUTE TO FETCH DELIVERY BOYS
+app.get("/api/orders/admin/delivery-boys", async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${ORDER_SERVICE_URL}/admin/delivery-boys`,
+      {
+        headers: { Authorization: req.headers.authorization },
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Order service error",
+    });
+  }
+});
+
+// ✅ ADD THIS ROUTE
+app.get("/api/orders/admin/:id", async (req, res) => {
+  try {
+    // Forward this request to the Order Service
+    // The Order Service must have a matching route: GET /admin/:id
+    const response = await axios.get(
+      `${ORDER_SERVICE_URL}/admin/${req.params.id}`, 
+      {
+        headers: {
+          Authorization: req.headers.authorization, // Pass the Admin Token
+        },
+      }
+    );
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Order service error",
+    });
+  }
+});
+
 // Update admin order item status
 app.put("/api/orders/admin/item/:id", async (req, res) => {
   try {
@@ -544,10 +583,55 @@ app.put("/api/orders/admin/:id/status", async (req, res) => {
 });
 
 /* ======================
+   ADMIN ROUTES
+====================== */
+
+// ... existing admin routes ...
+
+
+
+// 👇 ADD THIS ROUTE TO ASSIGN DELIVERY BOY (If not already present)
+app.post("/api/orders/:orderId/assign", async (req, res) => {
+  try {
+    const response = await axios.post(
+      `${ORDER_SERVICE_URL}/${req.params.orderId}/assign`,
+      req.body,
+      {
+        headers: { Authorization: req.headers.authorization },
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Order service error",
+    });
+  }
+});
+
+// Reassign Delivery Boy
+app.put("/api/orders/:orderId/reassign", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${ORDER_SERVICE_URL}/${req.params.orderId}/reassign`,
+      req.body,
+      {
+        headers: { Authorization: req.headers.authorization },
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Order service error",
+    });
+  }
+});
+
+/* ======================
    ADMIN LOGIN
 ====================== */
 app.post("/api/admin/login", async (req, res) => {
   try {
+    console.log("Forwarding to", `${ADMIN_SERVICE_URL}/login`, req.body);
     const response = await axios.post(`${ADMIN_SERVICE_URL}/login`, req.body);
 
     res.status(response.status).json(response.data);

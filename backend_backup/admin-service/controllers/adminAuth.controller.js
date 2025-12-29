@@ -26,7 +26,13 @@ if (!phone || !password) {
       { expiresIn: "30d" }
     );
 
-    res.json({ token });
+    res.json({ token, user: {
+        id: admin.id,
+        name: admin.name,
+        phone: admin.phone,
+        email: admin.email,
+        role: admin.role 
+      } });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Login failed" });

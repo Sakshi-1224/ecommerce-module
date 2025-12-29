@@ -17,6 +17,8 @@ import {
   placeOrder,
    assignDeliveryBoy,
   reassignDeliveryBoy,
+  getOrderByIdAdmin,
+  getAllDeliveryBoys,
 } from "../controllers/order.controller.js";
 
 
@@ -33,6 +35,9 @@ router.put("/:id/cancel", auth, cancelOrder);
 router.get("/track/:id", auth, trackOrder);
 
 router.get("/admin/all", auth, admin, getAllOrdersAdmin);
+// 👇 ADD THIS ROUTE (Admin only)
+router.get("/admin/delivery-boys", auth, admin, getAllDeliveryBoys);
+router.get("/admin/:id", auth, admin, getOrderByIdAdmin);
 router.put(
   "/admin/item/:id",
   auth,
@@ -47,5 +52,6 @@ router.post("/", auth, placeOrder);
 
 router.post("/:orderId/assign", auth, admin, assignDeliveryBoy);
 router.put("/:orderId/reassign", auth, admin, reassignDeliveryBoy);
+
 
 export default router;

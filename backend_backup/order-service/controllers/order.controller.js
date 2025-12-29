@@ -142,6 +142,25 @@ if (order.status === "CANCELLED") {
 };
 
 /* ADMIN */
+/* ... existing code ... */
+
+export const getOrderByIdAdmin = async (req, res) => {
+  try {
+    const order = await Order.findByPk(req.params.id, {
+      include: OrderItem // Include items so the admin sees what was bought
+    });
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    res.json(order);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch order details" });
+  }
+};
+
 export const getAllOrdersAdmin = async (req, res) => {
   try {
     const orders = await Order.findAll({ include: OrderItem });
@@ -429,6 +448,17 @@ export const reassignDeliveryBoy = async (req, res) => {
     res.json({ message: "Delivery boy reassigned successfully" });
   } catch (err) {
     res.status(500).json({ message: "Reassignment failed" });
+  }
+};
+
+// 👇 ADD THIS NEW FUNCTION
+export const getAllDeliveryBoys = async (req, res) => {
+  try {
+    const deliveryBoys = await DeliveryBoy.findAll();
+    res.json(deliveryBoys);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch delivery boys" });
   }
 };
 
