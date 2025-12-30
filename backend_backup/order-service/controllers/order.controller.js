@@ -3,7 +3,8 @@ import OrderItem from "../models/OrderItem.js";
 import { Op } from "sequelize";
 import DeliveryBoy from "../models/DeliveryBoy.js";
 import DeliveryAssignment from "../models/DeliveryAssignment.js";
-
+import axios from "axios";
+const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL;
 const validateStatus = (status, allowed) => {
   return allowed.includes(status);
 };
@@ -29,6 +30,17 @@ export const checkout = async (req, res) => {
       return res.status(400).json({ message: "Invalid payment method" });
     }
 
+    if (!PRODUCT_SERVICE_URL) {
+      console.error("PRODUCT_SERVICE_URL not set");
+      return res.status(500).json({ message: "Product service unavailable" });
+    }
+
+    await axios.post(`${PRODUCT_SERVICE_URL}/reduce-stock`, {
+      items,
+    }, {
+      headers: { Authorization: req.headers.authorization },
+    });
+
     const order = await Order.create({
       userId: req.user.id,
       amount,
@@ -49,8 +61,9 @@ export const checkout = async (req, res) => {
     );
 
     res.status(201).json({ orderId: order.id });
-  } catch {
-    res.status(500).json({ message: "Checkout failed" });
+  } catch (err) {
+    console.error("Checkout error:", err);
+    res.status(500).json({ message: err.response?.data?.message || err.message || "Checkout failed" });
   }
 };
 
@@ -128,6 +141,17 @@ export const cancelOrder = async (req, res) => {
       return res.status(400).json({ message: "Cannot cancel order now" });
     }
 
+      // 🔁 RESTORE STOCK
+    await axios.post(`${PRODUCT_SERVICE_URL}/restore-stock`, {
+      items: order.OrderItems.map(item => ({
+        productId: item.productId,
+        quantity: item.quantity,
+      })),
+    }, {
+      headers: { Authorization: req.headers.authorization },
+    });
+
+
     order.status = "CANCELLED";
     await order.save();
 
@@ -137,8 +161,9 @@ export const cancelOrder = async (req, res) => {
     );
 
     res.json({ message: "Order cancelled" });
-  } catch {
-    res.status(500).json({ message: "Cancel failed" });
+  } catch (err) {
+    console.error("Cancel error:", err);
+    res.status(500).json({ message: err.response?.data?.message || err.message || "Cancel failed" });
   }
 };
 
@@ -335,7 +360,7 @@ export const updateAdminOrderItemStatus = async (req, res) => {
 export const placeOrder = async (req, res) => {
   try {
     const { amount, address, paymentMethod } = req.body;
-
+    
     // NEGATIVE CHECKING (IMPORTANT)
     if (!amount || amount <= 0) {
       return res.status(400).json({

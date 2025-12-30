@@ -10,6 +10,8 @@ import {
   deleteProduct,
   getVendorProducts,
   getAllCategories,
+  reduceStock,
+  restoreStock
 } from "../controllers/product.controller.js";
 import upload from "../middleware/upload.js";
 const router = express.Router();
@@ -22,6 +24,9 @@ Query params:
 */
 
 router.get("/", getProducts);
+
+router.post("/reduce-stock",auth, reduceStock);
+router.post("/restore-stock",auth, restoreStock);
 
 router.get("/categories", getAllCategories); // 👈 ADD THIS LINE HERE
 
@@ -41,5 +46,7 @@ router.post(
 );
 router.put("/:id", auth, vendorOrAdmin, updateProduct);
 router.delete("/:id", auth, vendorOrAdmin, deleteProduct);
+
+
 
 export default router;

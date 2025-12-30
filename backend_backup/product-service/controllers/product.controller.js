@@ -222,3 +222,50 @@ export const getVendorProducts = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+
+
+// product.controller.js
+export const reduceStock = async (req, res) => {
+  const { items } = req.body;
+
+  try {
+    for (const item of items) {
+      const product = await Product.findByPk(item.productId);
+
+      if (!product || product.stock < item.quantity) {
+        return res.status(400).json({
+          message: `Insufficient stock for product ${item.productId}`,
+        });
+      }
+
+      product.stock -= item.quantity;
+      await product.save();
+    }
+
+    res.json({ message: "Stock reduced successfully" });
+  } catch (err) {
+    res.status(500).json({ message: "Stock reduction failed" });
+  }
+};
+
+
+
+export const restoreStock = async (req, res) => {
+  const { items } = req.body;
+
+  try {
+    for (const item of items) {
+      const product = await Product.findByPk(item.productId);
+
+      if (product) {
+        product.stock += item.quantity;
+        await product.save();
+      }
+    }
+
+    res.json({ message: "Stock restored successfully" });
+  } catch (err) {
+    res.status(500).json({ message: "Stock restore failed" });
+  }
+};

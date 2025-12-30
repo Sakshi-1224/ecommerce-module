@@ -157,6 +157,53 @@ app.get("/api/products", async (req, res) => {
   }
 });
 
+
+app.post("/api/products/reduce-stock", async (req, res) => {
+  try {
+    const response = await axios.post(
+      `${PRODUCT_SERVICE_URL}/reduce-stock`,
+      req.body, // { items: [...] }
+      {
+        headers: {
+          Authorization: req.headers.authorization,
+        },
+      }
+    );
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    console.error(err.message);
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Product service error",
+    });
+  }
+});
+
+
+
+// Restore product stock (Order cancelled)
+app.post("/api/products/restore-stock", async (req, res) => {
+  try {
+    const response = await axios.post(
+      `${PRODUCT_SERVICE_URL}/restore-stock`,
+      req.body, // { items: [...] }
+      {
+        headers: {
+          Authorization: req.headers.authorization,
+        },
+      }
+    );
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    console.error(err.message);
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Product service error",
+    });
+  }
+});
+
+
 // 👇 ADD THIS ROUTE
 app.get("/api/categories", async (req, res) => {
   try {
@@ -672,7 +719,6 @@ app.put("/api/orders/:orderId/reassign", async (req, res) => {
 ====================== */
 app.post("/api/admin/login", async (req, res) => {
   try {
-    console.log("Forwarding to", `${ADMIN_SERVICE_URL}/login`, req.body);
     const response = await axios.post(`${ADMIN_SERVICE_URL}/login`, req.body);
 
     res.status(response.status).json(response.data);
