@@ -2,25 +2,23 @@ import Product from "../models/Product.js";
 import Category from "../models/Category.js";
 import { uploadImageToMinio } from "../utils/uploadToMinio.js";
 
-
-
 export const getSingleProduct = async (req, res) => {
   try {
     const { id } = req.params;
-if (isNaN(id)) {
-  return res.status(400).json({
-    message: "Invalid product ID"
-  });
-}
+    if (isNaN(id)) {
+      return res.status(400).json({
+        message: "Invalid product ID",
+      });
+    }
     const product = await Product.findByPk(id, {
       include: {
-        model: Category
-      }
+        model: Category,
+      },
     });
 
     if (!product) {
       return res.status(404).json({
-        message: "Product not found"
+        message: "Product not found",
       });
     }
 
@@ -28,10 +26,11 @@ if (isNaN(id)) {
   } catch (error) {
     console.error(error);
     res.status(500).json({
-      message: "Failed to fetch product"
+      message: "Failed to fetch product",
     });
   }
 };
+
 export const getProducts = async (req, res) => {
   try {
     const { category, sort } = req.query;
@@ -50,9 +49,9 @@ export const getProducts = async (req, res) => {
     const products = await Product.findAll({
       include: {
         model: Category,
-        where: category && category !== "all" ? { name: category } : undefined
+        where: category && category !== "all" ? { name: category } : undefined,
       },
-      order: orderCondition
+      order: orderCondition,
     });
 
     res.json(products);
@@ -61,9 +60,20 @@ export const getProducts = async (req, res) => {
   }
 };
 
+// ... existing imports
+
+// 👇 ADD THIS FUNCTION
+export const getAllCategories = async (req, res) => {
+  try {
+    const categories = await Category.findAll();
+    res.json(categories);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch categories" });
+  }
+};
 
 //admin only
-
 
 export const createProduct = async (req, res) => {
   try {
@@ -71,33 +81,33 @@ export const createProduct = async (req, res) => {
 
     // Validate required fields
     if (!name || !price || !categoryId) {
-      return res.status(400).json({ 
-        message: "Name, price, and categoryId are required" 
+      return res.status(400).json({
+        message: "Name, price, and categoryId are required",
       });
     }
 
     // Check if category exists
     const category = await Category.findByPk(categoryId);
     if (price <= 0) {
-  return res.status(400).json({
-    message: "Price must be greater than zero"
-  });
-}
+      return res.status(400).json({
+        message: "Price must be greater than zero",
+      });
+    }
 
-if (stock < 0) {
-  return res.status(400).json({
-    message: "Stock cannot be negative"
-  });
-}
+    if (stock < 0) {
+      return res.status(400).json({
+        message: "Stock cannot be negative",
+      });
+    }
 
-if (isNaN(categoryId)) {
-  return res.status(400).json({
-    message: "Invalid category ID"
-  });
-}
+    if (isNaN(categoryId)) {
+      return res.status(400).json({
+        message: "Invalid category ID",
+      });
+    }
     if (!category) {
-      return res.status(404).json({ 
-        message: "Category not found" 
+      return res.status(404).json({
+        message: "Category not found",
       });
     }
 
@@ -107,8 +117,8 @@ if (isNaN(categoryId)) {
         imageUrl = await uploadImageToMinio(req.file);
       } catch (uploadError) {
         console.error("Upload error:", uploadError);
-        return res.status(500).json({ 
-          message: "Image upload failed" 
+        return res.status(500).json({
+          message: "Image upload failed",
         });
       }
     }
@@ -120,23 +130,21 @@ if (isNaN(categoryId)) {
       stock,
       CategoryId: categoryId,
       imageUrl,
-      vendorId: req.user.role === "vendor" ? req.user.id : null
+      vendorId: req.user.role === "vendor" ? req.user.id : null,
     });
 
     res.status(201).json({
       message: "Product created successfully",
-      product
+      product,
     });
   } catch (err) {
     console.error("Product creation error:", err);
-    res.status(500).json({ 
+    res.status(500).json({
       message: "Product creation failed",
-      error: err.message 
+      error: err.message,
     });
   }
 };
-
-
 
 export const updateProduct = async (req, res) => {
   try {
@@ -146,34 +154,34 @@ export const updateProduct = async (req, res) => {
       return res.status(404).json({ message: "Product not found" });
     }
 
-     if (req.user.role === "vendor" && product.vendorId !== req.user.id) {
+    if (req.user.role === "vendor" && product.vendorId !== req.user.id) {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
     const allowedFields = ["name", "price", "description", "stock"];
 
-const updates = Object.keys(req.body);
-const isValidUpdate = updates.every(field =>
-  allowedFields.includes(field)
-);
+    const updates = Object.keys(req.body);
+    const isValidUpdate = updates.every((field) =>
+      allowedFields.includes(field)
+    );
 
-if (!isValidUpdate) {
-  return res.status(400).json({
-    message: "Invalid fields in update request"
-  });
-}
+    if (!isValidUpdate) {
+      return res.status(400).json({
+        message: "Invalid fields in update request",
+      });
+    }
 
-if (req.body.price !== undefined && req.body.price <= 0) {
-  return res.status(400).json({
-    message: "Price must be greater than zero"
-  });
-}
+    if (req.body.price !== undefined && req.body.price <= 0) {
+      return res.status(400).json({
+        message: "Price must be greater than zero",
+      });
+    }
 
     await product.update(req.body);
 
     res.json({
       message: "Product updated successfully",
-      product
+      product,
     });
   } catch {
     res.status(500).json({ message: "Update failed" });
@@ -203,12 +211,10 @@ export const deleteProduct = async (req, res) => {
   }
 };
 
-
-
 export const getVendorProducts = async (req, res) => {
   try {
     const products = await Product.findAll({
-      where: { vendorId: req.user.id }
+      where: { vendorId: req.user.id },
     });
 
     res.json(products);
