@@ -126,15 +126,11 @@ app.post("/api/auth/change-password", async (req, res) => {
 
 app.put("/api/auth/profile", async (req, res) => {
   try {
-    const response = await axios.put(
-      `${USER_SERVICE_URL}/profile`,
-      req.body,
-      {
-        headers: {
-          Authorization: req.headers.authorization,
-        },
-      }
-    );
+    const response = await axios.put(`${USER_SERVICE_URL}/profile`, req.body, {
+      headers: {
+        Authorization: req.headers.authorization,
+      },
+    });
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
@@ -142,7 +138,6 @@ app.put("/api/auth/profile", async (req, res) => {
     });
   }
 });
-
 
 // PRODUCT SERVICE - GET PRODUCTS
 app.get("/api/products", async (req, res) => {
@@ -501,6 +496,37 @@ app.get("/api/orders/admin/all", async (req, res) => {
   }
 });
 
+// ... existing routes
+
+// 👇 ADD THESE ROUTES (Place near other admin order routes)
+
+// Add Delivery Boy
+app.post("/api/orders/admin/delivery-boys", async (req, res) => {
+  try {
+    const response = await axios.post(
+      `${ORDER_SERVICE_URL}/admin/delivery-boys`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+// Delete Delivery Boy
+app.delete("/api/orders/admin/delivery-boys/:id", async (req, res) => {
+  try {
+    const response = await axios.delete(
+      `${ORDER_SERVICE_URL}/admin/delivery-boys/${req.params.id}`,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
 // 👇 ADD THIS ROUTE TO FETCH DELIVERY BOYS
 app.get("/api/orders/admin/delivery-boys", async (req, res) => {
   try {
@@ -524,7 +550,7 @@ app.get("/api/orders/admin/:id", async (req, res) => {
     // Forward this request to the Order Service
     // The Order Service must have a matching route: GET /admin/:id
     const response = await axios.get(
-      `${ORDER_SERVICE_URL}/admin/${req.params.id}`, 
+      `${ORDER_SERVICE_URL}/admin/${req.params.id}`,
       {
         headers: {
           Authorization: req.headers.authorization, // Pass the Admin Token
@@ -587,8 +613,6 @@ app.put("/api/orders/admin/:id/status", async (req, res) => {
 ====================== */
 
 // ... existing admin routes ...
-
-
 
 // 👇 ADD THIS ROUTE TO ASSIGN DELIVERY BOY (If not already present)
 app.post("/api/orders/:orderId/assign", async (req, res) => {

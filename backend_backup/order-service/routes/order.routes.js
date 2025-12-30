@@ -15,18 +15,18 @@ import {
   updateOrderItemStatus,
   updateAdminOrderItemStatus,
   placeOrder,
-   assignDeliveryBoy,
+  assignDeliveryBoy,
   reassignDeliveryBoy,
   getOrderByIdAdmin,
   getAllDeliveryBoys,
+  createDeliveryBoy,
+  deleteDeliveryBoy,
 } from "../controllers/order.controller.js";
-
 
 const router = express.Router();
 
 router.get("/vendor", auth, vendor, getVendorOrders);
 router.put("/item/:id", auth, vendor, updateOrderItemStatus);
-
 
 router.post("/checkout", auth, checkout);
 router.get("/", auth, getUserOrders);
@@ -37,21 +37,15 @@ router.get("/track/:id", auth, trackOrder);
 router.get("/admin/all", auth, admin, getAllOrdersAdmin);
 // 👇 ADD THIS ROUTE (Admin only)
 router.get("/admin/delivery-boys", auth, admin, getAllDeliveryBoys);
+router.post("/admin/delivery-boys", auth, admin, createDeliveryBoy); // 👈 Add
+router.delete("/admin/delivery-boys/:id", auth, admin, deleteDeliveryBoy); // 👈 Add
 router.get("/admin/:id", auth, admin, getOrderByIdAdmin);
-router.put(
-  "/admin/item/:id",
-  auth,
-  admin,
-  updateAdminOrderItemStatus
-);
+router.put("/admin/item/:id", auth, admin, updateAdminOrderItemStatus);
 router.put("/admin/:id/status", auth, admin, updateOrderStatusAdmin);
-
 
 router.post("/", auth, placeOrder);
 
-
 router.post("/:orderId/assign", auth, admin, assignDeliveryBoy);
 router.put("/:orderId/reassign", auth, admin, reassignDeliveryBoy);
-
 
 export default router;
