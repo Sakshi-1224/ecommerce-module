@@ -126,22 +126,17 @@ app.post("/api/auth/change-password", async (req, res) => {
 
 app.put("/api/auth/profile", async (req, res) => {
   try {
-    const response = await axios.put(
-      `${USER_SERVICE_URL}/profile`,
-      req, 
-      {
-        headers: {
-          Authorization: req.headers.authorization,
-          "Content-Type": req.headers["content-type"], // Critical for file uploads!
-        },
-        // Optional: Increase limits if files are large
-        maxBodyLength: Infinity,
-        maxContentLength: Infinity,
-      }
-    );  
+    const response = await axios.put(`${USER_SERVICE_URL}/profile`, req, {
+      headers: {
+        Authorization: req.headers.authorization,
+        "Content-Type": req.headers["content-type"], // Critical for file uploads!
+      },
+      // Optional: Increase limits if files are large
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+    });
     res.status(response.status).json(response.data);
   } catch (err) {
-    console.error("Gateway Error (Profile Update):", err.message);
     res.status(err.response?.status || 500).json({
       message: err.response?.data?.message || "User service error",
     });
