@@ -4,18 +4,16 @@ import { Op } from "sequelize";
 import DeliveryBoy from "../models/DeliveryBoy.js";
 import DeliveryAssignment from "../models/DeliveryAssignment.js";
 
-
 const validateStatus = (status, allowed) => {
   return allowed.includes(status);
 };
-
 
 /* USER */
 export const checkout = async (req, res) => {
   try {
     const { items, amount, address, paymentMethod, payment } = req.body;
 
-      if (!items || !Array.isArray(items) || items.length === 0) {
+    if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "Cart items are required" });
     }
 
@@ -37,16 +35,16 @@ export const checkout = async (req, res) => {
       address,
       paymentMethod,
       payment,
-      date: Date.now()
+      date: Date.now(),
     });
 
     await OrderItem.bulkCreate(
-      items.map(i => ({
+      items.map((i) => ({
         orderId: order.id,
         productId: i.productId,
         vendorId: i.vendorId || null,
         quantity: i.quantity,
-        price: i.price
+        price: i.price,
       }))
     );
 
@@ -60,7 +58,7 @@ export const getUserOrders = async (req, res) => {
   try {
     const orders = await Order.findAll({
       where: { userId: req.user.id },
-      include: OrderItem
+      include: OrderItem,
     });
     res.json(orders);
   } catch {
@@ -72,13 +70,13 @@ export const getOrderById = async (req, res) => {
   try {
     const order = await Order.findOne({
       where: { id: req.params.id, userId: req.user.id },
-      include: OrderItem
+      include: OrderItem,
     });
     if (!order) {
-  return res.status(404).json({
-    message: "Order not found"
-  });
-}
+      return res.status(404).json({
+        message: "Order not found",
+      });
+    }
     res.json(order);
   } catch {
     res.status(500).json({ message: "Failed to fetch order" });
@@ -89,13 +87,13 @@ export const trackOrder = async (req, res) => {
   try {
     const order = await Order.findOne({
       where: { id: req.params.id, userId: req.user.id },
-      include: OrderItem
+      include: OrderItem,
     });
     if (!order) {
-  return res.status(404).json({
-    message: "Order not found"
-  });
-}
+      return res.status(404).json({
+        message: "Order not found",
+      });
+    }
     res.json({ status: order.status, items: order.OrderItems });
   } catch {
     res.status(500).json({ message: "Tracking failed" });
@@ -105,22 +103,25 @@ export const trackOrder = async (req, res) => {
 export const cancelOrder = async (req, res) => {
   try {
     const order = await Order.findOne({
-      where: { id: req.params.id, userId: req.user.id }
+      where: { id: req.params.id, userId: req.user.id },
     });
-if (!order) {
-  return res.status(404).json({
-    message: "Order not found"
-  });
-}
+    if (!order) {
+      return res.status(404).json({
+        message: "Order not found",
+      });
+    }
 
-if (order.status === "CANCELLED") {
-  return res.status(400).json({
-    message: "Order already cancelled"
-  });
-}
+    if (order.status === "CANCELLED") {
+      return res.status(400).json({
+        message: "Order already cancelled",
+      });
+    }
 
     const progressed = await OrderItem.findOne({
-      where: { orderId: order.id, status: ["PACKED", "OUT_FOR_DELIVERY", "DELIVERED"] }
+      where: {
+        orderId: order.id,
+        status: ["PACKED", "OUT_FOR_DELIVERY", "DELIVERED"],
+      },
     });
 
     if (progressed) {
@@ -147,7 +148,7 @@ if (order.status === "CANCELLED") {
 export const getOrderByIdAdmin = async (req, res) => {
   try {
     const order = await Order.findByPk(req.params.id, {
-      include: OrderItem // Include items so the admin sees what was bought
+      include: OrderItem, // Include items so the admin sees what was bought
     });
 
     if (!order) {
@@ -163,7 +164,10 @@ export const getOrderByIdAdmin = async (req, res) => {
 
 export const getAllOrdersAdmin = async (req, res) => {
   try {
-    const orders = await Order.findAll({ include: OrderItem });
+    const orders = await Order.findAll({
+      include: OrderItem,
+      order: [["createdAt", "DESC"]],
+    });
     res.json(orders);
   } catch {
     res.status(500).json({ message: "Failed to fetch all orders" });
@@ -172,34 +176,31 @@ export const getAllOrdersAdmin = async (req, res) => {
 
 export const updateOrderStatusAdmin = async (req, res) => {
   try {
-          const { status } = req.body;
+    const { status } = req.body;
 
     if (!validateStatus(status, ["OUT_FOR_DELIVERY", "DELIVERED"])) {
       return res.status(400).json({ message: "Invalid order status" });
     }
 
     const order = await Order.findByPk(req.params.id, {
-      include: OrderItem
+      include: OrderItem,
     });
 
-    if (!order)
-      return res.status(404).json({ message: "Order not found" });
+    if (!order) return res.status(404).json({ message: "Order not found" });
 
-
-  if (order.status === "CANCELLED") {
+    if (order.status === "CANCELLED") {
       return res.status(400).json({
-        message: "Cancelled order cannot be updated"
+        message: "Cancelled order cannot be updated",
       });
     }
 
-
     const hasUnpackedItems = order.OrderItems.some(
-      item => item.status !== "PACKED"
+      (item) => item.status !== "PACKED"
     );
 
     if (hasUnpackedItems) {
       return res.status(400).json({
-        message: "All items must be PACKED first"
+        message: "All items must be PACKED first",
       });
     }
 
@@ -208,7 +209,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
 
     res.json({
       message: `Order status updated to ${status}`,
-      order
+      order,
     });
   } catch (err) {
     console.error(err);
@@ -216,26 +217,22 @@ export const updateOrderStatusAdmin = async (req, res) => {
   }
 };
 
-
-
 /* VENDOR */
 export const getVendorOrders = async (req, res) => {
-
   try {
     const items = await OrderItem.findAll({
       where: { vendorId: req.user.id },
-      include: Order
+      include: Order,
+      order: [["createdAt", "DESC"]],
     });
 
- //   console.log("Items found:", items);
+    //   console.log("Items found:", items);
     res.json(items);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to fetch vendor orders" });
   }
 };
-
-
 
 export const updateOrderItemStatus = async (req, res) => {
   try {
@@ -250,11 +247,10 @@ export const updateOrderItemStatus = async (req, res) => {
     }
 
     if (item.status === "CANCELLED") {
-  return res.status(400).json({
-    message: "Cancelled item cannot be packed"
-  });
-}
-
+      return res.status(400).json({
+        message: "Cancelled item cannot be packed",
+      });
+    }
 
     if (!req.body.status) {
       return res.status(400).json({ message: "Status is required" });
@@ -274,9 +270,6 @@ export const updateOrderItemStatus = async (req, res) => {
   }
 };
 
-
-
-
 export const updateAdminOrderItemStatus = async (req, res) => {
   try {
     const item = await OrderItem.findByPk(req.params.id);
@@ -290,27 +283,28 @@ export const updateAdminOrderItemStatus = async (req, res) => {
       return res.status(403).json({ message: "Not an admin item" });
     }
 
-  
     if (!req.body.status) {
       return res.status(400).json({ message: "Status is required" });
     }
 
     if (item.status === "CANCELLED") {
-  return res.status(400).json({
-    message: "Cancelled item cannot be packed"
-  });
-}
+      return res.status(400).json({
+        message: "Cancelled item cannot be packed",
+      });
+    }
 
- //   item.status = req.body.status;
+    //   item.status = req.body.status;
     if (item.status === "DELIVERED") {
-  return res.status(400).json({
-    message: "Delivered item cannot be updated"
-  });
-}
-    
-const { status } = req.body;
-    if (!validateStatus(status, ["PACKED"]))
-      return res.status(400).json({ message: "Only PACKED allowed" });
+      return res.status(400).json({
+        message: "Delivered item cannot be updated",
+      });
+    }
+
+    const { status } = req.body;
+    if (!validateStatus(status, ["PACKED", "PENDING"]))
+      return res
+        .status(400)
+        .json({ message: "Only PACKED or PENDING allowed" });
 
     item.status = status;
     await item.save();
@@ -332,40 +326,34 @@ const { status } = req.body;
       );
     }
 */
-    
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Update failed" });
   }
 };
 
-
-
-
-
 export const placeOrder = async (req, res) => {
   try {
     const { amount, address, paymentMethod } = req.body;
 
-     // NEGATIVE CHECKING (IMPORTANT)
+    // NEGATIVE CHECKING (IMPORTANT)
     if (!amount || amount <= 0) {
       return res.status(400).json({
-        message: "Invalid order amount"
+        message: "Invalid order amount",
       });
     }
 
     if (!address) {
       return res.status(400).json({
-        message: "Shipping address is required"
+        message: "Shipping address is required",
       });
     }
 
     if (!paymentMethod) {
       return res.status(400).json({
-        message: "Payment method is required"
+        message: "Payment method is required",
       });
     }
-
 
     const order = await Order.create({
       userId: req.user.id,
@@ -374,8 +362,7 @@ export const placeOrder = async (req, res) => {
       paymentMethod,
       payment: false,
       status: "PENDING",
-      date: Date.now()
-
+      date: Date.now(),
     });
 
     //  COD FLOW
@@ -385,20 +372,19 @@ export const placeOrder = async (req, res) => {
 
       return res.status(201).json({
         message: "Order placed successfully with COD",
-        order
+        order,
       });
     }
 
     //  RAZORPAY FLOW
     return res.status(201).json({
       message: "Order created. Proceed to payment.",
-      order
+      order,
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
-
 
 export const assignDeliveryBoy = async (req, res) => {
   try {
@@ -412,7 +398,7 @@ export const assignDeliveryBoy = async (req, res) => {
 
     await DeliveryAssignment.create({
       orderId,
-      deliveryBoyId
+      deliveryBoyId,
     });
 
     await Order.update(
@@ -425,7 +411,6 @@ export const assignDeliveryBoy = async (req, res) => {
     res.status(500).json({ message: "Assignment failed" });
   }
 };
-
 
 export const reassignDeliveryBoy = async (req, res) => {
   try {
@@ -442,7 +427,7 @@ export const reassignDeliveryBoy = async (req, res) => {
     await DeliveryAssignment.create({
       orderId,
       deliveryBoyId: newDeliveryBoyId,
-      status: "REASSIGNED"
+      status: "REASSIGNED",
     });
 
     res.json({ message: "Delivery boy reassigned successfully" });
@@ -462,4 +447,33 @@ export const getAllDeliveryBoys = async (req, res) => {
   }
 };
 
+// ... existing imports
 
+// 👇 ADD THESE FUNCTIONS AT THE BOTTOM
+
+export const createDeliveryBoy = async (req, res) => {
+  try {
+    const { name, phone } = req.body;
+    // Basic validation
+    if (!name || !phone) {
+      return res.status(400).json({ message: "Name and Phone are required" });
+    }
+
+    const newBoy = await DeliveryBoy.create({ name, phone, active: true });
+    res.status(201).json(newBoy);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to add delivery boy" });
+  }
+};
+
+export const deleteDeliveryBoy = async (req, res) => {
+  try {
+    const { id } = req.params;
+    await DeliveryBoy.destroy({ where: { id } });
+    res.json({ message: "Delivery boy removed successfully" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to remove delivery boy" });
+  }
+};
