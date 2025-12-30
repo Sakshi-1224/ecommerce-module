@@ -1,7 +1,12 @@
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
+import minioClient, { initBucket } from "../config/minioClient.js";
 
+const BUCKET_NAME = "user-profiles";
+
+// Initialize bucket on server start (or handled elsewhere)
+initBucket(BUCKET_NAME);
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const register = async (req, res) => {
@@ -50,6 +55,29 @@ export const register = async (req, res) => {
       role: "user",
     });
 
+
+    const token = jwt.sign(
+      {
+        id: user.id,
+        role: user.role,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.status(201).json({
+      message: "User registered successfully",
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        phone: user.phone,
+        email: user.email,
+        role: user.role,
+        profilePic: user.profilePic // Even if null, send the key
+      },
+    });
+
     res.status(201).json({ message: "User registered successfully" });
   } catch (err) {
     console.error(err);
@@ -92,6 +120,7 @@ export const login = async (req, res) => {
         name: user.name,
         phone: user.phone,
         email: user.email,
+        profilePic: user.profilePic
       },
     });
   } catch (err) {
@@ -115,12 +144,17 @@ export const logout = async (req, res) => {
 
 export const me = async (req, res) => {
   try {
-    res.json(req.user);
+    const user = await User.findByPk(req.user.id, {
+      attributes: { exclude: ["password"] }, // Return everything except password
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    res.json(user);
   } catch (err) {
     console.error(err);
-    res.status(500).json({
-      message: "Internal server error",
-    });
+    res.status(500).json({ message: "Internal server error" });
   }
 };
 
@@ -175,7 +209,7 @@ export const getAllUsers = async (req, res) => {
 
 
 
-
+/*
 export const updateProfile = async (req, res) => {
   try {
     const { name, email } = req.body;
@@ -229,5 +263,65 @@ export const updateProfile = async (req, res) => {
     res.status(500).json({
       message: "Failed to update profile",
     });
+  }
+};
+*/
+
+export const updateProfile = async (req, res) => {
+  try {
+    // Note: When using Multer, text fields are in req.body, file is in req.file
+    const { name, email } = req.body;
+    const userId = req.user.id;
+
+    const user = await User.findByPk(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // 1. Handle Text Updates
+    if (name) user.name = name;
+    if (email && email !== user.email) {
+      const exists = await User.findOne({ where: { email } });
+      if (exists) return res.status(400).json({ message: "Email already in use" });
+      user.email = email;
+    }
+
+    // 2. Handle File Upload to MinIO
+    if (req.file) {
+      const file = req.file;
+      
+      // Create a unique filename: timestamp-originalName
+      const fileName = `${Date.now()}-${file.originalname.replace(/\s+/g, '-')}`;
+
+      // Upload buffer to MinIO
+      await minioClient.putObject(
+        BUCKET_NAME,
+        fileName,
+        file.buffer,
+        file.size,
+        { "Content-Type": file.mimetype } // Important for browser to display it as image
+      );
+
+      // Construct the Public URL
+      // Format: http://localhost:9000/bucket-name/filename
+      const imageUrl = `http://localhost:9000/${BUCKET_NAME}/${fileName}`;
+      
+      user.profilePic = imageUrl;
+    }
+
+    await user.save();
+
+    res.json({
+      message: "Profile updated successfully",
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        profilePic: user.profilePic,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    console.error("Update Profile Error:", error);
+    res.status(500).json({ message: "Failed to update profile" });
   }
 };
