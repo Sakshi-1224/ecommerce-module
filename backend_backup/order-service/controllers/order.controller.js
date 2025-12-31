@@ -1,23 +1,389 @@
 import Order from "../models/Order.js";
+import VendorOrder from "../models/VendorOrder.js";
 import OrderItem from "../models/OrderItem.js";
-import { Op } from "sequelize";
 import DeliveryBoy from "../models/DeliveryBoy.js";
-import DeliveryAssignment from "../models/DeliveryAssignment.js";
+import { Op } from "sequelize";
 import axios from "axios";
-const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL;
-const validateStatus = (status, allowed) => {
-  return allowed.includes(status);
-};
 
-/* USER */
+const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL;
+
+/* =====================
+   USER
+===================== */
+
 export const checkout = async (req, res) => {
   try {
     const { items, amount, address, paymentMethod, payment } = req.body;
 
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ message: "Cart items are required" });
+    await axios.post(
+      `${PRODUCT_SERVICE_URL}/reduce-stock`,
+      { items },
+      { headers: { Authorization: req.headers.authorization } }
+    );
+
+    const order = await Order.create({
+      userId: req.user.id,
+      amount,
+      address,
+      paymentMethod,
+      payment,
+      date: Date.now()
+    });
+
+    const vendorMap = {};
+    items.forEach(i => {
+      if (!vendorMap[i.vendorId]) vendorMap[i.vendorId] = [];
+      vendorMap[i.vendorId].push(i);
+    });
+
+    for (const vendorId in vendorMap) {
+      const vo = await VendorOrder.create({
+        orderId: order.id,
+        vendorId
+      });
+
+      await OrderItem.bulkCreate(
+        vendorMap[vendorId].map(i => ({
+          vendorOrderId: vo.id,
+          productId: i.productId,
+          quantity: i.quantity,
+          price: i.price
+        }))
+      );
     }
 
+    res.status(201).json({ orderId: order.id });
+  } catch (err) {
+    res.status(500).json({ message: "Checkout failed" });
+  }
+};
+
+export const getOrderById = async (req, res) => {
+  const order = await Order.findOne({
+    where: { id: req.params.id, userId: req.user.id },
+    include: {
+      model: VendorOrder,
+      include: OrderItem
+    }
+  });
+
+  if (!order) return res.status(404).json({ message: "Order not found" });
+
+  res.json({
+    orderId: order.id,
+    status: order.status,
+    items: order.VendorOrders.flatMap(vo =>
+      vo.OrderItems.map(item => ({
+        productId: item.productId,
+        quantity: item.quantity,
+         vendorId: vo.vendorId,      
+         vendorOrderId: vo.id,      
+         status: vo.status
+      }))
+    )
+  });
+};
+
+export const trackOrder = async (req, res) => {
+  try {
+    const order = await Order.findOne({
+      where: { id: req.params.id, userId: req.user.id },
+      include: {
+        model: VendorOrder,
+        include: OrderItem
+      }
+    });
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    res.json({
+      orderId: order.id,
+      orderStatus: order.status,
+      items: order.VendorOrders.flatMap(vo =>
+        vo.OrderItems.map(item => ({
+          productId: item.productId,
+          quantity: item.quantity,
+          status: vo.status,          // 🔥 item-wise status via vendor
+          vendorId: vo.vendorId
+        }))
+      )
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Tracking failed" });
+  }
+};
+
+
+export const cancelOrder = async (req, res) => {
+  try {
+    const order = await Order.findOne({
+      where: { id: req.params.id, userId: req.user.id },
+      include: {
+        model: VendorOrder,
+        include: OrderItem
+      }
+    });
+
+    if (!order)
+      return res.status(404).json({ message: "Order not found" });
+
+    if (order.status === "CANCELLED")
+      return res.status(400).json({ message: "Order already cancelled" });
+
+    // ❌ Check if ANY vendor order has started
+    const blocked = order.VendorOrders.some(vo =>
+      ["PACKED", "DELIVERY_ASSIGNED", "OUT_FOR_DELIVERY", "DELIVERED"].includes(
+        vo.status
+      )
+    );
+
+    if (blocked) {
+      return res.status(400).json({
+        message: "Order cannot be cancelled as processing has started"
+      });
+    }
+
+    // 🔁 Restore stock
+    const restoreItems = order.VendorOrders.flatMap(vo =>
+      vo.OrderItems.map(item => ({
+        productId: item.productId,
+        quantity: item.quantity
+      }))
+    );
+
+    await axios.post(
+      `${PRODUCT_SERVICE_URL}/restore-stock`,
+      { items: restoreItems },
+      { headers: { Authorization: req.headers.authorization } }
+    );
+
+    // ❌ Cancel everything
+    order.status = "CANCELLED";
+    await order.save();
+
+    await VendorOrder.update(
+      { status: "CANCELLED" },
+      { where: { orderId: order.id } }
+    );
+
+    res.json({ message: "Order cancelled successfully" });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Cancel failed" });
+  }
+};
+
+export const cancelVendorOrder = async (req, res) => {
+  try {
+    const { orderId, vendorOrderId } = req.params;
+
+    const vo = await VendorOrder.findOne({
+      where: { id: vendorOrderId, orderId },
+      include: OrderItem
+    });
+
+    if (!vo)
+      return res.status(404).json({ message: "Item not found" });
+
+    if (vo.status !== "PENDING") {
+      return res.status(400).json({
+        message: "Item cannot be cancelled after processing started"
+      });
+    }
+
+    // 🔁 Restore stock for this vendor only
+    const restoreItems = vo.OrderItems.map(item => ({
+      productId: item.productId,
+      quantity: item.quantity
+    }));
+
+    await axios.post(
+      `${PRODUCT_SERVICE_URL}/restore-stock`,
+      { items: restoreItems },
+      { headers: { Authorization: req.headers.authorization } }
+    );
+
+    // ❌ Cancel vendor shipment
+    vo.status = "CANCELLED";
+    await vo.save();
+
+    // 🔄 Update main order status
+    const remaining = await VendorOrder.findOne({
+      where: {
+        orderId,
+        status: { [Op.notIn]: ["CANCELLED", "DELIVERED"] }
+      }
+    });
+
+    if (!remaining) {
+      await Order.update(
+        { status: "CANCELLED" },
+        { where: { id: orderId } }
+      );
+    } else {
+      await Order.update(
+        { status: "PARTIALLY_CANCELLED" },
+        { where: { id: orderId } }
+      );
+    }
+
+    res.json({ message: "Item cancelled successfully" });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Item cancel failed" });
+  }
+};
+
+/* =====================
+   VENDOR
+===================== */
+
+export const getVendorOrders = async (req, res) => {
+  const orders = await VendorOrder.findAll({
+    where: { vendorId: req.user.id },
+    include: OrderItem,
+    order: [["createdAt", "DESC"]]
+  });
+
+  res.json(orders);
+};
+
+export const packVendorOrder = async (req, res) => {
+  const vo = await VendorOrder.findByPk(req.params.id);
+
+  if (!vo || vo.vendorId !== req.user.id)
+    return res.status(403).json({ message: "Unauthorized" });
+
+  vo.status = "PACKED";
+  await vo.save();
+
+  res.json({ message: "Order packed" });
+};
+
+export const getDeliveryBoysByArea = async (req, res) => {
+  const boys = await DeliveryBoy.findAll({
+    where: { area: req.query.area, active: true }
+  });
+
+  res.json(boys);
+};
+
+export const assignDeliveryBoy = async (req, res) => {
+  const vo = await VendorOrder.findByPk(req.params.id);
+  const boy = await DeliveryBoy.findByPk(req.body.deliveryBoyId);
+
+  if (!vo || vo.vendorId !== req.user.id)
+    return res.status(403).json({ message: "Unauthorized" });
+
+  if (!boy || !boy.active)
+    return res.status(400).json({ message: "Delivery boy unavailable" });
+
+  vo.deliveryBoyId = boy.id;
+  vo.status = "DELIVERY_ASSIGNED";
+  await vo.save();
+
+  res.json({ message: "Delivery boy assigned" });
+};
+
+export const reassignDeliveryBoy = async (req, res) => {
+  const vo = await VendorOrder.findByPk(req.params.id);
+  const boy = await DeliveryBoy.findByPk(req.body.newDeliveryBoyId);
+
+  if (!vo || vo.vendorId !== req.user.id)
+    return res.status(403).json({ message: "Unauthorized" });
+
+  if (vo.status === "DELIVERED")
+    return res.status(400).json({ message: "Already delivered" });
+
+  if (!boy || !boy.active)
+    return res.status(400).json({ message: "Delivery boy unavailable" });
+
+  vo.deliveryBoyId = boy.id;
+  vo.status = "DELIVERY_ASSIGNED";
+  await vo.save();
+
+  res.json({ message: "Delivery boy reassigned" });
+};
+
+export const outForDelivery = async (req, res) => {
+  const vo = await VendorOrder.findByPk(req.params.id);
+
+  if (!vo || vo.vendorId !== req.user.id)
+    return res.status(403).json({ message: "Unauthorized" });
+
+  vo.status = "OUT_FOR_DELIVERY";
+  await vo.save();
+
+  res.json({ message: "Out for delivery" });
+};
+
+export const markDelivered = async (req, res) => {
+  const vo = await VendorOrder.findByPk(req.params.id);
+
+  if (!vo || vo.vendorId !== req.user.id)
+    return res.status(403).json({ message: "Unauthorized" });
+
+  vo.status = "DELIVERED";
+  await vo.save();
+
+  const pending = await VendorOrder.findOne({
+    where: {
+      orderId: vo.orderId,
+      status: { [Op.ne]: "DELIVERED" }
+    }
+  });
+
+  if (!pending) {
+    await Order.update(
+      { status: "DELIVERED" },
+      { where: { id: vo.orderId } }
+    );
+  }
+
+  res.json({ message: "Order delivered" });
+};
+
+/* =====================
+   ADMIN (READ ONLY)
+===================== */
+
+export const getAllOrdersAdmin = async (req, res) => {
+  const orders = await Order.findAll({
+    include: VendorOrder,
+    order: [["createdAt", "DESC"]]
+  });
+
+  res.json(orders);
+};
+
+export const getAllDeliveryBoys = async (req, res) => {
+  const boys = await DeliveryBoy.findAll();
+  res.json(boys);
+};
+
+export const createDeliveryBoy = async (req, res) => {
+  const { name, phone, area } = req.body;
+  const boy = await DeliveryBoy.create({ name, phone, area });
+  res.status(201).json(boy);
+};
+
+export const deleteDeliveryBoy = async (req, res) => {
+  await DeliveryBoy.destroy({ where: { id: req.params.id } });
+  res.json({ message: "Delivery boy removed" });
+};
+
+
+//placeorder
+export const placeOrder = async (req, res) => {
+  try {
+    const { amount, address, paymentMethod } = req.body;
+
+    // ✅ BASIC VALIDATION
     if (!amount || amount <= 0) {
       return res.status(400).json({ message: "Invalid order amount" });
     }
@@ -30,488 +396,33 @@ export const checkout = async (req, res) => {
       return res.status(400).json({ message: "Invalid payment method" });
     }
 
-    if (!PRODUCT_SERVICE_URL) {
-      console.error("PRODUCT_SERVICE_URL not set");
-      return res.status(500).json({ message: "Product service unavailable" });
-    }
-
-    await axios.post(
-      `${PRODUCT_SERVICE_URL}/reduce-stock`,
-      {
-        items,
-      },
-      {
-        headers: { Authorization: req.headers.authorization },
-      }
-    );
-
+    // ⚠️ TEMP ORDER (NO ITEMS YET)
     const order = await Order.create({
       userId: req.user.id,
       amount,
       address,
       paymentMethod,
-      payment,
-      date: Date.now(),
+      payment: paymentMethod === "COD",
+      status: "IN_PROGRESS",
+      date: Date.now()
     });
 
-    await OrderItem.bulkCreate(
-      items.map((i) => ({
-        orderId: order.id,
-        productId: i.productId,
-        vendorId: i.vendorId || null,
-        quantity: i.quantity,
-        price: i.price,
-        name: i.name,
-        image: i.image,
-      }))
-    );
-
-    res.status(201).json({ orderId: order.id });
-  } catch (err) {
-    console.error("Checkout error:", err);
-    res.status(500).json({
-      message: err.response?.data?.message || err.message || "Checkout failed",
-    });
-  }
-};
-
-export const getUserOrders = async (req, res) => {
-  try {
-    const orders = await Order.findAll({
-      where: { userId: req.user.id },
-      include: OrderItem,
-    });
-    res.json(orders);
-  } catch {
-    res.status(500).json({ message: "Failed to fetch orders" });
-  }
-};
-
-export const getOrderById = async (req, res) => {
-  try {
-    const order = await Order.findOne({
-      where: { id: req.params.id, userId: req.user.id },
-      include: OrderItem,
-    });
-    if (!order) {
-      return res.status(404).json({
-        message: "Order not found",
-      });
-    }
-    res.json(order);
-  } catch {
-    res.status(500).json({ message: "Failed to fetch order" });
-  }
-};
-
-export const trackOrder = async (req, res) => {
-  try {
-    const order = await Order.findOne({
-      where: { id: req.params.id, userId: req.user.id },
-      include: OrderItem,
-    });
-    if (!order) {
-      return res.status(404).json({
-        message: "Order not found",
-      });
-    }
-    res.json({ status: order.status, items: order.OrderItems });
-  } catch {
-    res.status(500).json({ message: "Tracking failed" });
-  }
-};
-
-export const cancelOrder = async (req, res) => {
-  try {
-    const order = await Order.findOne({
-      where: { id: req.params.id, userId: req.user.id },
-    });
-    if (!order) {
-      return res.status(404).json({
-        message: "Order not found",
-      });
-    }
-
-    if (order.status === "CANCELLED") {
-      return res.status(400).json({
-        message: "Order already cancelled",
-      });
-    }
-
-    const progressed = await OrderItem.findOne({
-      where: {
-        orderId: order.id,
-        status: ["PACKED", "OUT_FOR_DELIVERY", "DELIVERED"],
-      },
-    });
-
-    if (progressed) {
-      return res.status(400).json({ message: "Cannot cancel order now" });
-    }
-
-    // 🔁 RESTORE STOCK
-    await axios.post(
-      `${PRODUCT_SERVICE_URL}/restore-stock`,
-      {
-        items: order.OrderItems.map((item) => ({
-          productId: item.productId,
-          quantity: item.quantity,
-        })),
-      },
-      {
-        headers: { Authorization: req.headers.authorization },
-      }
-    );
-
-    order.status = "CANCELLED";
-    await order.save();
-
-    await OrderItem.update(
-      { status: "CANCELLED" },
-      { where: { orderId: order.id } }
-    );
-
-    res.json({ message: "Order cancelled" });
-  } catch (err) {
-    console.error("Cancel error:", err);
-    res.status(500).json({
-      message: err.response?.data?.message || err.message || "Cancel failed",
-    });
-  }
-};
-
-/* ADMIN */
-/* ... existing code ... */
-
-export const getOrderByIdAdmin = async (req, res) => {
-  try {
-    const order = await Order.findByPk(req.params.id, {
-      include: OrderItem, // Include items so the admin sees what was bought
-    });
-
-    if (!order) {
-      return res.status(404).json({ message: "Order not found" });
-    }
-
-    res.json(order);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Failed to fetch order details" });
-  }
-};
-
-export const getAllOrdersAdmin = async (req, res) => {
-  try {
-    const orders = await Order.findAll({
-      include: OrderItem,
-      order: [["createdAt", "DESC"]],
-    });
-    res.json(orders);
-  } catch {
-    res.status(500).json({ message: "Failed to fetch all orders" });
-  }
-};
-
-export const updateOrderStatusAdmin = async (req, res) => {
-  try {
-    const { status } = req.body;
-
-    if (!validateStatus(status, ["OUT_FOR_DELIVERY", "DELIVERED"])) {
-      return res.status(400).json({ message: "Invalid order status" });
-    }
-
-    const order = await Order.findByPk(req.params.id, {
-      include: OrderItem,
-    });
-
-    if (!order) return res.status(404).json({ message: "Order not found" });
-
-    if (order.status === "CANCELLED") {
-      return res.status(400).json({
-        message: "Cancelled order cannot be updated",
-      });
-    }
-
-    const hasUnpackedItems = order.OrderItems.some(
-      (item) => item.status !== "PACKED"
-    );
-
-    if (hasUnpackedItems) {
-      return res.status(400).json({
-        message: "All items must be PACKED first",
-      });
-    }
-
-    order.status = status;
-    await order.save();
-
-    res.json({
-      message: `Order status updated to ${status}`,
-      order,
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Status update failed" });
-  }
-};
-
-/* VENDOR */
-export const getVendorOrders = async (req, res) => {
-  try {
-    const items = await OrderItem.findAll({
-      where: { vendorId: req.user.id },
-      include: Order,
-      order: [["createdAt", "DESC"]],
-    });
-
-    //   console.log("Items found:", items);
-    res.json(items);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Failed to fetch vendor orders" });
-  }
-};
-
-export const updateOrderItemStatus = async (req, res) => {
-  try {
-    const item = await OrderItem.findByPk(req.params.id);
-
-    if (!item) {
-      return res.status(404).json({ message: "Order item not found" });
-    }
-
-    if (item.vendorId !== req.user.id) {
-      return res.status(403).json({ message: "Unauthorized" });
-    }
-
-    if (item.status === "CANCELLED") {
-      return res.status(400).json({
-        message: "Cancelled item cannot be packed",
-      });
-    }
-
-    if (!req.body.status) {
-      return res.status(400).json({ message: "Status is required" });
-    }
-
-    const { status } = req.body;
-    if (!validateStatus(status, ["PACKED"]))
-      return res.status(400).json({ message: "Only PACKED allowed" });
-
-    item.status = status;
-    await item.save();
-
-    res.json({ message: "Item packed successfully", item });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Update failed" });
-  }
-};
-
-export const updateAdminOrderItemStatus = async (req, res) => {
-  try {
-    const item = await OrderItem.findByPk(req.params.id);
-
-    if (!item) {
-      return res.status(404).json({ message: "Order item not found" });
-    }
-
-    // Admin items only
-    if (item.vendorId !== null) {
-      return res.status(403).json({ message: "Not an admin item" });
-    }
-
-    if (!req.body.status) {
-      return res.status(400).json({ message: "Status is required" });
-    }
-
-    if (item.status === "CANCELLED") {
-      return res.status(400).json({
-        message: "Cancelled item cannot be packed",
-      });
-    }
-
-    //   item.status = req.body.status;
-    if (item.status === "DELIVERED") {
-      return res.status(400).json({
-        message: "Delivered item cannot be updated",
-      });
-    }
-
-    const { status } = req.body;
-    if (!validateStatus(status, ["PACKED", "PENDING"]))
-      return res
-        .status(400)
-        .json({ message: "Only PACKED or PENDING allowed" });
-
-    item.status = status;
-    await item.save();
-
-    res.json({ message: "Admin item packed", item });
-    //  AUTO UPDATE ORDER STATUS
-    /*
-    const pending = await OrderItem.findOne({
-      where: {
-        orderId: item.orderId,
-        status: { [Op.ne]: "PACKED" }
-      }
-    });
-
-    if (!pending) {
-      await Order.update(
-        { status: "READY_TO_SHIP" },
-        { where: { id: item.orderId } }
-      );
-    }
-*/
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Update failed" });
-  }
-};
-
-export const placeOrder = async (req, res) => {
-  try {
-    const { amount, address, paymentMethod } = req.body;
-
-    // NEGATIVE CHECKING (IMPORTANT)
-    if (!amount || amount <= 0) {
-      return res.status(400).json({
-        message: "Invalid order amount",
-      });
-    }
-
-    if (!address) {
-      return res.status(400).json({
-        message: "Shipping address is required",
-      });
-    }
-
-    if (!paymentMethod) {
-      return res.status(400).json({
-        message: "Payment method is required",
-      });
-    }
-
-    const order = await Order.create({
-      userId: req.user.id,
-      amount,
-      address,
-      paymentMethod,
-      payment: false,
-      status: "PENDING",
-      date: Date.now(),
-    });
-
-    //  COD FLOW
+    // ✅ COD → COMPLETE ORDER DIRECTLY
     if (paymentMethod === "COD") {
-      order.status = "PLACED";
-      await order.save();
-
       return res.status(201).json({
-        message: "Order placed successfully with COD",
-        order,
+        message: "Order created successfully with COD",
+        orderId: order.id
       });
     }
 
-    //  RAZORPAY FLOW
+    // ✅ ONLINE PAYMENT → PROCEED TO GATEWAY
     return res.status(201).json({
-      message: "Order created. Proceed to payment.",
-      order,
-    });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-};
-
-export const assignDeliveryBoy = async (req, res) => {
-  try {
-    const { orderId } = req.params;
-    const { deliveryBoyId } = req.body;
-
-    const deliveryBoy = await DeliveryBoy.findByPk(deliveryBoyId);
-    if (!deliveryBoy || !deliveryBoy.active) {
-      return res.status(400).json({ message: "Delivery boy not available" });
-    }
-
-    await DeliveryAssignment.create({
-      orderId,
-      deliveryBoyId,
+      message: "Order created. Proceed to payment",
+      orderId: order.id
     });
 
-    await Order.update(
-      { status: "OUT_FOR_DELIVERY" },
-      { where: { id: orderId } }
-    );
-
-    res.json({ message: "Delivery boy assigned successfully" });
-  } catch (err) {
-    res.status(500).json({ message: "Assignment failed" });
-  }
-};
-
-export const reassignDeliveryBoy = async (req, res) => {
-  try {
-    const { orderId } = req.params;
-    const { oldDeliveryBoyId, newDeliveryBoyId, reason } = req.body;
-
-    // mark old assignment failed
-    await DeliveryAssignment.update(
-      { status: "FAILED", reason },
-      { where: { orderId, deliveryBoyId: oldDeliveryBoyId } }
-    );
-
-    // assign new delivery boy
-    await DeliveryAssignment.create({
-      orderId,
-      deliveryBoyId: newDeliveryBoyId,
-      status: "REASSIGNED",
-    });
-
-    res.json({ message: "Delivery boy reassigned successfully" });
-  } catch (err) {
-    res.status(500).json({ message: "Reassignment failed" });
-  }
-};
-
-// 👇 ADD THIS NEW FUNCTION
-export const getAllDeliveryBoys = async (req, res) => {
-  try {
-    const deliveryBoys = await DeliveryBoy.findAll();
-    res.json(deliveryBoys);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Failed to fetch delivery boys" });
-  }
-};
-
-// ... existing imports
-
-// 👇 ADD THESE FUNCTIONS AT THE BOTTOM
-
-export const createDeliveryBoy = async (req, res) => {
-  try {
-    const { name, phone } = req.body;
-    // Basic validation
-    if (!name || !phone) {
-      return res.status(400).json({ message: "Name and Phone are required" });
-    }
-
-    const newBoy = await DeliveryBoy.create({ name, phone, active: true });
-    res.status(201).json(newBoy);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Failed to add delivery boy" });
-  }
-};
-
-export const deleteDeliveryBoy = async (req, res) => {
-  try {
-    const { id } = req.params;
-    await DeliveryBoy.destroy({ where: { id } });
-    res.json({ message: "Delivery boy removed successfully" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Failed to remove delivery boy" });
+    res.status(500).json({ message: "Order creation failed" });
   }
 };

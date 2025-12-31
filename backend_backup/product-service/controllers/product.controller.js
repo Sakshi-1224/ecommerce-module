@@ -274,3 +274,39 @@ export const restoreStock = async (req, res) => {
     res.status(500).json({ message: "Stock restore failed" });
   }
 };
+
+
+
+export const getAllVendorProducts = async (req, res) => {
+  try {
+    const { vendorId } = req.query;
+
+    // optional filter
+    const whereCondition = {};
+    if (vendorId) {
+      whereCondition.vendorId = vendorId;
+    }
+
+    const products = await Product.findAll({
+      where: whereCondition,
+      include: [
+        {
+          model: Category,
+          attributes: ["id", "name"]
+        },
+        {
+          model: User,
+          attributes: ["id", "name", "email"], // vendor details
+        }
+      ],
+      order: [["createdAt", "DESC"]]
+    });
+
+    res.json(products);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: "Failed to fetch vendor products"
+    });
+  }
+};

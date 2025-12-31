@@ -398,46 +398,9 @@ app.delete("/api/cart/remove/:id", async (req, res) => {
   }
 });
 
-/* ======================
-   VENDOR ROUTES
-====================== */
 
-app.get("/api/orders/vendor", async (req, res) => {
-  try {
-    const response = await axios.get(`${ORDER_SERVICE_URL}/vendor`, {
-      headers: {
-        Authorization: req.headers.authorization,
-      },
-    });
 
-    res.status(response.status).json(response.data);
-  } catch (err) {
-    res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Order service error",
-    });
-  }
-});
 
-// Update vendor order item status
-app.put("/api/orders/item/:id", async (req, res) => {
-  try {
-    const response = await axios.put(
-      `${ORDER_SERVICE_URL}/item/${req.params.id}`,
-      req.body,
-      {
-        headers: {
-          Authorization: req.headers.authorization,
-        },
-      }
-    );
-
-    res.status(response.status).json(response.data);
-  } catch (err) {
-    res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Order service error",
-    });
-  }
-});
 
 /* ======================
    USER ROUTES
@@ -464,107 +427,218 @@ app.post("/api/orders/checkout", async (req, res) => {
   }
 });
 
-// Get user orders
-app.get("/api/orders", async (req, res) => {
+app.post("/api/orders", async (req, res) => {
   try {
-    const response = await axios.get(ORDER_SERVICE_URL, {
-      headers: {
-        Authorization: req.headers.authorization,
-      },
-    });
-
-    res.status(response.status).json(response.data);
-  } catch (err) {
-    res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Order service error",
-    });
-  }
-});
-
-// Get order by ID
-app.get("/api/orders/:id", async (req, res) => {
-  try {
-    const response = await axios.get(`${ORDER_SERVICE_URL}/${req.params.id}`, {
-      headers: {
-        Authorization: req.headers.authorization,
-      },
-    });
-
-    res.status(response.status).json(response.data);
-  } catch (err) {
-    res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Order service error",
-    });
-  }
-});
-
-// Cancel order
-app.put("/api/orders/:id/cancel", async (req, res) => {
-  try {
-    const response = await axios.put(
-      `${ORDER_SERVICE_URL}/${req.params.id}/cancel`,
-      {},
+    const response = await axios.post(
+      `${ORDER_SERVICE_URL}`,
+      req.body,
       {
-        headers: {
-          Authorization: req.headers.authorization,
-        },
+        headers: { Authorization: req.headers.authorization }
       }
     );
-
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Order service error",
+      message: err.response?.data?.message || "Order service error"
     });
   }
 });
 
-// Track order
 app.get("/api/orders/track/:id", async (req, res) => {
   try {
     const response = await axios.get(
       `${ORDER_SERVICE_URL}/track/${req.params.id}`,
       {
-        headers: {
-          Authorization: req.headers.authorization,
-        },
+        headers: { Authorization: req.headers.authorization }
       }
     );
-
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Order service error",
+      message: err.response?.data?.message || "Order service error"
     });
   }
 });
 
-/* ======================
-   ADMIN ROUTES
-====================== */
-
-// Get all orders (admin)
-app.get("/api/orders/admin/all", async (req, res) => {
+app.get("/api/orders/vendor", async (req, res) => {
   try {
-    const response = await axios.get(`${ORDER_SERVICE_URL}/admin/all`, {
-      headers: {
-        Authorization: req.headers.authorization,
-      },
-    });
-
+    const response = await axios.get(
+      `${ORDER_SERVICE_URL}/vendor`,
+      {
+        headers: { Authorization: req.headers.authorization }
+      }
+    );
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Order service error",
+      message: err.response?.data?.message || "Order service error"
     });
   }
 });
 
-// ... existing routes
 
-// 👇 ADD THESE ROUTES (Place near other admin order routes)
 
-// Add Delivery Boy
+// PACK
+app.put("/api/orders/vendor/order/:id/pack", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${ORDER_SERVICE_URL}/vendor/order/${req.params.id}/pack`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Order service error"
+    });
+  }
+});
+
+// GET DELIVERY BOYS BY AREA
+app.get("/api/orders/vendor/delivery-boys", async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${ORDER_SERVICE_URL}/vendor/delivery-boys`,
+      {
+        params: req.query,
+        headers: { Authorization: req.headers.authorization }
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Order service error"
+    });
+  }
+});
+
+// ASSIGN DELIVERY
+app.put("/api/orders/vendor/order/:id/assign-delivery", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${ORDER_SERVICE_URL}/vendor/order/${req.params.id}/assign-delivery`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Order service error"
+    });
+  }
+});
+
+// REASSIGN DELIVERY
+app.put("/api/orders/vendor/order/:id/reassign-delivery", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${ORDER_SERVICE_URL}/vendor/order/${req.params.id}/reassign-delivery`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Order service error"
+    });
+  }
+});
+
+// OUT FOR DELIVERY
+app.put("/api/orders/vendor/order/:id/out-for-delivery", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${ORDER_SERVICE_URL}/vendor/order/${req.params.id}/out-for-delivery`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Order service error"
+    });
+  }
+});
+
+// DELIVERED
+app.put("/api/orders/vendor/order/:id/delivered", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${ORDER_SERVICE_URL}/vendor/order/${req.params.id}/delivered`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Order service error"
+    });
+  }
+});
+
+// ITEM / VENDOR CANCEL
+app.put("/api/orders/:orderId/vendor/:vendorOrderId/cancel", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${ORDER_SERVICE_URL}/${req.params.orderId}/vendor/${req.params.vendorOrderId}/cancel`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Order service error"
+    });
+  }
+});
+
+// FULL ORDER CANCEL
+app.put("/api/orders/:id/cancel", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${ORDER_SERVICE_URL}/${req.params.id}/cancel`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Order service error"
+    });
+  }
+});
+
+
+
+
+app.get("/api/orders/admin/orders", async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${ORDER_SERVICE_URL}/admin/orders`,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Order service error"
+    });
+  }
+});
+
+app.get("/api/orders/admin/delivery-boys", async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${ORDER_SERVICE_URL}/admin/delivery-boys`,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Order service error"
+    });
+  }
+});
+
 app.post("/api/orders/admin/delivery-boys", async (req, res) => {
   try {
     const response = await axios.post(
@@ -574,11 +648,12 @@ app.post("/api/orders/admin/delivery-boys", async (req, res) => {
     );
     res.status(response.status).json(response.data);
   } catch (err) {
-    res.status(err.response?.status || 500).json(err.response?.data);
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Order service error"
+    });
   }
 });
 
-// Delete Delivery Boy
 app.delete("/api/orders/admin/delivery-boys/:id", async (req, res) => {
   try {
     const response = await axios.delete(
@@ -587,132 +662,30 @@ app.delete("/api/orders/admin/delivery-boys/:id", async (req, res) => {
     );
     res.status(response.status).json(response.data);
   } catch (err) {
-    res.status(err.response?.status || 500).json(err.response?.data);
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Order service error"
+    });
   }
 });
 
-// 👇 ADD THIS ROUTE TO FETCH DELIVERY BOYS
-app.get("/api/orders/admin/delivery-boys", async (req, res) => {
+
+
+
+// GET ORDER BY ID
+app.get("/api/orders/:id", async (req, res) => {
   try {
     const response = await axios.get(
-      `${ORDER_SERVICE_URL}/admin/delivery-boys`,
-      {
-        headers: { Authorization: req.headers.authorization },
-      }
+      `${ORDER_SERVICE_URL}/${req.params.id}`,
+      { headers: { Authorization: req.headers.authorization } }
     );
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Order service error",
+      message: err.response?.data?.message || "Order service error"
     });
   }
 });
 
-// ✅ ADD THIS ROUTE
-app.get("/api/orders/admin/:id", async (req, res) => {
-  try {
-    // Forward this request to the Order Service
-    // The Order Service must have a matching route: GET /admin/:id
-    const response = await axios.get(
-      `${ORDER_SERVICE_URL}/admin/${req.params.id}`,
-      {
-        headers: {
-          Authorization: req.headers.authorization, // Pass the Admin Token
-        },
-      }
-    );
-
-    res.status(response.status).json(response.data);
-  } catch (err) {
-    res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Order service error",
-    });
-  }
-});
-
-// Update admin order item status
-app.put("/api/orders/admin/item/:id", async (req, res) => {
-  try {
-    const response = await axios.put(
-      `${ORDER_SERVICE_URL}/admin/item/${req.params.id}`,
-      req.body,
-      {
-        headers: {
-          Authorization: req.headers.authorization,
-        },
-      }
-    );
-
-    res.status(response.status).json(response.data);
-  } catch (err) {
-    res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Order service error",
-    });
-  }
-});
-
-// Update full order status (admin)
-app.put("/api/orders/admin/:id/status", async (req, res) => {
-  try {
-    const response = await axios.put(
-      `${ORDER_SERVICE_URL}/admin/${req.params.id}/status`,
-      req.body,
-      {
-        headers: {
-          Authorization: req.headers.authorization,
-        },
-      }
-    );
-
-    res.status(response.status).json(response.data);
-  } catch (err) {
-    res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Order service error",
-    });
-  }
-});
-
-/* ======================
-   ADMIN ROUTES
-====================== */
-
-// ... existing admin routes ...
-
-// 👇 ADD THIS ROUTE TO ASSIGN DELIVERY BOY (If not already present)
-app.post("/api/orders/:orderId/assign", async (req, res) => {
-  try {
-    const response = await axios.post(
-      `${ORDER_SERVICE_URL}/${req.params.orderId}/assign`,
-      req.body,
-      {
-        headers: { Authorization: req.headers.authorization },
-      }
-    );
-    res.status(response.status).json(response.data);
-  } catch (err) {
-    res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Order service error",
-    });
-  }
-});
-
-// Reassign Delivery Boy
-app.put("/api/orders/:orderId/reassign", async (req, res) => {
-  try {
-    const response = await axios.put(
-      `${ORDER_SERVICE_URL}/${req.params.orderId}/reassign`,
-      req.body,
-      {
-        headers: { Authorization: req.headers.authorization },
-      }
-    );
-    res.status(response.status).json(response.data);
-  } catch (err) {
-    res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Order service error",
-    });
-  }
-});
 
 /* ======================
    ADMIN LOGIN
