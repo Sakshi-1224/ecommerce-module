@@ -1,6 +1,7 @@
 import Product from "../models/Product.js";
 import Category from "../models/Category.js";
 import { uploadImageToMinio } from "../utils/uploadToMinio.js";
+import { Op } from "sequelize";
 
 export const getSingleProduct = async (req, res) => {
   try {
@@ -33,22 +34,29 @@ export const getSingleProduct = async (req, res) => {
 
 export const getProducts = async (req, res) => {
   try {
-    const { category, sort } = req.query;
+    const { category, sort, search } = req.query;
 
+    // 1. Initialize empty condition for PRODUCT fields
     let whereCondition = {};
-    let orderCondition = [["price", "ASC"]]; // default LOW → HIGH
 
+    // 2. Handle Sorting
+    let orderCondition = [["price", "ASC"]];
     if (sort === "desc") {
       orderCondition = [["price", "DESC"]];
     }
 
-    if (category && category !== "all") {
-      whereCondition = { name: category };
+    // 3. Handle Search (Filters Product Name)
+    if (search) {
+      // Use Op.iLike for Postgres (case-insensitive) or Op.like for MySQL
+      whereCondition.name = { [Op.like]: `%${search}%` };
     }
 
+    // 4. Fetch Products
     const products = await Product.findAll({
+      where: whereCondition, // Apply Search here
       include: {
         model: Category,
+        // Apply Category Filter here (on the Category model)
         where: category && category !== "all" ? { name: category } : undefined,
       },
       order: orderCondition,
@@ -56,6 +64,7 @@ export const getProducts = async (req, res) => {
 
     res.json(products);
   } catch (err) {
+    console.error(err);
     res.status(500).json({ message: "Failed to fetch products" });
   }
 };
@@ -223,8 +232,6 @@ export const getVendorProducts = async (req, res) => {
   }
 };
 
-
-
 // product.controller.js
 export const reduceStock = async (req, res) => {
   const { items } = req.body;
@@ -248,8 +255,6 @@ export const reduceStock = async (req, res) => {
     res.status(500).json({ message: "Stock reduction failed" });
   }
 };
-
-
 
 export const restoreStock = async (req, res) => {
   const { items } = req.body;

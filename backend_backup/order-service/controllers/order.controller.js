@@ -35,11 +35,15 @@ export const checkout = async (req, res) => {
       return res.status(500).json({ message: "Product service unavailable" });
     }
 
-    await axios.post(`${PRODUCT_SERVICE_URL}/reduce-stock`, {
-      items,
-    }, {
-      headers: { Authorization: req.headers.authorization },
-    });
+    await axios.post(
+      `${PRODUCT_SERVICE_URL}/reduce-stock`,
+      {
+        items,
+      },
+      {
+        headers: { Authorization: req.headers.authorization },
+      }
+    );
 
     const order = await Order.create({
       userId: req.user.id,
@@ -57,13 +61,17 @@ export const checkout = async (req, res) => {
         vendorId: i.vendorId || null,
         quantity: i.quantity,
         price: i.price,
+        name: i.name,
+        image: i.image,
       }))
     );
 
     res.status(201).json({ orderId: order.id });
   } catch (err) {
     console.error("Checkout error:", err);
-    res.status(500).json({ message: err.response?.data?.message || err.message || "Checkout failed" });
+    res.status(500).json({
+      message: err.response?.data?.message || err.message || "Checkout failed",
+    });
   }
 };
 
@@ -141,16 +149,19 @@ export const cancelOrder = async (req, res) => {
       return res.status(400).json({ message: "Cannot cancel order now" });
     }
 
-      // 🔁 RESTORE STOCK
-    await axios.post(`${PRODUCT_SERVICE_URL}/restore-stock`, {
-      items: order.OrderItems.map(item => ({
-        productId: item.productId,
-        quantity: item.quantity,
-      })),
-    }, {
-      headers: { Authorization: req.headers.authorization },
-    });
-
+    // 🔁 RESTORE STOCK
+    await axios.post(
+      `${PRODUCT_SERVICE_URL}/restore-stock`,
+      {
+        items: order.OrderItems.map((item) => ({
+          productId: item.productId,
+          quantity: item.quantity,
+        })),
+      },
+      {
+        headers: { Authorization: req.headers.authorization },
+      }
+    );
 
     order.status = "CANCELLED";
     await order.save();
@@ -163,7 +174,9 @@ export const cancelOrder = async (req, res) => {
     res.json({ message: "Order cancelled" });
   } catch (err) {
     console.error("Cancel error:", err);
-    res.status(500).json({ message: err.response?.data?.message || err.message || "Cancel failed" });
+    res.status(500).json({
+      message: err.response?.data?.message || err.message || "Cancel failed",
+    });
   }
 };
 
@@ -360,7 +373,7 @@ export const updateAdminOrderItemStatus = async (req, res) => {
 export const placeOrder = async (req, res) => {
   try {
     const { amount, address, paymentMethod } = req.body;
-    
+
     // NEGATIVE CHECKING (IMPORTANT)
     if (!amount || amount <= 0) {
       return res.status(400).json({
