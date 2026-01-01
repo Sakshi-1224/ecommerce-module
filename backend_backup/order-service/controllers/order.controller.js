@@ -15,75 +15,118 @@ export const checkout = async (req, res) => {
   try {
     const { items, amount, address, paymentMethod, payment } = req.body;
 
-    await axios.post(
-      `${PRODUCT_SERVICE_URL}/reduce-stock`,
-      { items },
-      { headers: { Authorization: req.headers.authorization } }
-    );
+    console.log("Processing Checkout:", {
+      userId: req.user.id,
+      amount,
+      itemCount: items.length,
+    });
 
+    // 1. REDUCE STOCK
+    try {
+      await axios.post(
+        `${PRODUCT_SERVICE_URL}/reduce-stock`,
+        { items },
+        { headers: { Authorization: req.headers.authorization } }
+      );
+    } catch (stockError) {
+      console.error(
+        "Stock Reduction Failed:",
+        stockError.response?.data || stockError.message
+      );
+      return res
+        .status(400)
+        .json({ message: "Stock reduction failed or insufficient stock" });
+    }
+
+    // 2. CREATE ORDER
     const order = await Order.create({
       userId: req.user.id,
       amount,
       address,
       paymentMethod,
       payment,
-      date: Date.now()
+      status: "IN_PROGRESS",
+      date: Date.now(),
     });
 
+    // 3. GROUP ITEMS BY VENDOR
     const vendorMap = {};
-    items.forEach(i => {
-      if (!vendorMap[i.vendorId]) vendorMap[i.vendorId] = [];
-      vendorMap[i.vendorId].push(i);
+    items.forEach((i) => {
+      // If vendorId is missing/null, group under 'admin' (or 'general')
+      const vId = i.vendorId || "admin";
+      if (!vendorMap[vId]) vendorMap[vId] = [];
+      vendorMap[vId].push(i);
     });
 
-    for (const vendorId in vendorMap) {
+    // 4. CREATE VENDOR SUB-ORDERS
+    for (const vendorIdKey in vendorMap) {
+      // Convert key back to ID or NULL
+      // Keys in JS objects are always strings, so we check for string "undefined"/"null"/"admin"
+      const vendorId =
+        vendorIdKey === "admin" ||
+        vendorIdKey === "undefined" ||
+        vendorIdKey === "null"
+          ? null
+          : vendorIdKey;
+
       const vo = await VendorOrder.create({
         orderId: order.id,
-        vendorId
+        vendorId, // Passes null if it was 'admin', or the actual ID
+        status: "PENDING",
       });
 
       await OrderItem.bulkCreate(
-        vendorMap[vendorId].map(i => ({
+        vendorMap[vendorIdKey].map((i) => ({
           vendorOrderId: vo.id,
           productId: i.productId,
           quantity: i.quantity,
-          price: i.price
+          price: i.price,
         }))
       );
     }
 
+    console.log("Checkout Success. Order ID:", order.id);
     res.status(201).json({ orderId: order.id });
   } catch (err) {
+    console.error("Checkout Controller Error:", err); // ✅ See the actual error in terminal
     res.status(500).json({ message: "Checkout failed" });
   }
 };
 
 export const getOrderById = async (req, res) => {
-  const order = await Order.findOne({
-    where: { id: req.params.id, userId: req.user.id },
-    include: {
-      model: VendorOrder,
-      include: OrderItem
-    }
-  });
+  try {
+    const order = await Order.findOne({
+      where: { id: req.params.id, userId: req.user.id },
+      include: {
+        model: VendorOrder,
+        include: OrderItem,
+      },
+    });
 
-  if (!order) return res.status(404).json({ message: "Order not found" });
+    if (!order) return res.status(404).json({ message: "Order not found" });
 
-  res.json({
-    orderId: order.id,
-    status: order.status,
-    items: order.VendorOrders.flatMap(vo =>
-      vo.OrderItems.map(item => ({
-        productId: item.productId,
-        quantity: item.quantity,
-         vendorId: vo.vendorId,      
-         vendorOrderId: vo.id,      
-         status: vo.status
-      }))
-    )
-  });
+    res.json({
+      orderId: order.id,
+      id: order.id,
+      amount: order.amount,
+      status: order.status,
+      createdAt: order.createdAt,
+      address: order.address, // ✅ FIX 1
+      items: order.VendorOrders.flatMap((vo) =>
+        vo.OrderItems.map((item) => ({
+          productId: item.productId,
+          quantity: item.quantity,
+          price: item.price, // ✅ FIX 2
+          vendorId: vo.vendorId,
+          vendorOrderId: vo.id,
+          status: vo.status,
+        }))
+      ),
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch order details" });
+  }
 };
-
 
 export const getUserOrders = async (req, res) => {
   try {
@@ -91,23 +134,28 @@ export const getUserOrders = async (req, res) => {
       where: { userId: req.user.id },
       include: {
         model: VendorOrder,
-        include: OrderItem
+        include: OrderItem,
       },
-      order: [["createdAt", "DESC"]]
+      order: [["createdAt", "DESC"]],
     });
 
     res.json(
-      orders.map(order => ({
+      orders.map((order) => ({
         orderId: order.id,
+        id: order.id, // For React Key
+        amount: order.amount, // ✅ Fixes "Total Amount" column (was missing)
+        createdAt: order.createdAt, // ✅ Fixes "Date" column and Sorting (was missing)
         status: order.status,
-        items: order.VendorOrders.flatMap(vo =>
-          vo.OrderItems.map(item => ({
+        address: order.address, // ✅ FIX 1: Send Address
+        items: order.VendorOrders.flatMap((vo) =>
+          vo.OrderItems.map((item) => ({
             productId: item.productId,
             quantity: item.quantity,
+            price: item.price, // ✅ FIX 2: Send Price for Subtotal Calc
             vendorId: vo.vendorId,
-            status: vo.status
+            status: vo.status,
           }))
-        )
+        ),
       }))
     );
   } catch (err) {
@@ -115,15 +163,14 @@ export const getUserOrders = async (req, res) => {
   }
 };
 
-
 export const trackOrder = async (req, res) => {
   try {
     const order = await Order.findOne({
       where: { id: req.params.id, userId: req.user.id },
       include: {
         model: VendorOrder,
-        include: OrderItem
-      }
+        include: OrderItem,
+      },
     });
 
     if (!order) {
@@ -133,14 +180,14 @@ export const trackOrder = async (req, res) => {
     res.json({
       orderId: order.id,
       orderStatus: order.status,
-      items: order.VendorOrders.flatMap(vo =>
-        vo.OrderItems.map(item => ({
+      items: order.VendorOrders.flatMap((vo) =>
+        vo.OrderItems.map((item) => ({
           productId: item.productId,
           quantity: item.quantity,
-          status: vo.status,          // 🔥 item-wise status via vendor
-          vendorId: vo.vendorId
+          status: vo.status, // 🔥 item-wise status via vendor
+          vendorId: vo.vendorId,
         }))
-      )
+      ),
     });
   } catch (err) {
     console.error(err);
@@ -148,25 +195,23 @@ export const trackOrder = async (req, res) => {
   }
 };
 
-
 export const cancelOrder = async (req, res) => {
   try {
     const order = await Order.findOne({
       where: { id: req.params.id, userId: req.user.id },
       include: {
         model: VendorOrder,
-        include: OrderItem
-      }
+        include: OrderItem,
+      },
     });
 
-    if (!order)
-      return res.status(404).json({ message: "Order not found" });
+    if (!order) return res.status(404).json({ message: "Order not found" });
 
     if (order.status === "CANCELLED")
       return res.status(400).json({ message: "Order already cancelled" });
 
     // ❌ Check if ANY vendor order has started
-    const blocked = order.VendorOrders.some(vo =>
+    const blocked = order.VendorOrders.some((vo) =>
       ["PACKED", "DELIVERY_ASSIGNED", "OUT_FOR_DELIVERY", "DELIVERED"].includes(
         vo.status
       )
@@ -174,15 +219,15 @@ export const cancelOrder = async (req, res) => {
 
     if (blocked) {
       return res.status(400).json({
-        message: "Order cannot be cancelled as processing has started"
+        message: "Order cannot be cancelled as processing has started",
       });
     }
 
     // 🔁 Restore stock
-    const restoreItems = order.VendorOrders.flatMap(vo =>
-      vo.OrderItems.map(item => ({
+    const restoreItems = order.VendorOrders.flatMap((vo) =>
+      vo.OrderItems.map((item) => ({
         productId: item.productId,
-        quantity: item.quantity
+        quantity: item.quantity,
       }))
     );
 
@@ -202,7 +247,6 @@ export const cancelOrder = async (req, res) => {
     );
 
     res.json({ message: "Order cancelled successfully" });
-
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Cancel failed" });
@@ -215,22 +259,21 @@ export const cancelVendorOrder = async (req, res) => {
 
     const vo = await VendorOrder.findOne({
       where: { id: vendorOrderId, orderId },
-      include: OrderItem
+      include: OrderItem,
     });
 
-    if (!vo)
-      return res.status(404).json({ message: "Item not found" });
+    if (!vo) return res.status(404).json({ message: "Item not found" });
 
     if (vo.status !== "PENDING") {
       return res.status(400).json({
-        message: "Item cannot be cancelled after processing started"
+        message: "Item cannot be cancelled after processing started",
       });
     }
 
     // 🔁 Restore stock for this vendor only
-    const restoreItems = vo.OrderItems.map(item => ({
+    const restoreItems = vo.OrderItems.map((item) => ({
       productId: item.productId,
-      quantity: item.quantity
+      quantity: item.quantity,
     }));
 
     await axios.post(
@@ -247,15 +290,12 @@ export const cancelVendorOrder = async (req, res) => {
     const remaining = await VendorOrder.findOne({
       where: {
         orderId,
-        status: { [Op.notIn]: ["CANCELLED", "DELIVERED"] }
-      }
+        status: { [Op.notIn]: ["CANCELLED", "DELIVERED"] },
+      },
     });
 
     if (!remaining) {
-      await Order.update(
-        { status: "CANCELLED" },
-        { where: { id: orderId } }
-      );
+      await Order.update({ status: "CANCELLED" }, { where: { id: orderId } });
     } else {
       await Order.update(
         { status: "PARTIALLY_CANCELLED" },
@@ -264,15 +304,11 @@ export const cancelVendorOrder = async (req, res) => {
     }
 
     res.json({ message: "Item cancelled successfully" });
-
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Item cancel failed" });
   }
 };
-
-
-
 
 /* =====================
    VENDOR
@@ -282,7 +318,7 @@ export const getVendorOrders = async (req, res) => {
   const orders = await VendorOrder.findAll({
     where: { vendorId: req.user.id },
     include: OrderItem,
-    order: [["createdAt", "DESC"]]
+    order: [["createdAt", "DESC"]],
   });
 
   res.json(orders);
@@ -302,7 +338,7 @@ export const packVendorOrder = async (req, res) => {
 
 export const getDeliveryBoysByArea = async (req, res) => {
   const boys = await DeliveryBoy.findAll({
-    where: { area: req.query.area, active: true }
+    where: { area: req.query.area, active: true },
   });
 
   res.json(boys);
@@ -369,15 +405,12 @@ export const markDelivered = async (req, res) => {
   const pending = await VendorOrder.findOne({
     where: {
       orderId: vo.orderId,
-      status: { [Op.ne]: "DELIVERED" }
-    }
+      status: { [Op.ne]: "DELIVERED" },
+    },
   });
 
   if (!pending) {
-    await Order.update(
-      { status: "DELIVERED" },
-      { where: { id: vo.orderId } }
-    );
+    await Order.update({ status: "DELIVERED" }, { where: { id: vo.orderId } });
   }
 
   res.json({ message: "Order delivered" });
@@ -390,7 +423,7 @@ export const markDelivered = async (req, res) => {
 export const getAllOrdersAdmin = async (req, res) => {
   const orders = await Order.findAll({
     include: VendorOrder,
-    order: [["createdAt", "DESC"]]
+    order: [["createdAt", "DESC"]],
   });
 
   res.json(orders);
@@ -412,11 +445,10 @@ export const deleteDeliveryBoy = async (req, res) => {
   res.json({ message: "Delivery boy removed" });
 };
 
-
 //placeorder
 export const placeOrder = async (req, res) => {
   try {
-    const { amount, address, paymentMethod } = req.body;
+    const { amount, address, paymentMethod, items } = req.body;
 
     // ✅ BASIC VALIDATION
     if (!amount || amount <= 0) {
@@ -427,35 +459,78 @@ export const placeOrder = async (req, res) => {
       return res.status(400).json({ message: "Shipping address is required" });
     }
 
+    if (!items || items.length === 0) {
+      return res.status(400).json({ message: "Order must contain items" });
+    }
+
     if (!["COD", "RAZORPAY"].includes(paymentMethod)) {
       return res.status(400).json({ message: "Invalid payment method" });
     }
 
-    // ⚠️ TEMP ORDER (NO ITEMS YET)
+    // 2. REDUCE STOCK (Call Product Service)
+    try {
+      await axios.post(
+        `${PRODUCT_SERVICE_URL}/reduce-stock`,
+        { items },
+        { headers: { Authorization: req.headers.authorization } }
+      );
+    } catch (stockErr) {
+      console.error("Stock reduction failed:", stockErr.message);
+      return res
+        .status(400)
+        .json({ message: "Insufficient stock or product error" });
+    }
+
+    // 3. CREATE MAIN ORDER
     const order = await Order.create({
       userId: req.user.id,
       amount,
       address,
       paymentMethod,
-      payment: paymentMethod === "COD",
+      payment: false, // Payment is initially false for COD
       status: "IN_PROGRESS",
-      date: Date.now()
+      date: Date.now(),
     });
 
-    // ✅ COD → COMPLETE ORDER DIRECTLY
-    if (paymentMethod === "COD") {
-      return res.status(201).json({
-        message: "Order created successfully with COD",
-        orderId: order.id
+    // 4. SPLIT BY VENDOR (Create VendorOrders & OrderItems)
+    const vendorMap = {};
+    items.forEach((i) => {
+      // Handle items that might not have a vendorId (e.g. admin products)
+      const vId = i.vendorId || "admin";
+      if (!vendorMap[vId]) vendorMap[vId] = [];
+      vendorMap[vId].push(i);
+    });
+
+    for (const vendorIdKey in vendorMap) {
+      // If vendorId is 'admin', set to null or appropriate logic
+      const currentVendorId = vendorIdKey === "admin" ? null : vendorIdKey;
+
+      // Create Vendor Sub-Order
+      const vo = await VendorOrder.create({
+        orderId: order.id,
+        vendorId: currentVendorId,
+        status: "PENDING",
       });
+
+      // Bulk Create Items for this Vendor Order
+      await OrderItem.bulkCreate(
+        vendorMap[vendorIdKey].map((i) => ({
+          vendorOrderId: vo.id,
+          productId: i.productId,
+          quantity: i.quantity,
+          price: i.price,
+        }))
+      );
     }
 
-    // ✅ ONLINE PAYMENT → PROCEED TO GATEWAY
+    // ✅ RETURN SUCCESS
     return res.status(201).json({
-      message: "Order created. Proceed to payment",
-      orderId: order.id
+      message: "Order placed successfully",
+      orderId: order.id,
+      amount: order.amount,
+      status: order.status,
+      items: items, // Return items so frontend gets immediate confirmation
     });
-
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Order creation failed" });
