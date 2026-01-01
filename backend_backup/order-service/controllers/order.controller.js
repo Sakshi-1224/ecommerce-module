@@ -14,6 +14,43 @@ const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL;
 export const checkout = async (req, res) => {
   try {
     const { items, amount, address, paymentMethod, payment } = req.body;
+       // ❌ CART VALIDATION
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: "Cart items are required" });
+    }
+
+    // ❌ ITEM LEVEL VALIDATION
+    for (const item of items) {
+      if (!item.productId || !item.vendorId) {
+        return res.status(400).json({
+          message: "Each item must have productId and vendorId"
+        });
+      }
+
+      if (!item.quantity || item.quantity <= 0) {
+        return res.status(400).json({
+          message: "Item quantity must be greater than zero"
+        });
+      }
+
+      if (!item.price || item.price <= 0) {
+        return res.status(400).json({
+          message: "Item price must be greater than zero"
+        });
+      }
+    }
+
+    // ❌ AMOUNT VALIDATION
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: "Invalid order amount" });
+    }
+
+  
+
+    // ❌ PAYMENT METHOD VALIDATION
+    if (!["COD", "RAZORPAY"].includes(paymentMethod)) {
+      return res.status(400).json({ message: "Invalid payment method" });
+    }
 
     await axios.post(
       `${PRODUCT_SERVICE_URL}/reduce-stock`,
@@ -289,6 +326,13 @@ export const getVendorOrders = async (req, res) => {
 };
 
 export const packVendorOrder = async (req, res) => {
+  /* 
+  if (vo.status !== "PENDING") {
+  return res.status(400).json({
+    message: "Order cannot be packed at this stage"
+  });
+}
+  */
   const vo = await VendorOrder.findByPk(req.params.id);
 
   if (!vo || vo.vendorId !== req.user.id)
@@ -459,5 +503,90 @@ export const placeOrder = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Order creation failed" });
+  }
+};
+
+
+
+
+
+export const getOrderDetailsAdmin = async (req, res) => {
+  try {
+    const order = await Order.findByPk(req.params.id, {
+      include: {
+        
+        model: VendorOrder,
+        include: [
+          {
+            model: OrderItem
+          },
+          {
+            model: DeliveryBoy,
+            attributes: ["id", "name", "phone", "area"]
+          }
+        ]
+      }
+    });
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    // 🔹 Flatten items for frontend table
+    const allItems = order.VendorOrders.flatMap(vo =>
+      vo.OrderItems.map(item => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        price: item.price,
+        vendorId: vo.vendorId,
+        vendorOrderId: vo.id,
+        vendorStatus: vo.status,
+        deliveryBoy: vo.DeliveryBoy || null
+      }))
+    );
+
+    res.json({
+      id: order.id,
+      amount: order.amount,
+      status: order.status,
+      paymentMethod: order.paymentMethod,
+      createdAt: order.createdAt,
+
+      // ✅ CUSTOMER DETAILS
+      customer: {
+        userId: order.userId,
+        name: order.address?.fullName || "Customer",
+        phone: order.address?.phone || null,
+      address: order.address ? {
+          // Try to get the street address from common field names
+          line1: order.address.addressLine1 || order.address.address || order.address.street || "",
+          city: order.address.city || "",
+          state: order.address.state || "",
+          zip: order.address.pincode || order.address.zipCode || ""
+        } : null
+      },
+
+      // ✅ FOR TABLE RENDERING
+      OrderItems: allItems,
+
+      // ✅ FOR GROUPED VIEW (OPTIONAL)
+      vendors: order.VendorOrders.map(vo => ({
+        vendorId: vo.vendorId,
+        vendorOrderId: vo.id,
+        status: vo.status,
+        deliveryBoy: vo.DeliveryBoy
+          ? {
+              id: vo.DeliveryBoy.id,
+              name: vo.DeliveryBoy.name,
+              phone: vo.DeliveryBoy.phone,
+              area: vo.DeliveryBoy.area
+            }
+          : null,
+        items: vo.OrderItems
+      }))
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch order details" });
   }
 };

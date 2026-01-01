@@ -691,6 +691,20 @@ app.delete("/api/orders/admin/delivery-boys/:id", async (req, res) => {
 });
 
 
+app.get("/api/orders/admin/:id", async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${ORDER_SERVICE_URL}/admin/${req.params.id}`,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Order service error"
+    });
+  }
+});
+
 
 
 // GET ORDER BY ID
