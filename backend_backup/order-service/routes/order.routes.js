@@ -5,59 +5,47 @@ import vendor from "../middleware/vendor.middleware.js";
 
 import {
   checkout,
+  getUserOrders,
   getOrderById,
+  cancelOrder,
+  trackOrder,
+  getAllOrdersAdmin,
+  updateOrderStatusAdmin,
   getVendorOrders,
-  packVendorOrder,
-  getDeliveryBoysByArea,
+  updateOrderItemStatus,
+  updateAdminOrderItemStatus,
+  placeOrder,
   assignDeliveryBoy,
   reassignDeliveryBoy,
-  outForDelivery,
-  markDelivered,
-  getAllOrdersAdmin,
+  getOrderByIdAdmin,
   getAllDeliveryBoys,
   createDeliveryBoy,
   deleteDeliveryBoy,
-  placeOrder,
-  cancelOrder,
-  trackOrder,
-  cancelVendorOrder
 } from "../controllers/order.controller.js";
 
 const router = express.Router();
 
+router.get("/vendor", auth, vendor, getVendorOrders);
+router.put("/item/:id", auth, vendor, updateOrderItemStatus);
 
-
-// CREATE / CHECKOUT
 router.post("/checkout", auth, checkout);
-// (Optional) if you still keep this
-router.post("/", auth, placeOrder);
-
-// TRACKING (specific paths first)
+router.get("/", auth, getUserOrders);
+router.get("/:id", auth, getOrderById);
+router.put("/:id/cancel", auth, cancelOrder);
 router.get("/track/:id", auth, trackOrder);
 
-// VENDOR CUSTOMER-VISIBLE ROUTES
-router.get("/vendor", auth, vendor, getVendorOrders);
-
-// VENDOR ACTION ROUTES
-router.put("/vendor/order/:id/pack", auth, vendor, packVendorOrder);
-router.get("/vendor/delivery-boys", auth, vendor, getDeliveryBoysByArea);
-router.put("/vendor/order/:id/assign-delivery", auth, vendor, assignDeliveryBoy);
-router.put("/vendor/order/:id/reassign-delivery", auth, vendor, reassignDeliveryBoy);
-router.put("/vendor/order/:id/out-for-delivery", auth, vendor, outForDelivery);
-router.put("/vendor/order/:id/delivered", auth, vendor, markDelivered);
-
-// CUSTOMER CANCEL ROUTES
-router.put("/:orderId/vendor/:vendorOrderId/cancel", auth, cancelVendorOrder);
-router.put("/:id/cancel", auth, cancelOrder);
-
-// ADMIN (READ ONLY)
-router.get("/admin/orders", auth, admin, getAllOrdersAdmin);
+router.get("/admin/all", auth, admin, getAllOrdersAdmin);
+// 👇 ADD THIS ROUTE (Admin only)
 router.get("/admin/delivery-boys", auth, admin, getAllDeliveryBoys);
-router.post("/admin/delivery-boys", auth, admin, createDeliveryBoy);
-router.delete("/admin/delivery-boys/:id", auth, admin, deleteDeliveryBoy);
+router.post("/admin/delivery-boys", auth, admin, createDeliveryBoy); // 👈 Add
+router.delete("/admin/delivery-boys/:id", auth, admin, deleteDeliveryBoy); // 👈 Add
+router.get("/admin/:id", auth, admin, getOrderByIdAdmin);
+router.put("/admin/item/:id", auth, admin, updateAdminOrderItemStatus);
+router.put("/admin/:id/status", auth, admin, updateOrderStatusAdmin);
 
-// ❗ KEEP THIS LAST ALWAYS
-router.get("/:id", auth, getOrderById);
+router.post("/", auth, placeOrder);
+
+router.post("/:orderId/assign", auth, admin, assignDeliveryBoy);
+router.put("/:orderId/reassign", auth, admin, reassignDeliveryBoy);
 
 export default router;
-

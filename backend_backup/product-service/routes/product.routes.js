@@ -2,7 +2,6 @@ import express from "express";
 import auth from "../middleware/auth.middleware.js";
 import vendor from "../middleware/vendor.middleware.js";
 import vendorOrAdmin from "../middleware/vendorOrAdmin.middleware.js";
-import admin from "../middleware/admin.middleware.js";
 import {
   getProducts,
   getSingleProduct,
@@ -12,8 +11,7 @@ import {
   getVendorProducts,
   getAllCategories,
   reduceStock,
-  restoreStock,
-  getAllVendorProducts
+  restoreStock
 } from "../controllers/product.controller.js";
 import upload from "../middleware/upload.js";
 const router = express.Router();
@@ -36,23 +34,18 @@ router.get("/:id", getSingleProduct);
 
 //vendor products
 router.get("/vendor/my-products", auth, vendor, getVendorProducts);
-router.get(
-  "/admin/vendor-products",
-  auth,
-  admin,
-  getAllVendorProducts
-);
-//vendor only
+
+//admin only
 
 router.post(
   "/",
   auth,
-  vendor,
+  vendorOrAdmin,
   upload.single("image"), // 👈 image field
   createProduct
 );
-router.put("/:id", auth, vendor, updateProduct);
-router.delete("/:id", auth, vendor, deleteProduct);
+router.put("/:id", auth, vendorOrAdmin, updateProduct);
+router.delete("/:id", auth, vendorOrAdmin, deleteProduct);
 
 
 

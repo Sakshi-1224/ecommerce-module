@@ -1,20 +1,18 @@
 import { DataTypes } from "sequelize";
 import sequelize from "../config/db.js";
-import VendorOrder from "./VendorOrder.js";
+import Order from "./Order.js";
 
 const OrderItem = sequelize.define("OrderItem", {
   id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
-
-  vendorOrderId: { type: DataTypes.INTEGER, allowNull: false },
-
-  productId: { type: DataTypes.INTEGER, allowNull: false },
-
-  quantity: { type: DataTypes.INTEGER, allowNull: false },
-
-  price: { type: DataTypes.FLOAT, allowNull: false }
+  orderId: DataTypes.INTEGER,
+  productId: DataTypes.INTEGER,
+  vendorId: { type: DataTypes.INTEGER, allowNull: true },
+  quantity: DataTypes.INTEGER,
+  price: DataTypes.FLOAT,
+  status: { type: DataTypes.STRING, defaultValue: "PENDING" }
 });
 
-VendorOrder.hasMany(OrderItem, { foreignKey: "vendorOrderId" });
-OrderItem.belongsTo(VendorOrder, { foreignKey: "vendorOrderId" });
+Order.hasMany(OrderItem, { foreignKey: "orderId" });
+OrderItem.belongsTo(Order, { foreignKey: "orderId" });
 
 export default OrderItem;
