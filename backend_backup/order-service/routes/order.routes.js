@@ -20,19 +20,16 @@ import {
   placeOrder,
   cancelOrder,
   trackOrder,
-  cancelVendorOrder,
-  getUserOrders
+  cancelVendorOrder
 } from "../controllers/order.controller.js";
 
 const router = express.Router();
 
-router.get("/", auth, getUserOrders);
+
 
 // CREATE / CHECKOUT
 router.post("/checkout", auth, checkout);
 // (Optional) if you still keep this
-
-
 router.post("/", auth, placeOrder);
 
 // TRACKING (specific paths first)

@@ -84,38 +84,6 @@ export const getOrderById = async (req, res) => {
   });
 };
 
-
-export const getUserOrders = async (req, res) => {
-  try {
-    const orders = await Order.findAll({
-      where: { userId: req.user.id },
-      include: {
-        model: VendorOrder,
-        include: OrderItem
-      },
-      order: [["createdAt", "DESC"]]
-    });
-
-    res.json(
-      orders.map(order => ({
-        orderId: order.id,
-        status: order.status,
-        items: order.VendorOrders.flatMap(vo =>
-          vo.OrderItems.map(item => ({
-            productId: item.productId,
-            quantity: item.quantity,
-            vendorId: vo.vendorId,
-            status: vo.status
-          }))
-        )
-      }))
-    );
-  } catch (err) {
-    res.status(500).json({ message: "Failed to fetch orders" });
-  }
-};
-
-
 export const trackOrder = async (req, res) => {
   try {
     const order = await Order.findOne({
@@ -270,9 +238,6 @@ export const cancelVendorOrder = async (req, res) => {
     res.status(500).json({ message: "Item cancel failed" });
   }
 };
-
-
-
 
 /* =====================
    VENDOR

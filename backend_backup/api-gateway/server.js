@@ -444,28 +444,6 @@ app.post("/api/orders", async (req, res) => {
   }
 });
 
-
-// GET ALL USER ORDERS
-app.get("/api/orders", async (req, res) => {
-  try {
-    const response = await axios.get(
-      `${ORDER_SERVICE_URL}`,
-      {
-        headers: {
-          Authorization: req.headers.authorization
-        }
-      }
-    );
-
-    res.status(response.status).json(response.data);
-  } catch (err) {
-    res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Order service error"
-    });
-  }
-});
-
-
 app.get("/api/orders/track/:id", async (req, res) => {
   try {
     const response = await axios.get(
