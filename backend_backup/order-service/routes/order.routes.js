@@ -21,8 +21,7 @@ import {
   cancelOrder,
   trackOrder,
   cancelVendorOrder,
-  getUserOrders,
-  getOrderDetailsAdmin
+  getUserOrders
 } from "../controllers/order.controller.js";
 
 const router = express.Router();
@@ -59,12 +58,6 @@ router.get("/admin/orders", auth, admin, getAllOrdersAdmin);
 router.get("/admin/delivery-boys", auth, admin, getAllDeliveryBoys);
 router.post("/admin/delivery-boys", auth, admin, createDeliveryBoy);
 router.delete("/admin/delivery-boys/:id", auth, admin, deleteDeliveryBoy);
-router.get(
-  "/admin/:id",
-  auth,
-  admin,
-  getOrderDetailsAdmin
-);
 
 // ❗ KEEP THIS LAST ALWAYS
 router.get("/:id", auth, getOrderById);
