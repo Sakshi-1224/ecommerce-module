@@ -15,7 +15,6 @@ const VENDOR_SERVICE_ADMIN_URL = process.env.VENDOR_SERVICE_ADMIN_URL;
 const app = express();
 app.use(express.json());
 
-
 app.use(
   cors({
     origin: "http://localhost:5174",
@@ -145,18 +144,16 @@ app.put("/api/auth/profile", async (req, res) => {
   }
 });
 
-
 // Get all products
 app.get("/api/products", async (req, res) => {
   try {
-    const response = await axios.get(
-      `${PRODUCT_SERVICE_URL}`,
-      { params: req.query }
-    );
+    const response = await axios.get(`${PRODUCT_SERVICE_URL}`, {
+      params: req.query,
+    });
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Product service error"
+      message: err.response?.data?.message || "Product service error",
     });
   }
 });
@@ -164,13 +161,11 @@ app.get("/api/products", async (req, res) => {
 // Get categories
 app.get("/api/products/categories", async (req, res) => {
   try {
-    const response = await axios.get(
-      `${PRODUCT_SERVICE_URL}/categories`
-    );
+    const response = await axios.get(`${PRODUCT_SERVICE_URL}/categories`);
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Category fetch failed"
+      message: err.response?.data?.message || "Category fetch failed",
     });
   }
 });
@@ -178,13 +173,11 @@ app.get("/api/products/categories", async (req, res) => {
 // Get single product
 app.get("/api/products/:id", async (req, res) => {
   try {
-    const response = await axios.get(
-      `${PRODUCT_SERVICE_URL}/${req.params.id}`
-    );
+    const response = await axios.get(`${PRODUCT_SERVICE_URL}/${req.params.id}`);
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Product fetch failed"
+      message: err.response?.data?.message || "Product fetch failed",
     });
   }
 });
@@ -204,7 +197,7 @@ app.post("/api/products/reduce-available", async (req, res) => {
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Stock reserve failed"
+      message: err.response?.data?.message || "Stock reserve failed",
     });
   }
 });
@@ -220,7 +213,7 @@ app.post("/api/products/restore-available", async (req, res) => {
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Stock restore failed"
+      message: err.response?.data?.message || "Stock restore failed",
     });
   }
 });
@@ -236,7 +229,7 @@ app.post("/api/products/reduce-physical", async (req, res) => {
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Physical stock update failed"
+      message: err.response?.data?.message || "Physical stock update failed",
     });
   }
 });
@@ -254,7 +247,23 @@ app.get("/api/products/vendor/my-products", async (req, res) => {
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Vendor products fetch failed"
+      message: err.response?.data?.message || "Vendor products fetch failed",
+    });
+  }
+});
+
+// 👇 2. NEW ROUTE: Admin viewing a SPECIFIC vendor's products
+// This fixes the 404 error
+app.get("/api/products/vendor/:vendorId", async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${PRODUCT_SERVICE_URL}/vendor/${req.params.vendorId}`,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Failed to fetch vendor products",
     });
   }
 });
@@ -264,42 +273,81 @@ app.get("/api/products/vendor/my-products", async (req, res) => {
 ====================================================== */
 
 // Create product
-app.post(
-  "/api/products",
-  upload.single("image"),
-  async (req, res) => {
-    try {
-      const response = await axios.post(
-        `${PRODUCT_SERVICE_URL}`,
-        req.body,
-        {
-          headers: {
-            Authorization: req.headers.authorization,
-            "Content-Type": "multipart/form-data"
-          }
-        }
-      );
-      res.status(response.status).json(response.data);
-    } catch (err) {
-      res.status(err.response?.status || 500).json({
-        message: err.response?.data?.message || "Product creation failed"
-      });
-    }
-  }
-);
+/* ======================================================
+   4. CREATE / UPDATE / DELETE
+====================================================== */
 
-// Update product
-app.put("/api/products/:id", async (req, res) => {
+// Create product
+app.post("/api/products", upload.single("image"), async (req, res) => {
   try {
-    const response = await axios.put(
-      `${PRODUCT_SERVICE_URL}/${req.params.id}`,
-      req.body,
-      { headers: { Authorization: req.headers.authorization } }
-    );
+    // 🔴 OLD BROKEN CODE:
+    // const response = await axios.post(
+    //   `${PRODUCT_SERVICE_URL}`,
+    //   req.body, ...
+    // );
+
+    // 🟢 NEW CORRECT CODE:
+    const formData = new FormData();
+
+    // 1. Add all text fields (name, price, etc.)
+    Object.keys(req.body).forEach((key) => {
+      formData.append(key, req.body[key]);
+    });
+
+    // 2. Add the file (Important!)
+    if (req.file) {
+      formData.append("image", req.file.buffer, req.file.originalname);
+    }
+
+    // 3. Send using axios
+    const response = await axios.post(`${PRODUCT_SERVICE_URL}`, formData, {
+      headers: {
+        Authorization: req.headers.authorization,
+        ...formData.getHeaders(), // Generates the correct multipart headers
+      },
+    });
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Product update failed"
+      message: err.response?.data?.message || "Product creation failed",
+    });
+  }
+});
+
+// Update product
+// Update product (Now supports File Uploads/FormData)
+app.put("/api/products/:id", upload.single("image"), async (req, res) => {
+  try {
+    // 1. Create a new FormData object
+    const formData = new FormData();
+
+    // 2. Append all text fields from the request body
+    Object.keys(req.body).forEach((key) => {
+      formData.append(key, req.body[key]);
+    });
+
+    // 3. Append the file if it exists
+    if (req.file) {
+      formData.append("image", req.file.buffer, req.file.originalname);
+    }
+
+    // 4. Send to Product Service with correct headers
+    const response = await axios.put(
+      `${PRODUCT_SERVICE_URL}/${req.params.id}`,
+      formData,
+      {
+        headers: {
+          Authorization: req.headers.authorization,
+          ...formData.getHeaders(), // Important: Sets multipart boundaries
+        },
+      }
+    );
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    console.error("Gateway Update Error:", err.message);
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Product update failed",
     });
   }
 });
@@ -314,11 +362,10 @@ app.delete("/api/products/:id", async (req, res) => {
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Product deletion failed"
+      message: err.response?.data?.message || "Product deletion failed",
     });
   }
 });
-
 
 app.post("/api/cart/add", async (req, res) => {
   try {
@@ -405,7 +452,6 @@ app.delete("/api/cart/remove/:id", async (req, res) => {
    VENDOR ROUTES
 ====================== */
 
-
 /* ======================================================
    USER ROUTES
 ====================================================== */
@@ -421,7 +467,7 @@ app.post("/api/orders/checkout", async (req, res) => {
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Checkout failed"
+      message: err.response?.data?.message || "Checkout failed",
     });
   }
 });
@@ -429,14 +475,13 @@ app.post("/api/orders/checkout", async (req, res) => {
 // Get my orders
 app.get("/api/orders", async (req, res) => {
   try {
-    const response = await axios.get(
-      `${ORDER_SERVICE_URL}`,
-      { headers: { Authorization: req.headers.authorization } }
-    );
+    const response = await axios.get(`${ORDER_SERVICE_URL}`, {
+      headers: { Authorization: req.headers.authorization },
+    });
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Fetch orders failed"
+      message: err.response?.data?.message || "Fetch orders failed",
     });
   }
 });
@@ -451,29 +496,26 @@ app.get("/api/orders/track/:id", async (req, res) => {
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Track order failed"
+      message: err.response?.data?.message || "Track order failed",
     });
   }
 });
 
 // Cancel specific item
-app.put(
-  "/api/orders/:orderId/cancel-item/:itemId",
-  async (req, res) => {
-    try {
-      const response = await axios.put(
-        `${ORDER_SERVICE_URL}/${req.params.orderId}/cancel-item/${req.params.itemId}`,
-        {},
-        { headers: { Authorization: req.headers.authorization } }
-      );
-      res.status(response.status).json(response.data);
-    } catch (err) {
-      res.status(err.response?.status || 500).json({
-        message: err.response?.data?.message || "Item cancellation failed"
-      });
-    }
+app.put("/api/orders/:orderId/cancel-item/:itemId", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${ORDER_SERVICE_URL}/${req.params.orderId}/cancel-item/${req.params.itemId}`,
+      {},
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Item cancellation failed",
+    });
   }
-);
+});
 
 // Cancel full order
 app.put("/api/orders/:orderId/cancel", async (req, res) => {
@@ -486,7 +528,7 @@ app.put("/api/orders/:orderId/cancel", async (req, res) => {
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Order cancellation failed"
+      message: err.response?.data?.message || "Order cancellation failed",
     });
   }
 });
@@ -494,14 +536,13 @@ app.put("/api/orders/:orderId/cancel", async (req, res) => {
 // Get order by ID (keep after cancel routes)
 app.get("/api/orders/:id", async (req, res) => {
   try {
-    const response = await axios.get(
-      `${ORDER_SERVICE_URL}/${req.params.id}`,
-      { headers: { Authorization: req.headers.authorization } }
-    );
+    const response = await axios.get(`${ORDER_SERVICE_URL}/${req.params.id}`, {
+      headers: { Authorization: req.headers.authorization },
+    });
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Order fetch failed"
+      message: err.response?.data?.message || "Order fetch failed",
     });
   }
 });
@@ -519,28 +560,27 @@ app.get("/api/orders/admin/sales/vendors", async (req, res) => {
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Vendor sales failed"
+      message: err.response?.data?.message || "Vendor sales failed",
     });
   }
 });
 
-app.get("/api/orders/admin/sales/total",  async (req, res) => {
+app.get("/api/orders/admin/sales/total", async (req, res) => {
   try {
-    const response = await axios.get(
-      `${ORDER_SERVICE_URL}/admin/sales/total`,
-      { headers: { Authorization: req.headers.authorization } }
-    );
+    const response = await axios.get(`${ORDER_SERVICE_URL}/admin/sales/total`, {
+      headers: { Authorization: req.headers.authorization },
+    });
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Total sales failed"
+      message: err.response?.data?.message || "Total sales failed",
     });
   }
 });
 
 app.get(
   "/api/orders/admin/sales/vendor/:vendorId",
-  
+
   async (req, res) => {
     try {
       const response = await axios.get(
@@ -550,7 +590,7 @@ app.get(
       res.status(response.status).json(response.data);
     } catch (err) {
       res.status(err.response?.status || 500).json({
-        message: err.response?.data?.message || "Vendor report failed"
+        message: err.response?.data?.message || "Vendor report failed",
       });
     }
   }
@@ -560,7 +600,7 @@ app.get(
    ADMIN – DELIVERY
 ====================================================== */
 
-app.get("/api/orders/admin/delivery-boys",  async (req, res) => {
+app.get("/api/orders/admin/delivery-boys", async (req, res) => {
   try {
     const response = await axios.get(
       `${ORDER_SERVICE_URL}/admin/delivery-boys`,
@@ -569,7 +609,7 @@ app.get("/api/orders/admin/delivery-boys",  async (req, res) => {
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Delivery boys fetch failed"
+      message: err.response?.data?.message || "Delivery boys fetch failed",
     });
   }
 });
@@ -584,7 +624,7 @@ app.post("/api/orders/admin/delivery-boys", async (req, res) => {
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Create delivery boy failed"
+      message: err.response?.data?.message || "Create delivery boy failed",
     });
   }
 });
@@ -601,47 +641,41 @@ app.delete(
       res.status(response.status).json(response.data);
     } catch (err) {
       res.status(err.response?.status || 500).json({
-        message: err.response?.data?.message || "Delete delivery boy failed"
+        message: err.response?.data?.message || "Delete delivery boy failed",
       });
     }
   }
 );
 
-app.post(
-  "/api/orders/admin/assign-delivery/:orderId",
-  async (req, res) => {
-    try {
-      const response = await axios.post(
-        `${ORDER_SERVICE_URL}/admin/assign-delivery/${req.params.orderId}`,
-        req.body,
-        { headers: { Authorization: req.headers.authorization } }
-      );
-      res.status(response.status).json(response.data);
-    } catch (err) {
-      res.status(err.response?.status || 500).json({
-        message: err.response?.data?.message || "Assign delivery failed"
-      });
-    }
+app.post("/api/orders/admin/assign-delivery/:orderId", async (req, res) => {
+  try {
+    const response = await axios.post(
+      `${ORDER_SERVICE_URL}/admin/assign-delivery/${req.params.orderId}`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Assign delivery failed",
+    });
   }
-);
+});
 
-app.put(
-  "/api/orders/admin/reassign-delivery/:orderId",
-  async (req, res) => {
-    try {
-      const response = await axios.put(
-        `${ORDER_SERVICE_URL}/admin/reassign-delivery/${req.params.orderId}`,
-        req.body,
-        { headers: { Authorization: req.headers.authorization } }
-      );
-      res.status(response.status).json(response.data);
-    } catch (err) {
-      res.status(err.response?.status || 500).json({
-        message: err.response?.data?.message || "Reassign delivery failed"
-      });
-    }
+app.put("/api/orders/admin/reassign-delivery/:orderId", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${ORDER_SERVICE_URL}/admin/reassign-delivery/${req.params.orderId}`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Reassign delivery failed",
+    });
   }
-);
+});
 
 /* ======================================================
    ADMIN – WAREHOUSE
@@ -649,14 +683,13 @@ app.put(
 
 app.get("/api/orders/admin/warehouse", async (req, res) => {
   try {
-    const response = await axios.get(
-      `${ORDER_SERVICE_URL}/admin/warehouse`,
-      { headers: { Authorization: req.headers.authorization } }
-    );
+    const response = await axios.get(`${ORDER_SERVICE_URL}/admin/warehouse`, {
+      headers: { Authorization: req.headers.authorization },
+    });
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Warehouse fetch failed"
+      message: err.response?.data?.message || "Warehouse fetch failed",
     });
   }
 });
@@ -674,7 +707,7 @@ app.post(
       res.status(response.status).json(response.data);
     } catch (err) {
       res.status(err.response?.status || 500).json({
-        message: err.response?.data?.message || "Add warehouse stock failed"
+        message: err.response?.data?.message || "Add warehouse stock failed",
       });
     }
   }
@@ -693,7 +726,7 @@ app.put(
       res.status(response.status).json(response.data);
     } catch (err) {
       res.status(err.response?.status || 500).json({
-        message: err.response?.data?.message || "Update warehouse stock failed"
+        message: err.response?.data?.message || "Update warehouse stock failed",
       });
     }
   }
@@ -703,21 +736,20 @@ app.put(
    ADMIN – ORDERS
 ====================================================== */
 
-app.get("/api/orders/admin/all",  async (req, res) => {
+app.get("/api/orders/admin/all", async (req, res) => {
   try {
-    const response = await axios.get(
-      `${ORDER_SERVICE_URL}/admin/all`,
-      { headers: { Authorization: req.headers.authorization } }
-    );
+    const response = await axios.get(`${ORDER_SERVICE_URL}/admin/all`, {
+      headers: { Authorization: req.headers.authorization },
+    });
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Fetch all orders failed"
+      message: err.response?.data?.message || "Fetch all orders failed",
     });
   }
 });
 
-app.get("/api/orders/admin/:id",  async (req, res) => {
+app.get("/api/orders/admin/:id", async (req, res) => {
   try {
     const response = await axios.get(
       `${ORDER_SERVICE_URL}/admin/${req.params.id}`,
@@ -726,14 +758,14 @@ app.get("/api/orders/admin/:id",  async (req, res) => {
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Admin order fetch failed"
+      message: err.response?.data?.message || "Admin order fetch failed",
     });
   }
 });
 
 app.put(
   "/api/orders/admin/:id/status",
- 
+
   async (req, res) => {
     try {
       const response = await axios.put(
@@ -744,98 +776,88 @@ app.put(
       res.status(response.status).json(response.data);
     } catch (err) {
       res.status(err.response?.status || 500).json({
-        message: err.response?.data?.message || "Order status update failed"
+        message: err.response?.data?.message || "Order status update failed",
       });
     }
   }
 );
 
-app.put(
-  "/api/orders/admin/:orderId/item/:itemId/status",
-  async (req, res) => {
-    try {
-      const response = await axios.put(
-        `${ORDER_SERVICE_URL}/admin/${req.params.orderId}/item/${req.params.itemId}/status`,
-        req.body, // { status: "PACKED" }
-        {
-          headers: {
-            Authorization: req.headers.authorization
-          }
-        }
-      );
+app.put("/api/orders/admin/:orderId/item/:itemId/status", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${ORDER_SERVICE_URL}/admin/${req.params.orderId}/item/${req.params.itemId}/status`,
+      req.body, // { status: "PACKED" }
+      {
+        headers: {
+          Authorization: req.headers.authorization,
+        },
+      }
+    );
 
-      res.status(response.status).json(response.data);
-    } catch (err) {
-      res.status(err.response?.status || 500).json({
-        message:
-          err.response?.data?.message ||
-          "Failed to update order item status"
-      });
-    }
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message:
+        err.response?.data?.message || "Failed to update order item status",
+    });
   }
-);
+});
 /* ======================================================
    VENDOR
 ====================================================== */
 
 app.get("/api/orders/vendor/orders", async (req, res) => {
   try {
-    const response = await axios.get(
-      `${ORDER_SERVICE_URL}/vendor/orders`,
-      { headers: { Authorization: req.headers.authorization } }
-    );
+    const response = await axios.get(`${ORDER_SERVICE_URL}/vendor/orders`, {
+      headers: { Authorization: req.headers.authorization },
+    });
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Vendor orders failed"
+      message: err.response?.data?.message || "Vendor orders failed",
     });
   }
 });
 
 app.get("/api/orders/vendor/warehouse", async (req, res) => {
   try {
-    const response = await axios.get(
-      `${ORDER_SERVICE_URL}/vendor/warehouse`,
-      { headers: { Authorization: req.headers.authorization } }
-    );
+    const response = await axios.get(`${ORDER_SERVICE_URL}/vendor/warehouse`, {
+      headers: { Authorization: req.headers.authorization },
+    });
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Vendor warehouse failed"
+      message: err.response?.data?.message || "Vendor warehouse failed",
     });
   }
 });
 
 app.get("/api/orders/vendor/stock", async (req, res) => {
   try {
+    const response = await axios.get(`${ORDER_SERVICE_URL}/vendor/stock`, {
+      headers: { Authorization: req.headers.authorization },
+    });
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Vendor stock failed",
+    });
+  }
+});
+
+app.get("/api/orders/vendor/sales-report", async (req, res) => {
+  try {
     const response = await axios.get(
-      `${ORDER_SERVICE_URL}/vendor/stock`,
+      `${ORDER_SERVICE_URL}/vendor/sales-report`,
       { headers: { Authorization: req.headers.authorization } }
     );
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Vendor stock failed"
+      message: err.response?.data?.message || "Vendor sales report failed",
     });
   }
 });
-
-app.get(
-  "/api/orders/vendor/sales-report",
-  async (req, res) => {
-    try {
-      const response = await axios.get(
-        `${ORDER_SERVICE_URL}/vendor/sales-report`,
-        { headers: { Authorization: req.headers.authorization } }
-      );
-      res.status(response.status).json(response.data);
-    } catch (err) {
-      res.status(err.response?.status || 500).json({
-        message: err.response?.data?.message || "Vendor sales report failed"
-      });
-    }
-  }
-);
 
 /* ======================================================
    PUBLIC STOCK
@@ -851,20 +873,11 @@ app.get(
       res.status(response.status).json(response.data);
     } catch (err) {
       res.status(err.response?.status || 500).json({
-        message: err.response?.data?.message || "Stock fetch failed"
+        message: err.response?.data?.message || "Stock fetch failed",
       });
     }
   }
 );
-
-
-
-
-
-
-
-
-
 
 /* ======================
    ADMIN LOGIN

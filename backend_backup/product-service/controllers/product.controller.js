@@ -11,7 +11,8 @@ import axios from "axios";
 export const getSingleProduct = async (req, res) => {
   try {
     const { id } = req.params;
-    if (isNaN(id)) return res.status(400).json({ message: "Invalid product ID" });
+    if (isNaN(id))
+      return res.status(400).json({ message: "Invalid product ID" });
 
     const product = await Product.findByPk(id, {
       include: { model: Category },
@@ -31,13 +32,13 @@ export const getProducts = async (req, res) => {
     const { category, sort, search } = req.query;
 
     let whereCondition = {};
-    
+
     // Search Filter
     if (search) {
       whereCondition.name = { [Op.like]: `%${search}%` };
     }
 
-    // Optional: Only show products that have available stock? 
+    // Optional: Only show products that have available stock?
     // Uncomment below if you want to hide out-of-stock items automatically
     // whereCondition.availableStock = { [Op.gt]: 0 };
 
@@ -78,11 +79,34 @@ export const getAllCategories = async (req, res) => {
 
 export const getVendorProducts = async (req, res) => {
   try {
+    // 1. Fetch products for this vendor AND include the Category model
     const products = await Product.findAll({
       where: { vendorId: req.user.id },
+      include: { model: Category }, // 👈 ADD THIS LINE
     });
-    res.json(products);
+
+    // 2. Transform data
+    const formattedProducts = products.map((product) => {
+      const p = product.toJSON();
+
+      // Calculate 'Placed' (Reserved) based on physical total vs available
+      let reservedCount = p.vendortotalstock - p.availableStock;
+      if (reservedCount < 0) reservedCount = 0;
+
+      return {
+        ...p,
+        stockDetails: {
+          total: p.vendortotalstock,
+          available: p.availableStock,
+          reserved: reservedCount,
+          warehouse: p.warehouseStock ? [{ quantity: p.warehouseStock }] : [],
+        },
+      };
+    });
+
+    res.json(formattedProducts);
   } catch (err) {
+    console.error("Error fetching vendor products:", err);
     res.status(500).json({ message: err.message });
   }
 };
@@ -96,14 +120,19 @@ export const createProduct = async (req, res) => {
     console.log("File:", req.file);
 
     if (!name || !price || !categoryId) {
-      return res.status(400).json({ message: "Name, price, and categoryId are required" });
+      return res
+        .status(400)
+        .json({ message: "Name, price, and categoryId are required" });
     }
 
-    if (price <= 0) return res.status(400).json({ message: "Price must be > 0" });
-    if (stock < 0) return res.status(400).json({ message: "Stock cannot be negative" });
+    if (price <= 0)
+      return res.status(400).json({ message: "Price must be > 0" });
+    if (stock < 0)
+      return res.status(400).json({ message: "Stock cannot be negative" });
 
     const category = await Category.findByPk(categoryId);
-    if (!category) return res.status(404).json({ message: "Category not found" });
+    if (!category)
+      return res.status(404).json({ message: "Category not found" });
 
     let imageUrl = null;
     if (req.file) {
@@ -124,7 +153,7 @@ export const createProduct = async (req, res) => {
       // Note: Model hook 'beforeCreate' will automatically set availableStock = vendortotalstock
       CategoryId: categoryId,
       imageUrl,
-      vendorId: req.user.role === "vendor"
+      vendorId: req.user.role === "vendor" ? req.user.id : null,
     });
 
     res.status(201).json({
@@ -133,47 +162,96 @@ export const createProduct = async (req, res) => {
     });
   } catch (err) {
     console.error("Product creation error:", err);
-    res.status(500).json({ message: "Product creation failed", error: err.message });
+    res
+      .status(500)
+      .json({ message: "Product creation failed", error: err.message });
   }
 };
 
 export const updateProduct = async (req, res) => {
   try {
+    console.log("🔥 HIT UPDATE ROUTE");
+    console.log("req.body:", req.body); // If this is {}, the Route Middleware is missing
+    console.log("req.file:", req.file);
     const product = await Product.findByPk(req.params.id);
 
     if (!product) return res.status(404).json({ message: "Product not found" });
+
+    // Check permissions
     if (req.user.role === "vendor" && product.vendorId !== req.user.id) {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
-    const { name, price, description, stock } = req.body; // 'stock' here refers to Total Stock
+    // 1. Extract values (including the new warehouseStock)
+    let { name, price, description, stock, warehouseStock } = req.body;
 
-    // UPDATE LOGIC
+    // 2. Handle Image
+    if (req.file) {
+      try {
+        const imageUrl = await uploadImageToMinio(req.file);
+        product.imageUrl = imageUrl;
+      } catch (error) {
+        return res.status(500).json({ message: "Image upload failed" });
+      }
+    }
+
+    // 3. Update Standard Fields
     if (name) product.name = name;
     if (description) product.description = description;
-    if (price && price > 0) product.price = price;
+    if (price) product.price = parseFloat(price);
 
-    // 🟢 SMART STOCK UPDATE
-    // If vendor updates the Total Stock, we must shift Available Stock by the same difference
-    // to preserve any active reservations.
-    if (stock !== undefined && stock >= 0) {
+    // 4. Update TOTAL Stock (Logic from before)
+    if (stock !== undefined && stock !== "") {
+      const newTotal = parseInt(stock);
+      if (newTotal >= 0) {
         const oldTotal = product.vendortotalstock;
-        const difference = stock - oldTotal;
+        const difference = newTotal - oldTotal;
 
-        product.vendortotalstock = stock;
+        product.vendortotalstock = newTotal;
         product.availableStock += difference;
 
-        // Safety clamp: Available shouldn't exceed Total (in case of weird data)
-        if (product.availableStock > product.vendortotalstock) {
-            product.availableStock = product.vendortotalstock;
-        }
+        // Safety Clamps
+        if (product.availableStock > product.vendortotalstock)
+          product.availableStock = product.vendortotalstock;
+        if (product.availableStock < 0) product.availableStock = 0;
+      }
+    }
+
+    // 5. 👇 HANDLE WAREHOUSE STOCK UPDATE (The Fix)
+    if (warehouseStock !== undefined && warehouseStock !== "") {
+      const wStock = parseInt(warehouseStock);
+      // Ensure warehouse stock doesn't exceed total stock
+      if (wStock >= 0 && wStock <= product.vendortotalstock) {
+        product.warehouseStock = wStock;
+      }
     }
 
     await product.save();
 
-    res.json({ message: "Product updated successfully", product });
+    // 6. PREPARE RESPONSE (Make sure frontend sees the new data)
+    const p = product.toJSON();
+
+    // Calculate Reserved
+    let reservedCount = p.vendortotalstock - p.availableStock;
+    if (reservedCount < 0) reservedCount = 0;
+
+    const formattedProduct = {
+      ...p,
+      stockDetails: {
+        total: p.vendortotalstock,
+        available: p.availableStock,
+        reserved: reservedCount,
+        // 👇 Return the actual value instead of empty []
+        warehouse: p.warehouseStock ? [{ quantity: p.warehouseStock }] : [],
+      },
+    };
+
+    res.json({
+      message: "Product updated successfully",
+      product: formattedProduct,
+    });
   } catch (err) {
-    console.error(err);
+    console.error("Update Error:", err);
     res.status(500).json({ message: "Update failed" });
   }
 };
@@ -203,17 +281,17 @@ export const deleteProduct = async (req, res) => {
 export const reduceAvailableStock = async (req, res) => {
   try {
     const { items } = req.body; // [{ productId, quantity }]
-    
+
     for (const item of items) {
       const product = await Product.findByPk(item.productId);
       if (product) {
         // Only reduce Available, NOT Total
         // This prevents other customers from buying it while order is Processing
         product.availableStock -= item.quantity;
-        
+
         // Safety check
-        if(product.availableStock < 0) product.availableStock = 0;
-        
+        if (product.availableStock < 0) product.availableStock = 0;
+
         await product.save();
       }
     }
@@ -228,15 +306,15 @@ export const reduceAvailableStock = async (req, res) => {
 export const restoreAvailableStock = async (req, res) => {
   try {
     const { items } = req.body;
-    
+
     for (const item of items) {
       const product = await Product.findByPk(item.productId);
       if (product) {
         product.availableStock += item.quantity;
-        
+
         // Ensure Available never exceeds Total (Consistency Check)
-        if(product.availableStock > product.vendortotalstock) {
-            product.availableStock = product.vendortotalstock;
+        if (product.availableStock > product.vendortotalstock) {
+          product.availableStock = product.vendortotalstock;
         }
         await product.save();
       }
@@ -253,17 +331,17 @@ export const restoreAvailableStock = async (req, res) => {
 export const reducePhysicalStock = async (req, res) => {
   try {
     const { items } = req.body;
-    
+
     for (const item of items) {
       const product = await Product.findByPk(item.productId);
       if (product) {
         // Reduce Physical Total
         product.vendortotalstock -= item.quantity;
-        if(product.vendortotalstock < 0) product.vendortotalstock = 0;
-        
-        // Note: We do NOT reduce availableStock here because 
+        if (product.vendortotalstock < 0) product.vendortotalstock = 0;
+
+        // Note: We do NOT reduce availableStock here because
         // it was already reduced during 'reduceAvailableStock' (Checkout)
-        
+
         await product.save();
       }
     }
@@ -274,19 +352,40 @@ export const reducePhysicalStock = async (req, res) => {
   }
 };
 
-
-
 export const getProductsByVendorId = async (req, res) => {
   try {
     const { vendorId } = req.params;
 
+    // 1. Fetch products AND Include Category
     const products = await Product.findAll({
       where: { vendorId: vendorId },
+      include: { model: Category }, // 👈 Important for "Category" column in UI
     });
 
-    res.json(products);
+    // 2. Format the response to include 'stockDetails'
+    // This ensures the Admin Inventory page sees the same structure as other pages
+    const formattedProducts = products.map((product) => {
+      const p = product.toJSON();
+
+      // Calculate Reserved
+      let reservedCount = p.vendortotalstock - p.availableStock;
+      if (reservedCount < 0) reservedCount = 0;
+
+      return {
+        ...p,
+        stockDetails: {
+          total: p.vendortotalstock,
+          available: p.availableStock,
+          reserved: reservedCount,
+          // 👇 CRITICAL: Map the DB column to the structure frontend expects
+          warehouse: p.warehouseStock ? [{ quantity: p.warehouseStock }] : [],
+        },
+      };
+    });
+
+    res.json(formattedProducts);
   } catch (err) {
-    console.error(err);
+    console.error("Error fetching vendor products by ID:", err);
     res.status(500).json({ message: "Failed to fetch vendor products" });
   }
 };

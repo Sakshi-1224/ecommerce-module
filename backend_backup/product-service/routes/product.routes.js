@@ -13,7 +13,7 @@ import {
   reduceAvailableStock,
   restoreAvailableStock,
   reducePhysicalStock,
-  getProductsByVendorId
+  getProductsByVendorId,
 } from "../controllers/product.controller.js";
 import upload from "../middleware/upload.js";
 
@@ -30,27 +30,21 @@ Query params:
 // 1. Public Routes
 router.get("/", getProducts);
 router.get("/categories", getAllCategories);
+// 3. Vendor Routes
+router.get("/vendor/my-products", auth, vendor, getVendorProducts);
 router.get("/vendor/:vendorId", getProductsByVendorId);
-router.get("/:id", getSingleProduct);
 
 // 2. Microservice Sync Routes (Called by Order Service)
 // These replace the old reduce-stock/restore-stock routes
 router.post("/reduce-available", auth, reduceAvailableStock); // Checkout
 router.post("/restore-available", auth, restoreAvailableStock); // Cancel
-router.post("/reduce-physical", auth, reducePhysicalStock);   // Packed
-
-// 3. Vendor Routes
-router.get("/vendor/my-products", auth, vendor, getVendorProducts);
+router.post("/reduce-physical", auth, reducePhysicalStock); // Packed
 
 // 4. Create / Update / Delete (Vendor or Admin)
-router.post(
-  "/",
-  auth,
-  vendorOrAdmin,
-  upload.single("image"), 
-  createProduct
-);
-router.put("/:id", auth, vendorOrAdmin, updateProduct);
+router.post("/", auth, vendorOrAdmin, upload.single("image"), createProduct);
+router.put("/:id", auth, vendorOrAdmin, upload.single("image"), updateProduct);
 router.delete("/:id", auth, vendorOrAdmin, deleteProduct);
+
+router.get("/:id", getSingleProduct);
 
 export default router;
