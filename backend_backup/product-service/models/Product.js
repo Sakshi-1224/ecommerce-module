@@ -22,13 +22,29 @@ const Product = sequelize.define("Product", {
   imageUrl: {
     type: DataTypes.STRING
   },
-  stock: {
+  // 🟢 PHYSICAL STOCK (Matches your Admin Panel)
+  vendortotalstock: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0
+  },
+  // 🟢 AVAILABLE TO CUSTOMERS (Total - Reserved)
+  // This helps you show "Out of Stock" instantly on the frontend
+  availableStock: {
     type: DataTypes.INTEGER,
     defaultValue: 0
   },
   vendorId: {
     type: DataTypes.INTEGER,
-    allowNull: true   // NULL = admin product
+    allowNull: false  
+  }
+}, {
+  hooks: {
+    // Automatically set available = total when creating a new product
+    beforeCreate: (product) => {
+      if (product.vendortotalstock && !product.availableStock) {
+        product.availableStock = product.vendortotalstock;
+      }
+    }
   }
 });
 

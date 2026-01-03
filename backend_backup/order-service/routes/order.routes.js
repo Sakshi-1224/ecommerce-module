@@ -2,50 +2,99 @@ import express from "express";
 import auth from "../middleware/auth.middleware.js";
 import admin from "../middleware/admin.middleware.js";
 import vendor from "../middleware/vendor.middleware.js";
-
 import {
+  /* USER */
   checkout,
   getUserOrders,
   getOrderById,
-  cancelOrder,
   trackOrder,
+  // 👇 Updated Imports for Cancellation
+  cancelFullOrder,
+  cancelOrderItem,
+
+  /* ADMIN */
   getAllOrdersAdmin,
+  getOrderByIdAdmin,
   updateOrderStatusAdmin,
-  getVendorOrders,
-  updateOrderItemStatus,
-  updateAdminOrderItemStatus,
-  placeOrder,
+
+  /* DELIVERY BOY */
   assignDeliveryBoy,
   reassignDeliveryBoy,
-  getOrderByIdAdmin,
   getAllDeliveryBoys,
   createDeliveryBoy,
   deleteDeliveryBoy,
+
+  /* VENDOR */
+  getVendorOrders,
+  vendorSalesReport,
+
+  /* WAREHOUSE */
+  addWarehouseStock,
+  updateWarehouseStock,
+  getAllWarehouseStock,
+  getWarehouseStock,
+  getVendorStock,
+  getProductVendorStock,
+  adminAllVendorsSalesReport,
+  adminVendorSalesReport,
+  adminTotalSales,
+  updateOrderItemStatusAdmin
+
 } from "../controllers/order.controller.js";
 
 const router = express.Router();
 
-router.get("/vendor", auth, vendor, getVendorOrders);
-router.put("/item/:id", auth, vendor, updateOrderItemStatus);
-
+/* ================= USER ================= */
 router.post("/checkout", auth, checkout);
-router.get("/", auth, getUserOrders);
-router.get("/:id", auth, getOrderById);
-router.put("/:id/cancel", auth, cancelOrder);
 router.get("/track/:id", auth, trackOrder);
+router.get("/", auth, getUserOrders);
 
-router.get("/admin/all", auth, admin, getAllOrdersAdmin);
-// 👇 ADD THIS ROUTE (Admin only)
+// 👇 New Cancellation Routes
+// Cancel specific item: /api/orders/:orderId/cancel-item/:itemId
+router.put("/:orderId/cancel-item/:itemId", auth, cancelOrderItem);
+
+// Cancel full order: /api/orders/:orderId/cancel
+router.put("/:orderId/cancel", auth, cancelFullOrder);
+
+// Get specific order details (Keep this last to avoid param conflicts)
+router.get("/:id", auth, getOrderById);
+
+
+/* ================= ADMIN – SALES ================= */
+router.get("/admin/sales/vendors", auth, admin, adminAllVendorsSalesReport);
+router.get("/admin/sales/total", auth, admin, adminTotalSales);
+router.get("/admin/sales/vendor/:vendorId", auth, admin, adminVendorSalesReport);
+
+/* ================= ADMIN – DELIVERY ================= */
 router.get("/admin/delivery-boys", auth, admin, getAllDeliveryBoys);
-router.post("/admin/delivery-boys", auth, admin, createDeliveryBoy); // 👈 Add
-router.delete("/admin/delivery-boys/:id", auth, admin, deleteDeliveryBoy); // 👈 Add
+router.post("/admin/delivery-boys", auth, admin, createDeliveryBoy);
+router.delete("/admin/delivery-boys/:id", auth, admin, deleteDeliveryBoy);
+router.post("/admin/assign-delivery/:orderId", auth, admin, assignDeliveryBoy);
+router.put("/admin/reassign-delivery/:orderId", auth, admin, reassignDeliveryBoy);
+
+/* ================= ADMIN – WAREHOUSE ================= */
+router.get("/admin/warehouse", auth, admin, getAllWarehouseStock);
+router.post("/admin/warehouse/add", auth, admin, addWarehouseStock);
+router.put("/admin/warehouse/update", auth, admin, updateWarehouseStock);
+
+/* ================= ADMIN – ORDERS ================= */
+router.get("/admin/all", auth, admin, getAllOrdersAdmin);
 router.get("/admin/:id", auth, admin, getOrderByIdAdmin);
-router.put("/admin/item/:id", auth, admin, updateAdminOrderItemStatus);
-router.put("/admin/:id/status", auth, admin, updateOrderStatusAdmin);
+router.put("/admin/:id/status", auth, admin, updateOrderStatusAdmin); // Bulk update
 
-router.post("/", auth, placeOrder);
+// 👇 NEW ROUTE: Update Single Item Status
+router.put("/admin/:orderId/item/:itemId/status", auth, admin, updateOrderItemStatusAdmin);
 
-router.post("/:orderId/assign", auth, admin, assignDeliveryBoy);
-router.put("/:orderId/reassign", auth, admin, reassignDeliveryBoy);
+/* ================= VENDOR ================= */
+router.get("/vendor/orders", auth, vendor, getVendorOrders);
+router.get("/vendor/warehouse", auth, vendor, getWarehouseStock);
+router.get("/vendor/stock", auth, vendor, getVendorStock);
+router.get("/vendor/sales-report", auth, vendor, vendorSalesReport);
+
+/* ================= PUBLIC STOCK ================= */
+router.get(
+  "/warehouse/available/:productId/:vendorId",
+  getProductVendorStock
+);
 
 export default router;

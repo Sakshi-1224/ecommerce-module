@@ -6,10 +6,21 @@ const Order = sequelize.define("Order", {
   userId: { type: DataTypes.STRING, allowNull: false },
   amount: { type: DataTypes.FLOAT, allowNull: false },
   address: { type: DataTypes.JSON, allowNull: false },
-  status: { type: DataTypes.STRING, defaultValue: "Order Placed" },
+   status: {
+    type: DataTypes.ENUM(
+      "PROCESSING",
+      "PACKED",
+      "OUT_FOR_DELIVERY",
+      "DELIVERED",
+      "CANCELLED"
+    ),
+    defaultValue: "PROCESSING",
+  },
   paymentMethod: { type: DataTypes.STRING, allowNull: false },
   payment: { type: DataTypes.BOOLEAN, defaultValue: false },
-  date: { type: DataTypes.BIGINT, allowNull: false }
+  date: {  type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW }
 }, {
   tableName: "orders",
   timestamps: true
