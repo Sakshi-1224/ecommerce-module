@@ -1,7 +1,9 @@
 import express from "express";
 import auth from "../middleware/auth.middleware.js";
 import vendor from "../middleware/vendor.middleware.js";
+import admin from "../middleware/admin.middleware.js";
 import vendorOrAdmin from "../middleware/vendorOrAdmin.middleware.js";
+import upload from "../middleware/upload.js";
 import {
   getProducts,
   getSingleProduct,
@@ -10,47 +12,42 @@ import {
   deleteProduct,
   getVendorProducts,
   getAllCategories,
-  reduceAvailableStock,
-  restoreAvailableStock,
-  reducePhysicalStock,
-  getProductsByVendorId
+  getVendorInventory,
+  getAllWarehouseInventory,
+  transferToWarehouse,
+  updateWarehouseStock,
+  reserveStock,
+  releaseStock,
+  shipStock
 } from "../controllers/product.controller.js";
-import upload from "../middleware/upload.js";
 
 const router = express.Router();
 
-/*
-GET /api/products
-Query params:
-?category=Electronics
-?sort=asc | desc
-?search=shirt
-*/
-
-// 1. Public Routes
+/* ================= PUBLIC ================= */
 router.get("/", getProducts);
 router.get("/categories", getAllCategories);
-router.get("/vendor/:vendorId", getProductsByVendorId);
-router.get("/:id", getSingleProduct);
 
-// 2. Microservice Sync Routes (Called by Order Service)
-// These replace the old reduce-stock/restore-stock routes
-router.post("/reduce-available", auth, reduceAvailableStock); // Checkout
-router.post("/restore-available", auth, restoreAvailableStock); // Cancel
-router.post("/reduce-physical", auth, reducePhysicalStock);   // Packed
+/* ================= INTERNAL SYNC (Order Service Only) ================= */
+// Ideally protect these with a special internal token or check IP
+router.post("/inventory/reserve", auth, reserveStock);
+router.post("/inventory/release", auth, releaseStock);
+router.post("/inventory/ship", auth, shipStock);
 
-// 3. Vendor Routes
+/* ================= VENDOR ================= */
 router.get("/vendor/my-products", auth, vendor, getVendorProducts);
+router.get("/vendor/inventory", auth, vendor, getVendorInventory); // Dashboard Data
 
-// 4. Create / Update / Delete (Vendor or Admin)
-router.post(
-  "/",
-  auth,
-  vendorOrAdmin,
-  upload.single("image"), 
-  createProduct
-);
+/* ================= ADMIN ================= */
+router.get("/admin/inventory", auth, admin, getAllWarehouseInventory); // Admin Dashboard
+router.post("/admin/inventory/transfer", auth, admin, transferToWarehouse); // Transfer Stock
+router.put("/admin/inventory/update", auth, admin, updateWarehouseStock);   // Edit Stock
+
+/* ================= CRUD (Vendor or Admin) ================= */
+router.post("/", auth, vendorOrAdmin, upload.single("image"), createProduct);
 router.put("/:id", auth, vendorOrAdmin, updateProduct);
 router.delete("/:id", auth, vendorOrAdmin, deleteProduct);
+
+// Single Product (Keep last)
+router.get("/:id", getSingleProduct);
 
 export default router;

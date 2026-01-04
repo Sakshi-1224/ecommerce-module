@@ -23,9 +23,19 @@ const Product = sequelize.define("Product", {
     type: DataTypes.STRING
   },
   // 🟢 PHYSICAL STOCK (Matches your Admin Panel)
-  vendortotalstock: {
+  totalStock: {
     type: DataTypes.INTEGER,
     defaultValue: 0
+  },
+  // 2. Reserved (Locked in processing orders)
+  reservedStock: { 
+    type: DataTypes.INTEGER, 
+    defaultValue: 0 
+  },
+  // 3. Warehouse (Subset of Total stored in warehouse)
+  warehouseStock: { 
+    type: DataTypes.INTEGER, 
+    defaultValue: 0 
   },
   // 🟢 AVAILABLE TO CUSTOMERS (Total - Reserved)
   // This helps you show "Out of Stock" instantly on the frontend
@@ -39,11 +49,16 @@ const Product = sequelize.define("Product", {
   }
 }, {
   hooks: {
-    // Automatically set available = total when creating a new product
+     // Auto-calculate Available on create
     beforeCreate: (product) => {
-      if (product.vendortotalstock && !product.availableStock) {
-        product.availableStock = product.vendortotalstock;
-      }
+      product.availableStock = product.totalStock - (product.reservedStock || 0);
+    },
+    // Auto-calculate on update (optional safety)
+    beforeUpdate: (product) => {
+        // If total or reserved changed, recalc available
+        if (product.changed('totalStock') || product.changed('reservedStock')) {
+            product.availableStock = product.totalStock - product.reservedStock;
+        }
     }
   }
 });
