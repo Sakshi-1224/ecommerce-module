@@ -15,7 +15,6 @@ const VENDOR_SERVICE_ADMIN_URL = process.env.VENDOR_SERVICE_ADMIN_URL;
 const app = express();
 app.use(express.json());
 
-
 app.use(
   cors({
     origin: "http://localhost:5174",
@@ -145,8 +144,6 @@ app.put("/api/auth/profile", async (req, res) => {
   }
 });
 
-
-
 // get all products
 app.get("/api/products", async (req, res) => {
   try {
@@ -160,9 +157,7 @@ app.get("/api/products", async (req, res) => {
 // get categories
 app.get("/api/products/categories", async (req, res) => {
   try {
-    const response = await axios.get(
-      `${PRODUCT_SERVICE_URL}/categories`
-    );
+    const response = await axios.get(`${PRODUCT_SERVICE_URL}/categories`);
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json(err.response?.data);
@@ -172,9 +167,7 @@ app.get("/api/products/categories", async (req, res) => {
 // get single product
 app.get("/api/products/:id", async (req, res) => {
   try {
-    const response = await axios.get(
-      `${PRODUCT_SERVICE_URL}/${req.params.id}`
-    );
+    const response = await axios.get(`${PRODUCT_SERVICE_URL}/${req.params.id}`);
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json(err.response?.data);
@@ -192,7 +185,7 @@ app.post("/api/products/inventory/reserve", async (req, res) => {
       `${PRODUCT_SERVICE_URL}/inventory/reserve`,
       req.body,
       {
-        headers: { Authorization: req.headers.authorization }
+        headers: { Authorization: req.headers.authorization },
       }
     );
     res.status(response.status).json(response.data);
@@ -208,7 +201,7 @@ app.post("/api/products/inventory/release", async (req, res) => {
       `${PRODUCT_SERVICE_URL}/inventory/release`,
       req.body,
       {
-        headers: { Authorization: req.headers.authorization }
+        headers: { Authorization: req.headers.authorization },
       }
     );
     res.status(response.status).json(response.data);
@@ -224,7 +217,7 @@ app.post("/api/products/inventory/ship", async (req, res) => {
       `${PRODUCT_SERVICE_URL}/inventory/ship`,
       req.body,
       {
-        headers: { Authorization: req.headers.authorization }
+        headers: { Authorization: req.headers.authorization },
       }
     );
     res.status(response.status).json(response.data);
@@ -243,7 +236,7 @@ app.get("/api/products/vendor/my-products", async (req, res) => {
     const response = await axios.get(
       `${PRODUCT_SERVICE_URL}/vendor/my-products`,
       {
-        headers: { Authorization: req.headers.authorization }
+        headers: { Authorization: req.headers.authorization },
       }
     );
     res.status(response.status).json(response.data);
@@ -258,7 +251,7 @@ app.get("/api/products/vendor/inventory", async (req, res) => {
     const response = await axios.get(
       `${PRODUCT_SERVICE_URL}/vendor/inventory`,
       {
-        headers: { Authorization: req.headers.authorization }
+        headers: { Authorization: req.headers.authorization },
       }
     );
     res.status(response.status).json(response.data);
@@ -274,12 +267,9 @@ app.get("/api/products/vendor/inventory", async (req, res) => {
 // warehouse inventory
 app.get("/api/products/admin/inventory", async (req, res) => {
   try {
-    const response = await axios.get(
-      `${PRODUCT_SERVICE_URL}/admin/inventory`,
-      {
-        headers: { Authorization: req.headers.authorization }
-      }
-    );
+    const response = await axios.get(`${PRODUCT_SERVICE_URL}/admin/inventory`, {
+      headers: { Authorization: req.headers.authorization },
+    });
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json(err.response?.data);
@@ -293,7 +283,7 @@ app.post("/api/products/admin/inventory/transfer", async (req, res) => {
       `${PRODUCT_SERVICE_URL}/admin/inventory/transfer`,
       req.body,
       {
-        headers: { Authorization: req.headers.authorization }
+        headers: { Authorization: req.headers.authorization },
       }
     );
     res.status(response.status).json(response.data);
@@ -309,7 +299,22 @@ app.put("/api/products/admin/inventory/update", async (req, res) => {
       `${PRODUCT_SERVICE_URL}/admin/inventory/update`,
       req.body,
       {
-        headers: { Authorization: req.headers.authorization }
+        headers: { Authorization: req.headers.authorization },
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+// ✅ MAKE SURE THIS IS ADDED
+app.get("/api/products/vendor/:vendorId", async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${PRODUCT_SERVICE_URL}/vendor/${req.params.vendorId}`,
+      {
+        headers: { Authorization: req.headers.authorization },
       }
     );
     res.status(response.status).json(response.data);
@@ -359,53 +364,43 @@ app.post("/api/products", upload.single("image"), async (req, res) => {
   }
 });
 
-
 // update product
-app.put(
-  "/api/products/:id",
-  upload.single("image"),
-  async (req, res) => {
-    try {
-      // 1. Create FormData
-      const formData = new FormData();
+app.put("/api/products/:id", upload.single("image"), async (req, res) => {
+  try {
+    // 1. Create FormData
+    const formData = new FormData();
 
-      // 2. Append text fields
-      Object.keys(req.body).forEach((key) => {
-        formData.append(key, req.body[key]);
-      });
+    // 2. Append text fields
+    Object.keys(req.body).forEach((key) => {
+      formData.append(key, req.body[key]);
+    });
 
-      // 3. Append image if exists
-      if (req.file) {
-        formData.append(
-          "image",
-          req.file.buffer,
-          req.file.originalname
-        );
-      }
-
-      // 4. Forward request to Product Service
-      const response = await axios.put(
-        `${PRODUCT_SERVICE_URL}/${req.params.id}`,
-        formData,
-        {
-          headers: {
-            Authorization: req.headers.authorization,
-            ...formData.getHeaders(), // IMPORTANT
-          },
-        }
-      );
-
-      res.status(response.status).json(response.data);
-    } catch (err) {
-      console.error("Gateway Update Error:", err.message);
-
-      res.status(err.response?.status || 500).json({
-        message:
-          err.response?.data?.message || "Product update failed",
-      });
+    // 3. Append image if exists
+    if (req.file) {
+      formData.append("image", req.file.buffer, req.file.originalname);
     }
+
+    // 4. Forward request to Product Service
+    const response = await axios.put(
+      `${PRODUCT_SERVICE_URL}/${req.params.id}`,
+      formData,
+      {
+        headers: {
+          Authorization: req.headers.authorization,
+          ...formData.getHeaders(), // IMPORTANT
+        },
+      }
+    );
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    console.error("Gateway Update Error:", err.message);
+
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Product update failed",
+    });
   }
-);
+});
 
 // delete product
 app.delete("/api/products/:id", async (req, res) => {
@@ -420,13 +415,10 @@ app.delete("/api/products/:id", async (req, res) => {
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
-      message:
-        err.response?.data?.message || "Product deletion failed",
+      message: err.response?.data?.message || "Product deletion failed",
     });
   }
 });
-
-
 
 app.post("/api/cart/add", async (req, res) => {
   try {
@@ -513,13 +505,11 @@ app.delete("/api/cart/remove/:id", async (req, res) => {
    VENDOR ROUTES
 ====================== */
 
-
 /* ======================================================
    USER ROUTES
 ====================================================== */
 
 // Checkout
-
 
 app.post("/api/orders/checkout", async (req, res) => {
   try {
@@ -527,7 +517,7 @@ app.post("/api/orders/checkout", async (req, res) => {
       `${ORDER_SERVICE_URL}/checkout`,
       req.body,
       {
-        headers: { Authorization: req.headers.authorization }
+        headers: { Authorization: req.headers.authorization },
       }
     );
     res.status(response.status).json(response.data);
@@ -540,7 +530,7 @@ app.post("/api/orders/checkout", async (req, res) => {
 app.get("/api/orders", async (req, res) => {
   try {
     const response = await axios.get(`${ORDER_SERVICE_URL}`, {
-      headers: { Authorization: req.headers.authorization }
+      headers: { Authorization: req.headers.authorization },
     });
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -551,12 +541,9 @@ app.get("/api/orders", async (req, res) => {
 // get order by id
 app.get("/api/orders/:id", async (req, res) => {
   try {
-    const response = await axios.get(
-      `${ORDER_SERVICE_URL}/${req.params.id}`,
-      {
-        headers: { Authorization: req.headers.authorization }
-      }
-    );
+    const response = await axios.get(`${ORDER_SERVICE_URL}/${req.params.id}`, {
+      headers: { Authorization: req.headers.authorization },
+    });
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json(err.response?.data);
@@ -569,7 +556,7 @@ app.get("/api/orders/track/:id", async (req, res) => {
     const response = await axios.get(
       `${ORDER_SERVICE_URL}/track/${req.params.id}`,
       {
-        headers: { Authorization: req.headers.authorization }
+        headers: { Authorization: req.headers.authorization },
       }
     );
     res.status(response.status).json(response.data);
@@ -585,7 +572,7 @@ app.put("/api/orders/:orderId/cancel", async (req, res) => {
       `${ORDER_SERVICE_URL}/${req.params.orderId}/cancel`,
       {},
       {
-        headers: { Authorization: req.headers.authorization }
+        headers: { Authorization: req.headers.authorization },
       }
     );
     res.status(response.status).json(response.data);
@@ -595,23 +582,20 @@ app.put("/api/orders/:orderId/cancel", async (req, res) => {
 });
 
 // cancel single item
-app.put(
-  "/api/orders/:orderId/cancel-item/:itemId",
-  async (req, res) => {
-    try {
-      const response = await axios.put(
-        `${ORDER_SERVICE_URL}/${req.params.orderId}/cancel-item/${req.params.itemId}`,
-        {},
-        {
-          headers: { Authorization: req.headers.authorization }
-        }
-      );
-      res.status(response.status).json(response.data);
-    } catch (err) {
-      res.status(err.response?.status || 500).json(err.response?.data);
-    }
+app.put("/api/orders/:orderId/cancel-item/:itemId", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${ORDER_SERVICE_URL}/${req.params.orderId}/cancel-item/${req.params.itemId}`,
+      {},
+      {
+        headers: { Authorization: req.headers.authorization },
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
   }
-);
+});
 
 /* ======================================================
    ADMIN – SALES REPORTS
@@ -619,12 +603,9 @@ app.put(
 
 app.get("/api/orders/admin/sales/total", async (req, res) => {
   try {
-    const response = await axios.get(
-      `${ORDER_SERVICE_URL}/admin/sales/total`,
-      {
-        headers: { Authorization: req.headers.authorization }
-      }
-    );
+    const response = await axios.get(`${ORDER_SERVICE_URL}/admin/sales/total`, {
+      headers: { Authorization: req.headers.authorization },
+    });
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json(err.response?.data);
@@ -636,7 +617,7 @@ app.get("/api/orders/admin/sales/vendors", async (req, res) => {
     const response = await axios.get(
       `${ORDER_SERVICE_URL}/admin/sales/vendors`,
       {
-        headers: { Authorization: req.headers.authorization }
+        headers: { Authorization: req.headers.authorization },
       }
     );
     res.status(response.status).json(response.data);
@@ -650,7 +631,7 @@ app.get("/api/orders/admin/sales/vendor/:vendorId", async (req, res) => {
     const response = await axios.get(
       `${ORDER_SERVICE_URL}/admin/sales/vendor/${req.params.vendorId}`,
       {
-        headers: { Authorization: req.headers.authorization }
+        headers: { Authorization: req.headers.authorization },
       }
     );
     res.status(response.status).json(response.data);
@@ -668,7 +649,7 @@ app.get("/api/orders/admin/delivery-boys", async (req, res) => {
     const response = await axios.get(
       `${ORDER_SERVICE_URL}/admin/delivery-boys`,
       {
-        headers: { Authorization: req.headers.authorization }
+        headers: { Authorization: req.headers.authorization },
       }
     );
     res.status(response.status).json(response.data);
@@ -683,7 +664,7 @@ app.post("/api/orders/admin/delivery-boys", async (req, res) => {
       `${ORDER_SERVICE_URL}/admin/delivery-boys`,
       req.body,
       {
-        headers: { Authorization: req.headers.authorization }
+        headers: { Authorization: req.headers.authorization },
       }
     );
     res.status(response.status).json(response.data);
@@ -697,7 +678,7 @@ app.delete("/api/orders/admin/delivery-boys/:id", async (req, res) => {
     const response = await axios.delete(
       `${ORDER_SERVICE_URL}/admin/delivery-boys/${req.params.id}`,
       {
-        headers: { Authorization: req.headers.authorization }
+        headers: { Authorization: req.headers.authorization },
       }
     );
     res.status(response.status).json(response.data);
@@ -712,12 +693,9 @@ app.delete("/api/orders/admin/delivery-boys/:id", async (req, res) => {
 
 app.get("/api/orders/admin/all", async (req, res) => {
   try {
-    const response = await axios.get(
-      `${ORDER_SERVICE_URL}/admin/all`,
-      {
-        headers: { Authorization: req.headers.authorization }
-      }
-    );
+    const response = await axios.get(`${ORDER_SERVICE_URL}/admin/all`, {
+      headers: { Authorization: req.headers.authorization },
+    });
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json(err.response?.data);
@@ -730,7 +708,7 @@ app.put("/api/orders/admin/:id/status", async (req, res) => {
       `${ORDER_SERVICE_URL}/admin/${req.params.id}/status`,
       req.body,
       {
-        headers: { Authorization: req.headers.authorization }
+        headers: { Authorization: req.headers.authorization },
       }
     );
     res.status(response.status).json(response.data);
@@ -739,23 +717,20 @@ app.put("/api/orders/admin/:id/status", async (req, res) => {
   }
 });
 
-app.put(
-  "/api/orders/admin/:orderId/item/:itemId/status",
-  async (req, res) => {
-    try {
-      const response = await axios.put(
-        `${ORDER_SERVICE_URL}/admin/${req.params.orderId}/item/${req.params.itemId}/status`,
-        req.body,
-        {
-          headers: { Authorization: req.headers.authorization }
-        }
-      );
-      res.status(response.status).json(response.data);
-    } catch (err) {
-      res.status(err.response?.status || 500).json(err.response?.data);
-    }
+app.put("/api/orders/admin/:orderId/item/:itemId/status", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${ORDER_SERVICE_URL}/admin/${req.params.orderId}/item/${req.params.itemId}/status`,
+      req.body,
+      {
+        headers: { Authorization: req.headers.authorization },
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
   }
-);
+});
 
 /* ======================================================
    VENDOR ROUTES
@@ -763,12 +738,9 @@ app.put(
 
 app.get("/api/orders/vendor/orders", async (req, res) => {
   try {
-    const response = await axios.get(
-      `${ORDER_SERVICE_URL}/vendor/orders`,
-      {
-        headers: { Authorization: req.headers.authorization }
-      }
-    );
+    const response = await axios.get(`${ORDER_SERVICE_URL}/vendor/orders`, {
+      headers: { Authorization: req.headers.authorization },
+    });
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json(err.response?.data);
@@ -780,7 +752,7 @@ app.get("/api/orders/vendor/sales-report", async (req, res) => {
     const response = await axios.get(
       `${ORDER_SERVICE_URL}/vendor/sales-report`,
       {
-        headers: { Authorization: req.headers.authorization }
+        headers: { Authorization: req.headers.authorization },
       }
     );
     res.status(response.status).json(response.data);
@@ -788,12 +760,6 @@ app.get("/api/orders/vendor/sales-report", async (req, res) => {
     res.status(err.response?.status || 500).json(err.response?.data);
   }
 });
-
-
-
-
-
-
 
 /* ======================
    ADMIN LOGIN

@@ -18,7 +18,8 @@ import {
   updateWarehouseStock,
   reserveStock,
   releaseStock,
-  shipStock
+  shipStock,
+  getProductsByVendorId,
 } from "../controllers/product.controller.js";
 
 const router = express.Router();
@@ -38,13 +39,14 @@ router.get("/vendor/my-products", auth, vendor, getVendorProducts);
 router.get("/vendor/inventory", auth, vendor, getVendorInventory); // Dashboard Data
 
 /* ================= ADMIN ================= */
+router.get("/vendor/:vendorId", auth, admin, getProductsByVendorId);
 router.get("/admin/inventory", auth, admin, getAllWarehouseInventory); // Admin Dashboard
 router.post("/admin/inventory/transfer", auth, admin, transferToWarehouse); // Transfer Stock
-router.put("/admin/inventory/update", auth, admin, updateWarehouseStock);   // Edit Stock
+router.put("/admin/inventory/update", auth, admin, updateWarehouseStock); // Edit Stock
 
 /* ================= CRUD (Vendor or Admin) ================= */
 router.post("/", auth, vendorOrAdmin, upload.single("image"), createProduct);
-router.put("/:id", auth, vendorOrAdmin, updateProduct);
+router.put("/:id", auth, vendorOrAdmin, upload.single("image"), updateProduct);
 router.delete("/:id", auth, vendorOrAdmin, deleteProduct);
 
 // Single Product (Keep last)
