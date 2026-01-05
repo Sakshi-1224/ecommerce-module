@@ -923,6 +923,37 @@ app.delete("/api/cart/clear", async (req, res) => {
   }
 });
 
+/* ======================
+   PAYMENT ROUTES
+====================== */
+app.post("/api/payment/create", async (req, res) => {
+  try {
+    // Forward to Order Service
+    const response = await axios.post(
+      `${ORDER_SERVICE_URL}/payment/create`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+app.post("/api/payment/verify", async (req, res) => {
+  try {
+    // Forward to Order Service
+    const response = await axios.post(
+      `${ORDER_SERVICE_URL}/payment/verify`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
 app.listen(5007, () => {
   console.log("API Gateway running on port 5007");
 });

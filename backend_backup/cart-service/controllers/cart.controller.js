@@ -9,7 +9,7 @@ const PRODUCT_SERVICE_URL = "http://localhost:5002/api/products";
 export const addToCart = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { productId, quantity = 1 } = req.body; // Add quantity here
+    const { productId, quantity = 1 } = req.body;
 
     // Validate request body
     if (!userId) {
@@ -32,8 +32,10 @@ export const addToCart = async (req, res) => {
       return res.status(404).json({ message: "Product not found" });
     }
 
-    if (product.stock < quantity) {
-      // Check against requested quantity
+    // ✅ FIX 1: Use 'availableStock' instead of 'stock'
+    const currentStock = product.availableStock ?? product.stock ?? 0;
+
+    if (currentStock < quantity) {
       return res.status(400).json({ message: "Insufficient stock" });
     }
 
@@ -42,13 +44,13 @@ export const addToCart = async (req, res) => {
     });
 
     if (existing) {
-      if (existing.quantity + quantity > product.stock) {
+      if (existing.quantity + quantity > currentStock) {
         return res.status(400).json({
           message: "Cannot add more than available stock",
         });
       }
 
-      existing.quantity += quantity; // Add the requested quantity
+      existing.quantity += quantity;
       await existing.save();
       return res.json(existing);
     }
@@ -56,7 +58,7 @@ export const addToCart = async (req, res) => {
     const item = await CartItem.create({
       userId,
       productId,
-      quantity: quantity, // Use the requested quantity
+      quantity: quantity,
     });
 
     res.status(201).json(item);
@@ -65,6 +67,7 @@ export const addToCart = async (req, res) => {
     res.status(500).json({ message: "Failed to add to cart" });
   }
 };
+
 /* ---------------- UPDATE QUANTITY ---------------- */
 export const updateQuantity = async (req, res) => {
   try {
@@ -78,20 +81,25 @@ export const updateQuantity = async (req, res) => {
     }
 
     const item = await CartItem.findByPk(id);
+    if (!item) {
+      return res.status(404).json({ message: "Cart item not found" });
+    }
+
+    // Check ownership
     if (item.userId !== req.user.id) {
       return res.status(403).json({
         message: "Unauthorized cart access",
       });
-    }
-    if (!item) {
-      return res.status(404).json({ message: "Cart item not found" });
     }
 
     const { data: product } = await axios.get(
       `${PRODUCT_SERVICE_URL}/${item.productId}`
     );
 
-    if (quantity > product.stock) {
+    // ✅ FIX 2: Use 'availableStock' here too
+    const currentStock = product.availableStock ?? product.stock ?? 0;
+
+    if (quantity > currentStock) {
       return res.status(400).json({
         message: "Requested quantity exceeds stock",
       });
@@ -130,60 +138,45 @@ export const getCart = async (req, res) => {
         );
 
         if (!product) {
-          console.warn(
-            `Product ${item.productId} not found for cart item ${item.id}`
-          );
-          detailedCart.push({
-            cartItemId: item.id,
-            productId: item.productId,
-            name: null,
-            image: null,
-            price: 0,
-            quantity: item.quantity,
-            stock: 0,
-            subtotal: 0,
-            unavailable: true,
-          });
+          // Handle deleted products gracefully
           continue;
         }
 
         const subtotal = product.price * item.quantity;
         total += subtotal;
 
+        // ✅ FIX 3: Structure response to match Frontend expectations (item.Product.xxx)
         detailedCart.push({
-          cartItemId: item.id,
-          productId: product.id,
-          name: product.name,
-          image: product.imageUrl,
-          price: product.price,
+          id: item.id, // CartItem ID
+          cartItemId: item.id, // Redundant but helpful
           quantity: item.quantity,
-          stock: product.stock,
-          vendorId: product.vendorId,
-          subtotal,
+          userId: item.userId,
+          productId: item.productId,
+          price: product.price, // Top level price for easy access
+          // Nest product details so frontend item.Product.name works
+          Product: {
+            id: product.id,
+            name: product.name,
+            imageUrl: product.imageUrl,
+            price: product.price,
+            category: product.category,
+            // Ensure we send the correct stock field
+            availableStock: product.availableStock ?? product.stock ?? 0,
+            vendorId: product.vendorId,
+          },
         });
       } catch (err) {
         console.error(
-          `Failed to fetch product ${item.productId} for cart item ${item.id}:`,
-          err.response?.data || err.message
+          `Failed to fetch product ${item.productId} for cart item ${item.id}`,
+          err.message
         );
-        // push a placeholder item so the rest of the cart still returns
-        detailedCart.push({
-          cartItemId: item.id,
-          productId: item.productId,
-          name: null,
-          image: null,
-          price: 0,
-          quantity: item.quantity,
-          stock: 0,
-          subtotal: 0,
-          unavailable: true,
-        });
+        // Skip items where product fetch failed (or add error state)
       }
     }
 
     res.json({ items: detailedCart, total });
   } catch (err) {
-    console.error("Get cart error:", err.response?.data || err.message || err);
+    console.error("Get cart error:", err);
     res
       .status(err.response?.status || 500)
       .json({ message: err.response?.data?.message || "Failed to fetch cart" });

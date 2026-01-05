@@ -55,7 +55,6 @@ export const register = async (req, res) => {
       role: "user",
     });
 
-
     const token = jwt.sign(
       {
         id: user.id,
@@ -74,7 +73,7 @@ export const register = async (req, res) => {
         phone: user.phone,
         email: user.email,
         role: user.role,
-        profilePic: user.profilePic // Even if null, send the key
+        profilePic: user.profilePic, // Even if null, send the key
       },
     });
 
@@ -120,7 +119,7 @@ export const login = async (req, res) => {
         name: user.name,
         phone: user.phone,
         email: user.email,
-        profilePic: user.profilePic
+        profilePic: user.profilePic,
       },
     });
   } catch (err) {
@@ -207,8 +206,6 @@ export const getAllUsers = async (req, res) => {
   }
 };
 
-
-
 /*
 export const updateProfile = async (req, res) => {
   try {
@@ -280,16 +277,20 @@ export const updateProfile = async (req, res) => {
     if (name) user.name = name;
     if (email && email !== user.email) {
       const exists = await User.findOne({ where: { email } });
-      if (exists) return res.status(400).json({ message: "Email already in use" });
+      if (exists)
+        return res.status(400).json({ message: "Email already in use" });
       user.email = email;
     }
 
     // 2. Handle File Upload to MinIO
     if (req.file) {
       const file = req.file;
-      
+
       // Create a unique filename: timestamp-originalName
-      const fileName = `${Date.now()}-${file.originalname.replace(/\s+/g, '-')}`;
+      const fileName = `${Date.now()}-${file.originalname.replace(
+        /\s+/g,
+        "-"
+      )}`;
 
       // Upload buffer to MinIO
       await minioClient.putObject(
@@ -303,7 +304,7 @@ export const updateProfile = async (req, res) => {
       // Construct the Public URL
       // Format: http://localhost:9000/bucket-name/filename
       const imageUrl = `http://localhost:9000/${BUCKET_NAME}/${fileName}`;
-      
+
       user.profilePic = imageUrl;
     }
 
