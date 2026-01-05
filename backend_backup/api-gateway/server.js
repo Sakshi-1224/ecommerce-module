@@ -826,6 +826,37 @@ app.get("/api/orders/vendor/sales-report", async (req, res) => {
   }
 });
 
+
+app.post("/api/orders/admin/assign-delivery/:orderId", async (req, res) => {
+  try {
+    const response = await axios.post(
+      `${ORDER_SERVICE_URL}/admin/assign-delivery/:orderId`,
+      req.body,
+      {
+        headers: { Authorization: req.headers.authorization },
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+app.put("/api/orders/admin/reassign-delivery/:orderId", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${ORDER_SERVICE_URL}/admin/reassign-delivery/:orderId`,
+      req.body,
+      {
+        headers: { Authorization: req.headers.authorization },
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
 /* ======================
    ADMIN LOGIN
 ====================== */
