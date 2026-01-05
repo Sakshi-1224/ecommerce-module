@@ -20,6 +20,7 @@ import {
   releaseStock,
   shipStock,
   getProductsByVendorId,
+  getProductsBatch,
 } from "../controllers/product.controller.js";
 
 const router = express.Router();
@@ -45,6 +46,7 @@ router.post("/admin/inventory/transfer", auth, admin, transferToWarehouse); // T
 router.put("/admin/inventory/update", auth, admin, updateWarehouseStock); // Edit Stock
 
 /* ================= CRUD (Vendor or Admin) ================= */
+router.get("/batch", getProductsBatch);
 router.post("/", auth, vendorOrAdmin, upload.single("image"), createProduct);
 router.put("/:id", auth, vendorOrAdmin, upload.single("image"), updateProduct);
 router.delete("/:id", auth, vendorOrAdmin, deleteProduct);

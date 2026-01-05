@@ -259,13 +259,13 @@ export const updateOrderStatusAdmin = async (req, res) => {
           await item.save();
         }
       }
-    
-    // Catch-all for other statuses
-    // C. Update Delivery Assignment (CRITICAL FOR RECONCILIATION)
+
+      // Catch-all for other statuses
+      // C. Update Delivery Assignment (CRITICAL FOR RECONCILIATION)
       const assignment = await DeliveryAssignment.findOne({
-        where: { orderId: order.id, status: { [Op.ne]: "FAILED" } }
+        where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
       });
-      
+
       if (assignment) {
         assignment.status = "DELIVERED";
         await assignment.save();
@@ -331,16 +331,17 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
 
       if (order.status !== status) {
         order.status = status;
-        if (status === "DELIVERED") {order.payment = true;
+        if (status === "DELIVERED") {
+          order.payment = true;
           order.payment = true;
           // 🟢 CRITICAL FIX: Sync DeliveryAssignment
-            const assignment = await DeliveryAssignment.findOne({
-                where: { orderId: order.id, status: { [Op.ne]: "FAILED" } }
-            });
-            if (assignment) {
-                assignment.status = "DELIVERED";
-                await assignment.save();
-            }
+          const assignment = await DeliveryAssignment.findOne({
+            where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
+          });
+          if (assignment) {
+            assignment.status = "DELIVERED";
+            await assignment.save();
+          }
         }
         await order.save();
       }
@@ -386,28 +387,47 @@ export const adminVendorSalesReport = async (req, res) => {
     const { vendorId } = req.params;
     const { type } = req.query;
 
-    let startDate;
-    if (type === "weekly")
-      startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    else if (type === "monthly")
-      startDate = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-    else if (type === "yearly")
-      startDate = new Date(new Date().getFullYear(), 0, 1);
-    else
-      return res
-        .status(400)
-        .json({ message: "Invalid type (weekly, monthly, yearly)" });
+    console.log(`📊 Generating Report for Vendor: ${vendorId}, Type: ${type}`);
 
+    let dateCondition = {};
+
+    // ✅ ADD "all" CASE
+    if (type === "weekly")
+      dateCondition = {
+        [Op.gte]: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+      };
+    else if (type === "monthly")
+      dateCondition = {
+        [Op.gte]: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+      };
+    else if (type === "yearly")
+      dateCondition = { [Op.gte]: new Date(new Date().getFullYear(), 0, 1) };
+    else if (type === "all") dateCondition = {}; // No date filter (All Time)
+
+    // Debugging: Check count of matching items first
+    const count = await OrderItem.count({
+      where: {
+        vendorId: vendorId,
+        status: { [Op.or]: ["DELIVERED", "Delivered"] },
+        ...(type !== "all" && { createdAt: dateCondition }),
+      },
+    });
+    console.log(`✅ Found ${count} DELIVERED items for this period.`);
+
+    // Calculate Sum
     const totalSales = await OrderItem.sum("price", {
       where: {
         vendorId: vendorId,
-        status: "DELIVERED",
-        createdAt: { [Op.gte]: startDate },
+        status: { [Op.or]: ["DELIVERED", "Delivered"] }, // Checks both formats
+        ...(type !== "all" && { createdAt: dateCondition }),
       },
     });
 
+    console.log(`💰 Total Calculated: ${totalSales}`);
+
     res.json({ vendorId, period: type, totalSales: totalSales || 0 });
   } catch (err) {
+    console.error("Report Error:", err);
     res.status(500).json({ message: "Failed to fetch vendor sales report" });
   }
 };
@@ -516,7 +536,7 @@ export const getVendorOrders = async (req, res) => {
     if (productIds.length > 0) {
       try {
         const productsResponse = await axios.get(
-          `${PRODUCT_SERVICE_URL}/products/batch`,
+          `${PRODUCT_SERVICE_URL}/batch`,
           {
             params: { ids: productIds.join(",") },
             headers: { Authorization: req.headers.authorization },
@@ -601,51 +621,61 @@ export const reassignDeliveryBoy = async (req, res) => {
 };
 */
 
-
-
-
 /* ======================================================
    DELIVERY BOY MANAGEMENT (CRUD)
 ====================================================== */
 
 export const getAllDeliveryBoys = async (req, res) => {
-  try { 
-      const boys = await DeliveryBoy.findAll(); 
-      res.json(boys); 
-  } catch (err) { res.status(500).json({ message: "Failed to fetch delivery boys" }); }
+  try {
+    const boys = await DeliveryBoy.findAll();
+    res.json(boys);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch delivery boys" });
+  }
 };
 
 export const createDeliveryBoy = async (req, res) => {
-  try { 
-      // Expects: { name, phone, address, maxOrders, assignedPinCodes: ["123", "456"] }
-      const newBoy = await DeliveryBoy.create({ 
-          ...req.body, 
-          active: true 
-      }); 
-      res.status(201).json(newBoy); 
-  } catch (err) { res.status(500).json({ message: "Failed to create delivery boy", error: err.message }); }
+  try {
+    // Expects: { name, phone, address, maxOrders, assignedPinCodes: ["123", "456"] }
+    const newBoy = await DeliveryBoy.create({
+      ...req.body,
+      active: true,
+    });
+    res.status(201).json(newBoy);
+  } catch (err) {
+    res
+      .status(500)
+      .json({ message: "Failed to create delivery boy", error: err.message });
+  }
 };
 
 export const deleteDeliveryBoy = async (req, res) => {
-  try { 
-      await DeliveryBoy.destroy({ where: { id: req.params.id } }); 
-      res.json({ message: "Deleted" }); 
-  } catch (err) { res.status(500).json({ message: "Failed to delete" }); }
+  try {
+    await DeliveryBoy.destroy({ where: { id: req.params.id } });
+    res.json({ message: "Deleted" });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to delete" });
+  }
 };
 
 export const updateDeliveryBoy = async (req, res) => {
   try {
     const { id } = req.params;
-    const { maxOrders, assignedPinCodes, name, phone, address, active } = req.body;
+    const { maxOrders, assignedPinCodes, name, phone, address, active } =
+      req.body;
 
     const deliveryBoy = await DeliveryBoy.findByPk(id);
-    if (!deliveryBoy) return res.status(404).json({ message: "Delivery boy not found" });
+    if (!deliveryBoy)
+      return res.status(404).json({ message: "Delivery boy not found" });
 
     if (maxOrders !== undefined) deliveryBoy.maxOrders = maxOrders;
-    
+
     if (assignedPinCodes !== undefined) {
-        if(!Array.isArray(assignedPinCodes)) return res.status(400).json({ message: "assignedPinCodes must be an array" });
-        deliveryBoy.assignedPinCodes = assignedPinCodes;
+      if (!Array.isArray(assignedPinCodes))
+        return res
+          .status(400)
+          .json({ message: "assignedPinCodes must be an array" });
+      deliveryBoy.assignedPinCodes = assignedPinCodes;
     }
 
     if (name) deliveryBoy.name = name;
@@ -656,7 +686,9 @@ export const updateDeliveryBoy = async (req, res) => {
     await deliveryBoy.save();
 
     res.json({ message: "Delivery boy updated successfully", deliveryBoy });
-  } catch (err) { res.status(500).json({ message: "Update failed", error: err.message }); }
+  } catch (err) {
+    res.status(500).json({ message: "Update failed", error: err.message });
+  }
 };
 
 /* ======================================================
@@ -675,43 +707,54 @@ export const assignDeliveryBoy = async (req, res) => {
     if (!order) return res.status(404).json({ message: "Order not found" });
 
     const deliveryBoy = await DeliveryBoy.findByPk(deliveryBoyId);
-    if (!deliveryBoy || !deliveryBoy.active) return res.status(400).json({ message: "Delivery boy invalid" });
+    if (!deliveryBoy || !deliveryBoy.active)
+      return res.status(400).json({ message: "Delivery boy invalid" });
 
     // 2. VALIDATION: Location Check (Pin Code)
     // Check if order address zip exists in boy's assigned list
     const orderZip = order.address?.zip || order.address?.pincode;
     if (orderZip && deliveryBoy.assignedPinCodes?.length > 0) {
-        if (!deliveryBoy.assignedPinCodes.includes(orderZip)) {
-            return res.status(400).json({ message: `Delivery boy does not cover Pincode: ${orderZip}` });
-        }
+      if (!deliveryBoy.assignedPinCodes.includes(orderZip)) {
+        return res.status(400).json({
+          message: `Delivery boy does not cover Pincode: ${orderZip}`,
+        });
+      }
     }
 
     // 3. VALIDATION: Daily Capacity Check
-    const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(); endOfDay.setHours(23, 59, 59, 999);
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date();
+    endOfDay.setHours(23, 59, 59, 999);
 
     const todayAssignments = await DeliveryAssignment.count({
-        where: {
-            deliveryBoyId: deliveryBoy.id,
-            status: { [Op.ne]: "FAILED" },
-            createdAt: { [Op.between]: [startOfDay, endOfDay] }
-        }
+      where: {
+        deliveryBoyId: deliveryBoy.id,
+        status: { [Op.ne]: "FAILED" },
+        createdAt: { [Op.between]: [startOfDay, endOfDay] },
+      },
     });
 
     if (todayAssignments >= deliveryBoy.maxOrders) {
-        return res.status(400).json({ message: `Daily limit of ${deliveryBoy.maxOrders} orders reached` });
+      return res.status(400).json({
+        message: `Daily limit of ${deliveryBoy.maxOrders} orders reached`,
+      });
     }
 
     // 4. Assign
     await DeliveryAssignment.create({ orderId, deliveryBoyId });
-    
-    if(order.status !== "DELIVERED") {
-        await Order.update({ status: "OUT_FOR_DELIVERY" }, { where: { id: orderId } });
+
+    if (order.status !== "DELIVERED") {
+      await Order.update(
+        { status: "OUT_FOR_DELIVERY" },
+        { where: { id: orderId } }
+      );
     }
 
     res.json({ message: "Assigned successfully" });
-
-  } catch (err) { res.status(500).json({ message: "Assignment failed", error: err.message }); }
+  } catch (err) {
+    res.status(500).json({ message: "Assignment failed", error: err.message });
+  }
 };
 
 export const reassignDeliveryBoy = async (req, res) => {
@@ -721,15 +764,21 @@ export const reassignDeliveryBoy = async (req, res) => {
 
     // Fail old assignment
     await DeliveryAssignment.update(
-        { status: "FAILED", reason }, 
-        { where: { orderId, deliveryBoyId: oldDeliveryBoyId } }
+      { status: "FAILED", reason },
+      { where: { orderId, deliveryBoyId: oldDeliveryBoyId } }
     );
 
     // Create new (You can reuse assignDeliveryBoy logic here for validation if strictly needed)
-    await DeliveryAssignment.create({ orderId, deliveryBoyId: newDeliveryBoyId, status: "REASSIGNED" });
+    await DeliveryAssignment.create({
+      orderId,
+      deliveryBoyId: newDeliveryBoyId,
+      status: "REASSIGNED",
+    });
 
     res.json({ message: "Reassigned successfully" });
-  } catch (err) { res.status(500).json({ message: err.message }); }
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };
 
 /* ======================================================
@@ -744,17 +793,17 @@ export const getCODReconciliation = async (req, res) => {
       include: [
         {
           model: Order,
-          where: { paymentMethod: "COD", payment: true }, 
-          attributes: ["id", "amount", "address", "updatedAt"]
+          where: { paymentMethod: "COD", payment: true },
+          attributes: ["id", "amount", "address", "updatedAt"],
         },
-        { model: DeliveryBoy, attributes: ["id", "name", "phone"] }
-      ]
+        { model: DeliveryBoy, attributes: ["id", "name", "phone"] },
+      ],
     });
 
     let report = {};
     let grandTotal = 0;
 
-    pendingAssignments.forEach(assignment => {
+    pendingAssignments.forEach((assignment) => {
       if (!assignment.Order) return;
       const boyId = assignment.deliveryBoyId;
       const amount = assignment.Order.amount;
@@ -764,73 +813,100 @@ export const getCODReconciliation = async (req, res) => {
           deliveryBoyId: boyId,
           deliveryBoyName: assignment.DeliveryBoy?.name || "Unknown",
           totalCashOnHand: 0,
-          orders: []
+          orders: [],
         };
       }
       report[boyId].totalCashOnHand += amount;
       report[boyId].orders.push({
         orderId: assignment.Order.id,
         amount: amount,
-        deliveredAt: assignment.updatedAt
+        deliveredAt: assignment.updatedAt,
       });
       grandTotal += amount;
     });
 
-    res.json({ totalUnsettledAmount: grandTotal, details: Object.values(report) });
-  } catch (err) { res.status(500).json({ message: "Failed", error: err.message }); }
+    res.json({
+      totalUnsettledAmount: grandTotal,
+      details: Object.values(report),
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Failed", error: err.message });
+  }
 };
 
 // 2. Single Boy Detail (Verification)
 export const getDeliveryBoyCashStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const deliveryBoy = await DeliveryBoy.findByPk(id, { attributes: ['id', 'name', 'phone', 'maxOrders'] });
-    if (!deliveryBoy) return res.status(404).json({ message: "Delivery boy not found" });
+    const deliveryBoy = await DeliveryBoy.findByPk(id, {
+      attributes: ["id", "name", "phone", "maxOrders"],
+    });
+    if (!deliveryBoy)
+      return res.status(404).json({ message: "Delivery boy not found" });
 
     const assignments = await DeliveryAssignment.findAll({
       where: { deliveryBoyId: id, status: { [Op.ne]: "FAILED" } },
-      include: [{
-        model: Order,
-        where: { paymentMethod: "COD" },
-        attributes: ["id", "amount", "status", "payment", "address"]
-      }]
+      include: [
+        {
+          model: Order,
+          where: { paymentMethod: "COD" },
+          attributes: ["id", "amount", "status", "payment", "address"],
+        },
+      ],
     });
 
-    let cashOnHand = 0, pendingCash = 0, depositedToday = 0;
-    const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
-    const activeOrders = []; 
+    let cashOnHand = 0,
+      pendingCash = 0,
+      depositedToday = 0;
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const activeOrders = [];
 
-    assignments.forEach(assignment => {
-        const amt = assignment.Order.amount;
-        // CashOnHand: Delivered + Not Settled
-        if (assignment.status === "DELIVERED" && !assignment.cashDeposited) {
-            cashOnHand += amt;
-            activeOrders.push({ status: "COLLECTED_UNSETTLED", orderId: assignment.Order.id, amount: amt });
-        }
-        // Pending: Still Out
-        else if (["ASSIGNED", "OUT_FOR_DELIVERY"].includes(assignment.status)) {
-            pendingCash += amt;
-            activeOrders.push({ status: "PENDING_DELIVERY", orderId: assignment.Order.id, amount: amt });
-        }
-        // Deposited Today
-        else if (assignment.cashDeposited && assignment.depositedAt >= startOfDay) {
-            depositedToday += amt;
-        }
+    assignments.forEach((assignment) => {
+      const amt = assignment.Order.amount;
+      // CashOnHand: Delivered + Not Settled
+      if (assignment.status === "DELIVERED" && !assignment.cashDeposited) {
+        cashOnHand += amt;
+        activeOrders.push({
+          status: "COLLECTED_UNSETTLED",
+          orderId: assignment.Order.id,
+          amount: amt,
+        });
+      }
+      // Pending: Still Out
+      else if (["ASSIGNED", "OUT_FOR_DELIVERY"].includes(assignment.status)) {
+        pendingCash += amt;
+        activeOrders.push({
+          status: "PENDING_DELIVERY",
+          orderId: assignment.Order.id,
+          amount: amt,
+        });
+      }
+      // Deposited Today
+      else if (
+        assignment.cashDeposited &&
+        assignment.depositedAt >= startOfDay
+      ) {
+        depositedToday += amt;
+      }
     });
 
     res.json({
-        deliveryBoy,
-        summary: { cashOnHand, pendingCash, depositedToday },
-        orders: activeOrders
+      deliveryBoy,
+      summary: { cashOnHand, pendingCash, depositedToday },
+      orders: activeOrders,
     });
-  } catch (err) { res.status(500).json({ message: "Failed", error: err.message }); }
+  } catch (err) {
+    res.status(500).json({ message: "Failed", error: err.message });
+  }
 };
 
 // 3. Settle Cash (Action)
 export const settleCOD = async (req, res) => {
   try {
-    const { deliveryBoyId, orderIds } = req.body; 
-    if (!deliveryBoyId || !orderIds?.length) return res.status(400).json({ message: "Boy ID and Order IDs required" });
+    const { deliveryBoyId, orderIds } = req.body;
+    if (!deliveryBoyId || !orderIds?.length)
+      return res.status(400).json({ message: "Boy ID and Order IDs required" });
 
     const result = await DeliveryAssignment.update(
       { cashDeposited: true, depositedAt: new Date() },
@@ -839,13 +915,17 @@ export const settleCOD = async (req, res) => {
           deliveryBoyId,
           orderId: { [Op.in]: orderIds },
           status: "DELIVERED",
-          cashDeposited: false
-        }
+          cashDeposited: false,
+        },
       }
     );
 
-    if (result[0] === 0) return res.status(404).json({ message: "No matching unsettled orders found." });
+    if (result[0] === 0)
+      return res
+        .status(404)
+        .json({ message: "No matching unsettled orders found." });
     res.json({ message: "Cash settled successfully", count: result[0] });
-
-  } catch (err) { res.status(500).json({ message: "Settlement failed", error: err.message }); }
+  } catch (err) {
+    res.status(500).json({ message: "Settlement failed", error: err.message });
+  }
 };

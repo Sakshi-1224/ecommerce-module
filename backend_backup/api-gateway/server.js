@@ -604,6 +604,7 @@ app.put("/api/orders/:orderId/cancel-item/:itemId", async (req, res) => {
 app.get("/api/orders/admin/sales/total", async (req, res) => {
   try {
     const response = await axios.get(`${ORDER_SERVICE_URL}/admin/sales/total`, {
+      params: req.query, // 👈 ADD THIS to forward ?type=...
       headers: { Authorization: req.headers.authorization },
     });
     res.status(response.status).json(response.data);
@@ -617,6 +618,7 @@ app.get("/api/orders/admin/sales/vendors", async (req, res) => {
     const response = await axios.get(
       `${ORDER_SERVICE_URL}/admin/sales/vendors`,
       {
+        params: req.query, // 👈 ADD THIS
         headers: { Authorization: req.headers.authorization },
       }
     );
@@ -631,6 +633,7 @@ app.get("/api/orders/admin/sales/vendor/:vendorId", async (req, res) => {
     const response = await axios.get(
       `${ORDER_SERVICE_URL}/admin/sales/vendor/${req.params.vendorId}`,
       {
+        params: req.query, // 👈 CRITICAL: Forwards ?type=monthly
         headers: { Authorization: req.headers.authorization },
       }
     );
@@ -703,9 +706,12 @@ app.get("/api/orders/admin/all", async (req, res) => {
 });
 app.get("/api/orders/admin/:id", async (req, res) => {
   try {
-    const response = await axios.get(`${ORDER_SERVICE_URL}/admin/${req.params.id}`, {
-      headers: { Authorization: req.headers.authorization },
-    });
+    const response = await axios.get(
+      `${ORDER_SERVICE_URL}/admin/${req.params.id}`,
+      {
+        headers: { Authorization: req.headers.authorization },
+      }
+    );
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json(err.response?.data);
@@ -741,12 +747,14 @@ app.put("/api/orders/admin/:orderId/item/:itemId/status", async (req, res) => {
   }
 });
 
-
 app.get("/api/orders/admin/reconciliation/cod", async (req, res) => {
   try {
-    const response = await axios.get(`${ORDER_SERVICE_URL}/admin/reconciliation/cod`, {
-      headers: { Authorization: req.headers.authorization },
-    });
+    const response = await axios.get(
+      `${ORDER_SERVICE_URL}/admin/reconciliation/cod`,
+      {
+        headers: { Authorization: req.headers.authorization },
+      }
+    );
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json(err.response?.data);
@@ -755,16 +763,17 @@ app.get("/api/orders/admin/reconciliation/cod", async (req, res) => {
 
 app.get("/api/orders/admin/delivery-boys/:id/cash-status", async (req, res) => {
   try {
-    const response = await axios.get(`${ORDER_SERVICE_URL}/admin/delivery-boys/${req.params.id}/cash-status`, {
-      headers: { Authorization: req.headers.authorization },
-    });
+    const response = await axios.get(
+      `${ORDER_SERVICE_URL}/admin/delivery-boys/${req.params.id}/cash-status`,
+      {
+        headers: { Authorization: req.headers.authorization },
+      }
+    );
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json(err.response?.data);
   }
 });
-
-
 
 app.put("/api/orders/admin/delivery-boys/:id", async (req, res) => {
   try {
@@ -780,7 +789,6 @@ app.put("/api/orders/admin/delivery-boys/:id", async (req, res) => {
     res.status(err.response?.status || 500).json(err.response?.data);
   }
 });
-
 
 app.post("/api/orders/admin/reconciliation/settle", async (req, res) => {
   try {
@@ -817,6 +825,7 @@ app.get("/api/orders/vendor/sales-report", async (req, res) => {
     const response = await axios.get(
       `${ORDER_SERVICE_URL}/vendor/sales-report`,
       {
+        params: req.query, // 👈 ADD THIS
         headers: { Authorization: req.headers.authorization },
       }
     );
@@ -826,12 +835,10 @@ app.get("/api/orders/vendor/sales-report", async (req, res) => {
   }
 });
 
-
 app.post("/api/orders/admin/assign-delivery/:orderId", async (req, res) => {
   try {
     const response = await axios.post(
-      `${ORDER_SERVICE_URL}/admin/assign-delivery/:orderId`,
-      req.body,
+      `${ORDER_SERVICE_URL}/admin/assign-delivery/${req.params.orderId}`, // ✅ Fixed      req.body,
       {
         headers: { Authorization: req.headers.authorization },
       }
@@ -1041,6 +1048,19 @@ app.post("/api/payment/verify", async (req, res) => {
     // Forward to Order Service
     const response = await axios.post(
       `${ORDER_SERVICE_URL}/payment/verify`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+app.put("/api/orders/vendor/item/:itemId/status", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${ORDER_SERVICE_URL}/vendor/item/${req.params.itemId}/status`,
       req.body,
       { headers: { Authorization: req.headers.authorization } }
     );
