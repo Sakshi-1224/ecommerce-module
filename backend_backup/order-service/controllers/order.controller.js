@@ -17,36 +17,47 @@ export const checkout = async (req, res) => {
     const { items, amount, address, paymentMethod } = req.body;
 
     // 1. SYNC: RESERVE STOCK (Call Product Service)
-   
+
     // 2. CREATE ORDER
-    const order = await Order.create({
-        userId: req.user.id, amount, address, paymentMethod, payment: false, status: "PROCESSING",
-    }, { transaction: t });
+    const order = await Order.create(
+      {
+        userId: req.user.id,
+        amount,
+        address,
+        paymentMethod,
+        payment: false,
+        status: "PROCESSING",
+      },
+      { transaction: t }
+    );
 
     for (const item of items) {
-      await OrderItem.create({
+      await OrderItem.create(
+        {
           orderId: order.id,
           productId: item.productId,
           vendorId: item.vendorId,
           quantity: item.quantity,
-          price: item.price
-      }, { transaction: t });
+          price: item.price,
+        },
+        { transaction: t }
+      );
     }
 
-     try {
-        await axios.post(
-            `${PRODUCT_SERVICE_URL}/inventory/reserve`, 
-            { items },
-            { headers: { Authorization: req.headers.authorization } }
-        );
+    try {
+      await axios.post(
+        `${PRODUCT_SERVICE_URL}/inventory/reserve`,
+        { items },
+        { headers: { Authorization: req.headers.authorization } }
+      );
     } catch (apiErr) {
-        throw new Error(apiErr.response?.data?.message || "Stock reservation failed");
+      throw new Error(
+        apiErr.response?.data?.message || "Stock reservation failed"
+      );
     }
-
 
     await t.commit();
     res.status(201).json({ message: "Order placed", orderId: order.id });
-
   } catch (err) {
     if (!t.finished) await t.rollback();
     res.status(400).json({ message: err.message });
@@ -62,10 +73,13 @@ export const cancelOrderItem = async (req, res) => {
   try {
     const { orderId, itemId } = req.params;
 
-    const order = await Order.findByPk(orderId, { include: OrderItem, transaction: t });
+    const order = await Order.findByPk(orderId, {
+      include: OrderItem,
+      transaction: t,
+    });
     if (!order) throw new Error("Order not found");
 
-    const item = order.OrderItems.find(i => i.id == itemId);
+    const item = order.OrderItems.find((i) => i.id == itemId);
     if (!item) throw new Error("Item not found");
 
     if (item.status !== "PENDING" && item.status !== "PROCESSING") {
@@ -78,22 +92,24 @@ export const cancelOrderItem = async (req, res) => {
 
     // 2. Update Parent Order Status if needed
     const activeItems = order.OrderItems.filter(
-      i => i.status !== "CANCELLED" && i.id != itemId 
+      (i) => i.status !== "CANCELLED" && i.id != itemId
     );
-    order.status = activeItems.length === 0 ? "CANCELLED" : "PARTIALLY_CANCELLED";
+    order.status =
+      activeItems.length === 0 ? "CANCELLED" : "PARTIALLY_CANCELLED";
     await order.save({ transaction: t });
 
     await t.commit();
 
     // 3. SYNC: RELEASE STOCK (Product Service)
     try {
-        await axios.post(`${PRODUCT_SERVICE_URL}/inventory/release`, { 
-            items: [{ productId: item.productId, quantity: item.quantity }] 
-        });
-    } catch (apiErr) { console.error("Product service sync failed", apiErr.message); }
+      await axios.post(`${PRODUCT_SERVICE_URL}/inventory/release`, {
+        items: [{ productId: item.productId, quantity: item.quantity }],
+      });
+    } catch (apiErr) {
+      console.error("Product service sync failed", apiErr.message);
+    }
 
     res.json({ message: "Item cancelled", orderStatus: order.status });
-
   } catch (err) {
     if (!t.finished) await t.rollback();
     res.status(400).json({ message: err.message });
@@ -104,16 +120,21 @@ export const cancelFullOrder = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { orderId } = req.params;
-    const order = await Order.findByPk(orderId, { include: OrderItem, transaction: t });
+    const order = await Order.findByPk(orderId, {
+      include: OrderItem,
+      transaction: t,
+    });
 
     if (!order) throw new Error("Order not found");
 
     // Block if any item is already processed
     const blockedItem = order.OrderItems.find(
-      item => item.status !== "PENDING" && item.status !== "PROCESSING"
+      (item) => item.status !== "PENDING" && item.status !== "PROCESSING"
     );
     if (blockedItem) {
-      throw new Error("Some items are already packed. Cancel items individually.");
+      throw new Error(
+        "Some items are already packed. Cancel items individually."
+      );
     }
 
     const itemsToRelease = [];
@@ -121,9 +142,12 @@ export const cancelFullOrder = async (req, res) => {
     // Cancel all items
     for (const item of order.OrderItems) {
       if (item.status !== "CANCELLED") {
-          item.status = "CANCELLED";
-          await item.save({ transaction: t });
-          itemsToRelease.push({ productId: item.productId, quantity: item.quantity });
+        item.status = "CANCELLED";
+        await item.save({ transaction: t });
+        itemsToRelease.push({
+          productId: item.productId,
+          quantity: item.quantity,
+        });
       }
     }
 
@@ -135,13 +159,16 @@ export const cancelFullOrder = async (req, res) => {
 
     // SYNC: RELEASE STOCK (Product Service)
     try {
-        if(itemsToRelease.length > 0) {
-            await axios.post(`${PRODUCT_SERVICE_URL}/inventory/release`, { items: itemsToRelease });
-        }
-    } catch (apiErr) { console.error("Product service sync failed", apiErr.message); }
+      if (itemsToRelease.length > 0) {
+        await axios.post(`${PRODUCT_SERVICE_URL}/inventory/release`, {
+          items: itemsToRelease,
+        });
+      }
+    } catch (apiErr) {
+      console.error("Product service sync failed", apiErr.message);
+    }
 
     res.json({ message: "Order cancelled successfully" });
-
   } catch (err) {
     if (!t.finished) await t.rollback();
     res.status(400).json({ message: err.message });
@@ -171,31 +198,34 @@ export const updateOrderStatusAdmin = async (req, res) => {
       // 1. Identify valid items
       for (const item of order.OrderItems) {
         if (item.status === "CANCELLED" || item.status === "PACKED") continue;
-        itemsToShip.push({ productId: item.productId, quantity: item.quantity });
+        itemsToShip.push({
+          productId: item.productId,
+          quantity: item.quantity,
+        });
         itemsToUpdate.push(item);
       }
 
       // 2. SYNC: Call 'ship' endpoint BEFORE updating DB
       // If this fails (e.g. Insufficient Warehouse Stock), we CATCH error and STOP.
       try {
-        if(itemsToShip.length > 0){
-            await axios.post(
-                `${PRODUCT_SERVICE_URL}/inventory/ship`,
-                { items: itemsToShip },
-                { headers: { Authorization: req.headers.authorization } }
-            );
+        if (itemsToShip.length > 0) {
+          await axios.post(
+            `${PRODUCT_SERVICE_URL}/inventory/ship`,
+            { items: itemsToShip },
+            { headers: { Authorization: req.headers.authorization } }
+          );
         }
-      } catch (apiErr) { 
-          // Return the specific error from Product Service (e.g. "Insufficient Stock")
-          return res.status(400).json({ 
-              message: apiErr.response?.data?.message || "Shipment Sync Failed" 
-          });
+      } catch (apiErr) {
+        // Return the specific error from Product Service (e.g. "Insufficient Stock")
+        return res.status(400).json({
+          message: apiErr.response?.data?.message || "Shipment Sync Failed",
+        });
       }
 
       // 3. Update DB (Only if Sync succeeded)
       for (const item of itemsToUpdate) {
-          item.status = "PACKED";
-          await item.save();
+        item.status = "PACKED";
+        await item.save();
       }
 
       order.status = "PACKED";
@@ -207,61 +237,71 @@ export const updateOrderStatusAdmin = async (req, res) => {
     if (status === "OUT_FOR_DELIVERY") {
       order.status = "OUT_FOR_DELIVERY";
       await order.save();
-      
+
       // Update all non-cancelled items for consistency
-      for(const item of order.OrderItems) {
-          if(item.status !== "CANCELLED" && item.status !== "DELIVERED") { 
-              item.status = "OUT_FOR_DELIVERY"; 
-              await item.save(); 
-          }
+      for (const item of order.OrderItems) {
+        if (item.status !== "CANCELLED" && item.status !== "DELIVERED") {
+          item.status = "OUT_FOR_DELIVERY";
+          await item.save();
+        }
       }
       return res.json({ message: "Order is Out for Delivery" });
     }
 
     // ✅ DELIVERED
     if (status === "DELIVERED") {
-        order.status = "DELIVERED";
-        order.payment = true;
-        await order.save();
-        for(const item of order.OrderItems) {
-            if(item.status !== "CANCELLED") { item.status = "DELIVERED"; await item.save(); }
+      order.status = "DELIVERED";
+      order.payment = true;
+      await order.save();
+      for (const item of order.OrderItems) {
+        if (item.status !== "CANCELLED") {
+          item.status = "DELIVERED";
+          await item.save();
         }
-        return res.json({ message: "Delivered" });
+      }
+      return res.json({ message: "Delivered" });
     }
 
     // Catch-all for other statuses
     order.status = status;
     await order.save();
     res.json({ message: `Status updated to ${status}` });
-
-  } catch (err) { res.status(500).json({ message: err.message }); }
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };
 
 // Single Item Update
 export const updateOrderItemStatusAdmin = async (req, res) => {
   try {
-    const { status } = req.body; 
+    const { status } = req.body;
     const { orderId, itemId } = req.params;
-    const item = await OrderItem.findOne({ where: { id: itemId, orderId: orderId } });
+    const item = await OrderItem.findOne({
+      where: { id: itemId, orderId: orderId },
+    });
 
     if (!item) return res.status(404).json({ message: "Item not found" });
-    if (item.status === status) return res.status(400).json({ message: `Already ${status}` });
+    if (item.status === status)
+      return res.status(400).json({ message: `Already ${status}` });
 
     // 🟢 PACKED: Sync Logic
-    if (status === "PACKED" && (item.status === "PENDING" || item.status === "PROCESSING")) {
-        try {
-            // Call Product Service FIRST
-            await axios.post(
-                `${PRODUCT_SERVICE_URL}/inventory/ship`,
-                { items: [{ productId: item.productId, quantity: item.quantity }] },
-                { headers: { Authorization: req.headers.authorization } }
-            );
-        } catch (apiErr) { 
-             // Stop if warehouse stock is missing
-             return res.status(400).json({ 
-                message: apiErr.response?.data?.message || "Shipment Sync Failed" 
-             });
-        }
+    if (
+      status === "PACKED" &&
+      (item.status === "PENDING" || item.status === "PROCESSING")
+    ) {
+      try {
+        // Call Product Service FIRST
+        await axios.post(
+          `${PRODUCT_SERVICE_URL}/inventory/ship`,
+          { items: [{ productId: item.productId, quantity: item.quantity }] },
+          { headers: { Authorization: req.headers.authorization } }
+        );
+      } catch (apiErr) {
+        // Stop if warehouse stock is missing
+        return res.status(400).json({
+          message: apiErr.response?.data?.message || "Shipment Sync Failed",
+        });
+      }
     }
 
     // Update Local Status
@@ -271,23 +311,25 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
     // 🔄 Smart Parent Update
     // Check if ALL items now match this status
     const allItems = await OrderItem.findAll({ where: { orderId } });
-    const activeItems = allItems.filter(i => i.status !== "CANCELLED");
-    const allMatch = activeItems.every(i => i.status === status);
+    const activeItems = allItems.filter((i) => i.status !== "CANCELLED");
+    const allMatch = activeItems.every((i) => i.status === status);
 
     if (allMatch && activeItems.length > 0) {
-        const order = await Order.findByPk(orderId);
-        // Define flow: PACKED -> OUT_FOR_DELIVERY -> DELIVERED
-        // Only auto-update parent if it makes sense (e.g. don't go back to PACKED if already OUT)
-        
-        if (order.status !== status) {
-            order.status = status;
-            if (status === "DELIVERED") order.payment = true;
-            await order.save();
-        }
+      const order = await Order.findByPk(orderId);
+      // Define flow: PACKED -> OUT_FOR_DELIVERY -> DELIVERED
+      // Only auto-update parent if it makes sense (e.g. don't go back to PACKED if already OUT)
+
+      if (order.status !== status) {
+        order.status = status;
+        if (status === "DELIVERED") order.payment = true;
+        await order.save();
+      }
     }
-    
+
     res.json({ message: `Item updated to ${status}` });
-  } catch (err) { res.status(500).json({ message: err.message }); }
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };
 
 /* ======================================================
@@ -298,115 +340,250 @@ export const vendorSalesReport = async (req, res) => {
   try {
     const { type } = req.query;
     let startDate;
-    if (type === "weekly") startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    else if (type === "monthly") startDate = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-    else if (type === "yearly") startDate = new Date(new Date().getFullYear(), 0, 1);
+    if (type === "weekly")
+      startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    else if (type === "monthly")
+      startDate = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    else if (type === "yearly")
+      startDate = new Date(new Date().getFullYear(), 0, 1);
 
     const sales = await OrderItem.sum("price", {
-      where: { vendorId: req.user.id, status: "DELIVERED", createdAt: { [Op.gte]: startDate } },
+      where: {
+        vendorId: req.user.id,
+        status: "DELIVERED",
+        createdAt: { [Op.gte]: startDate },
+      },
     });
     res.json({ totalSales: sales || 0 });
-  } catch (err) { res.status(500).json({ message: "Failed to generate report" }); }
+  } catch (err) {
+    res.status(500).json({ message: "Failed to generate report" });
+  }
 };
 
 // 🟢 ADMIN: Specific Vendor Sales Report
 export const adminVendorSalesReport = async (req, res) => {
-    try {
-      const { vendorId } = req.params;
-      const { type } = req.query;
-      
-      let startDate;
-      if (type === "weekly") startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-      else if (type === "monthly") startDate = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-      else if (type === "yearly") startDate = new Date(new Date().getFullYear(), 0, 1);
-      else return res.status(400).json({ message: "Invalid type (weekly, monthly, yearly)" });
-  
-      const totalSales = await OrderItem.sum("price", {
-        where: { vendorId: vendorId, status: "DELIVERED", createdAt: { [Op.gte]: startDate } },
-      });
-      
-      res.json({ vendorId, period: type, totalSales: totalSales || 0 });
-    } catch (err) { 
-        res.status(500).json({ message: "Failed to fetch vendor sales report" }); 
-    }
+  try {
+    const { vendorId } = req.params;
+    const { type } = req.query;
+
+    let startDate;
+    if (type === "weekly")
+      startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    else if (type === "monthly")
+      startDate = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    else if (type === "yearly")
+      startDate = new Date(new Date().getFullYear(), 0, 1);
+    else
+      return res
+        .status(400)
+        .json({ message: "Invalid type (weekly, monthly, yearly)" });
+
+    const totalSales = await OrderItem.sum("price", {
+      where: {
+        vendorId: vendorId,
+        status: "DELIVERED",
+        createdAt: { [Op.gte]: startDate },
+      },
+    });
+
+    res.json({ vendorId, period: type, totalSales: totalSales || 0 });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch vendor sales report" });
+  }
 };
 
 export const adminTotalSales = async (req, res) => {
-    try {
-        const total = await OrderItem.sum("price", { where: { status: "DELIVERED" } });
-        res.json({ totalSales: total || 0 });
-    } catch(err) { res.status(500).json({ message: err.message }); }
+  try {
+    const total = await OrderItem.sum("price", {
+      where: { status: "DELIVERED" },
+    });
+    res.json({ totalSales: total || 0 });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };
 
 export const adminAllVendorsSalesReport = async (req, res) => {
-    try {
-      const sales = await OrderItem.findAll({
-        attributes: ["vendorId", [sequelize.fn("SUM", sequelize.col("price")), "totalSales"]],
-        where: { status: "DELIVERED" },
-        group: ["vendorId"],
-      });
-      res.json({ vendors: sales });
-    } catch (err) { res.status(500).json({ message: err.message }); }
+  try {
+    const sales = await OrderItem.findAll({
+      attributes: [
+        "vendorId",
+        [sequelize.fn("SUM", sequelize.col("price")), "totalSales"],
+      ],
+      where: { status: "DELIVERED" },
+      group: ["vendorId"],
+    });
+    res.json({ vendors: sales });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };
 
 /* ======================================================
    UTILITIES
 ====================================================== */
 export const getUserOrders = async (req, res) => {
-    try { const orders = await Order.findAll({ where: { userId: req.user.id }, include: OrderItem }); res.json(orders); } 
-    catch { res.status(500).json({ message: "Failed to fetch orders" }); }
+  try {
+    const orders = await Order.findAll({
+      where: { userId: req.user.id },
+      include: OrderItem,
+    });
+    res.json(orders);
+  } catch {
+    res.status(500).json({ message: "Failed to fetch orders" });
+  }
 };
 export const getOrderById = async (req, res) => {
-    try { const order = await Order.findOne({ where: { id: req.params.id, userId: req.user.id }, include: OrderItem }); res.json(order); } 
-    catch { res.status(500).json({ message: "Failed" }); }
+  try {
+    const order = await Order.findOne({
+      where: { id: req.params.id, userId: req.user.id },
+      include: OrderItem,
+    });
+    res.json(order);
+  } catch {
+    res.status(500).json({ message: "Failed" });
+  }
 };
 export const trackOrder = async (req, res) => {
-    try { const order = await Order.findOne({ where: { id: req.params.id }, include: OrderItem }); res.json(order); } 
-    catch { res.status(500).json({ message: "Failed" }); }
+  try {
+    const order = await Order.findOne({
+      where: { id: req.params.id },
+      include: OrderItem,
+    });
+    res.json(order);
+  } catch {
+    res.status(500).json({ message: "Failed" });
+  }
 };
 export const getAllOrdersAdmin = async (req, res) => {
-    try { const orders = await Order.findAll({ include: OrderItem, order: [["createdAt", "DESC"]] }); res.json(orders); } 
-    catch { res.status(500).json({ message: "Failed" }); }
+  try {
+    const orders = await Order.findAll({
+      include: OrderItem,
+      order: [["createdAt", "DESC"]],
+    });
+    res.json(orders);
+  } catch {
+    res.status(500).json({ message: "Failed" });
+  }
 };
 export const getOrderByIdAdmin = async (req, res) => {
-    try { const order = await Order.findByPk(req.params.id, { include: OrderItem }); res.json(order); } 
-    catch { res.status(500).json({ message: "Failed" }); }
+  try {
+    const order = await Order.findByPk(req.params.id, { include: OrderItem });
+    res.json(order);
+  } catch {
+    res.status(500).json({ message: "Failed" });
+  }
 };
 export const getVendorOrders = async (req, res) => {
-    try { const items = await OrderItem.findAll({ where: { vendorId: req.user.id }, include: Order, order: [["createdAt", "DESC"]] }); res.json(items); } 
-    catch { res.status(500).json({ message: "Failed" }); }
+  try {
+    console.log("🔍 [getVendorOrders] Called by vendor ID:", req.user?.id);
+    console.log("🔍 [getVendorOrders] User object:", req.user);
+
+    const items = await OrderItem.findAll({
+      where: { vendorId: req.user.id },
+      include: Order,
+      order: [["createdAt", "DESC"]],
+    });
+
+    console.log(
+      `✅ Found ${items.length} order items for vendor ${req.user.id}`
+    );
+
+    // Fetch product details from Product Service
+    const productIds = [...new Set(items.map((item) => item.productId))];
+    let productsMap = {};
+
+    if (productIds.length > 0) {
+      try {
+        const productsResponse = await axios.get(
+          `${PRODUCT_SERVICE_URL}/products/batch`,
+          {
+            params: { ids: productIds.join(",") },
+            headers: { Authorization: req.headers.authorization },
+          }
+        );
+        productsMap = productsResponse.data.reduce((acc, product) => {
+          acc[product.id] = product;
+          return acc;
+        }, {});
+      } catch (err) {
+        console.error("Failed to fetch product details:", err.message);
+      }
+    }
+
+    // Attach product info to each item
+    const enrichedItems = items.map((item) => ({
+      ...item.toJSON(),
+      Product: productsMap[item.productId] || null,
+    }));
+
+    res.json(enrichedItems);
+  } catch (err) {
+    console.error("❌ [getVendorOrders] Error:", err);
+    res.status(500).json({ message: "Failed" });
+  }
 };
 
 /* ======================================================
    DELIVERY BOY FUNCTIONS
 ====================================================== */
 export const assignDeliveryBoy = async (req, res) => {
-    try {
-      const { deliveryBoyId } = req.body;
-      if(!req.params.orderId) return res.status(400).json({message: "Order ID required"});
-      await DeliveryAssignment.create({ orderId: req.params.orderId, deliveryBoyId });
-      await Order.update({ status: "OUT_FOR_DELIVERY" }, { where: { id: req.params.orderId } });
-      res.json({ message: "Assigned" });
-    } catch (err) { res.status(500).json({ message: "Assignment failed" }); }
+  try {
+    const { deliveryBoyId } = req.body;
+    if (!req.params.orderId)
+      return res.status(400).json({ message: "Order ID required" });
+    await DeliveryAssignment.create({
+      orderId: req.params.orderId,
+      deliveryBoyId,
+    });
+    await Order.update(
+      { status: "OUT_FOR_DELIVERY" },
+      { where: { id: req.params.orderId } }
+    );
+    res.json({ message: "Assigned" });
+  } catch (err) {
+    res.status(500).json({ message: "Assignment failed" });
+  }
 };
 export const getAllDeliveryBoys = async (req, res) => {
-    try { const boys = await DeliveryBoy.findAll(); res.json(boys); } 
-    catch (err) { res.status(500).json({ message: "Failed" }); }
+  try {
+    const boys = await DeliveryBoy.findAll();
+    res.json(boys);
+  } catch (err) {
+    res.status(500).json({ message: "Failed" });
+  }
 };
 export const createDeliveryBoy = async (req, res) => {
-    try { const newBoy = await DeliveryBoy.create({ ...req.body, active: true }); res.status(201).json(newBoy); } 
-    catch (err) { res.status(500).json({ message: "Failed" }); }
+  try {
+    const newBoy = await DeliveryBoy.create({ ...req.body, active: true });
+    res.status(201).json(newBoy);
+  } catch (err) {
+    res.status(500).json({ message: "Failed" });
+  }
 };
 export const deleteDeliveryBoy = async (req, res) => {
-    try { await DeliveryBoy.destroy({ where: { id: req.params.id } }); res.json({ message: "Deleted" }); } 
-    catch (err) { res.status(500).json({ message: "Failed" }); }
+  try {
+    await DeliveryBoy.destroy({ where: { id: req.params.id } });
+    res.json({ message: "Deleted" });
+  } catch (err) {
+    res.status(500).json({ message: "Failed" });
+  }
 };
 export const reassignDeliveryBoy = async (req, res) => {
-    try { 
-        const { oldDeliveryBoyId, newDeliveryBoyId, reason } = req.body;
-        const { orderId } = req.params;
-        await DeliveryAssignment.update({ status: "FAILED", reason }, { where: { orderId, deliveryBoyId: oldDeliveryBoyId } });
-        await DeliveryAssignment.create({ orderId, deliveryBoyId: newDeliveryBoyId, status: "REASSIGNED" });
-        res.json({ message: "Reassigned" }); 
-    } catch(err) { res.status(500).json({ message: err.message }); }
+  try {
+    const { oldDeliveryBoyId, newDeliveryBoyId, reason } = req.body;
+    const { orderId } = req.params;
+    await DeliveryAssignment.update(
+      { status: "FAILED", reason },
+      { where: { orderId, deliveryBoyId: oldDeliveryBoyId } }
+    );
+    await DeliveryAssignment.create({
+      orderId,
+      deliveryBoyId: newDeliveryBoyId,
+      status: "REASSIGNED",
+    });
+    res.json({ message: "Reassigned" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };

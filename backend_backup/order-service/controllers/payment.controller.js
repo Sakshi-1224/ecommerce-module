@@ -11,51 +11,40 @@ export const createPaymentOrder = async (req, res) => {
 
     // 1️ Basic validation
     if (!amount || amount <= 0) {
-      return res.status(400).json({
-        message: "Invalid payment amount"
-      });
+      return res.status(400).json({ message: "Invalid payment amount" });
     }
 
     if (!orderId) {
-      return res.status(400).json({
-        message: "Order ID is required"
-      });
+      return res.status(400).json({ message: "Order ID is required" });
     }
 
     // 2️ Check order exists
     const order = await Order.findByPk(orderId);
     if (!order) {
-      return res.status(404).json({
-        message: "Order not found"
-      });
+      return res.status(404).json({ message: "Order not found" });
     }
 
     // 3️ Prevent duplicate payment
     if (order.payment === true) {
-      return res.status(409).json({
-        message: "Order is already paid"
-      });
+      return res.status(409).json({ message: "Order is already paid" });
     }
 
     // 4️ Create Razorpay order
     const razorpayOrder = await razorpay.orders.create({
       amount: amount * 100,
       currency: "INR",
-      receipt: `order_${orderId}`
+      receipt: `order_${orderId}`,
     });
 
     res.json({
       success: true,
-      razorpayOrder
+      razorpayOrder,
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({
-      message: "Failed to create payment order"
-    });
+    res.status(500).json({ message: "Failed to create payment order" });
   }
 };
-
 
 /* ======================
    VERIFY PAYMENT
@@ -66,38 +55,41 @@ export const verifyPayment = async (req, res) => {
       razorpay_order_id,
       razorpay_payment_id,
       razorpay_signature,
-      orderId
+      orderId,
     } = req.body;
 
-    //  Required fields check
+    // Required fields check
     if (
       !razorpay_order_id ||
       !razorpay_payment_id ||
       !razorpay_signature ||
       !orderId
     ) {
-      return res.status(400).json({
-        message: "Incomplete payment details"
-      });
+      return res.status(400).json({ message: "Incomplete payment details" });
     }
 
-    //  Check order exists
+    // Check order exists
     const order = await Order.findByPk(orderId);
     if (!order) {
-      return res.status(404).json({
-        message: "Order not found"
-      });
+      return res.status(404).json({ message: "Order not found" });
     }
 
     // 3️ Prevent double verification
     if (order.payment === true) {
-      return res.status(409).json({
-        message: "Payment already verified"
+      return res.status(200).json({
+        success: true,
+        message: "Payment already verified",
       });
     }
 
     // 4️ Signature verification
     const body = razorpay_order_id + "|" + razorpay_payment_id;
+
+    // Safety Check: Ensure Secret exists
+    if (!process.env.RAZORPAY_KEY_SECRET) {
+      console.error("❌ RAZORPAY_KEY_SECRET is missing in .env");
+      return res.status(500).json({ message: "Server configuration error" });
+    }
 
     const expectedSignature = crypto
       .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
@@ -105,25 +97,23 @@ export const verifyPayment = async (req, res) => {
       .digest("hex");
 
     if (expectedSignature !== razorpay_signature) {
-      return res.status(400).json({
-        message: "Payment verification failed"
-      });
+      return res.status(400).json({ message: "Payment verification failed" });
     }
 
     // 5 Update order
+    // ✅ FIX: Use 'PROCESSING' (a valid ENUM value) instead of 'PAID'
     order.payment = true;
     order.paymentMethod = "RAZORPAY";
-    order.status = "PAID";
+    order.status = "PROCESSING"; // Changed from 'PAID' to 'PROCESSING'
+
     await order.save();
 
     res.json({
       success: true,
-      message: "Payment verified and order confirmed"
+      message: "Payment verified and order confirmed",
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({
-      message: "Payment verification failed"
-    });
+    console.error("Verify Payment Error:", err);
+    res.status(500).json({ message: "Payment verification failed" });
   }
 };

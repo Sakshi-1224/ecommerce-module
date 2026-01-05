@@ -8,7 +8,7 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 app.use("/api/orders", orderRoutes);
-app.use("/api/payment", paymentRoutes);
+app.use("/api/orders/payment", paymentRoutes);
 
 sequelize.sync().then(() => {
   app.listen(process.env.PORT, () =>

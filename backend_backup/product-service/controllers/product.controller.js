@@ -56,6 +56,7 @@ export const getVendorProducts = async (req, res) => {
   try {
     const products = await Product.findAll({
       where: { vendorId: req.user.id },
+      include: { model: Category }, // 👈 THIS LINE IS MISSING
     });
     res.json(products);
   } catch (err) {
