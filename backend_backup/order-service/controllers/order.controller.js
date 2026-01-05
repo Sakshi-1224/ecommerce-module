@@ -259,10 +259,20 @@ export const updateOrderStatusAdmin = async (req, res) => {
           await item.save();
         }
       }
+    
+    // Catch-all for other statuses
+    // C. Update Delivery Assignment (CRITICAL FOR RECONCILIATION)
+      const assignment = await DeliveryAssignment.findOne({
+        where: { orderId: order.id, status: { [Op.ne]: "FAILED" } }
+      });
+      
+      if (assignment) {
+        assignment.status = "DELIVERED";
+        await assignment.save();
+      }
+
       return res.json({ message: "Delivered" });
     }
-
-    // Catch-all for other statuses
     order.status = status;
     await order.save();
     res.json({ message: `Status updated to ${status}` });
@@ -321,7 +331,17 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
 
       if (order.status !== status) {
         order.status = status;
-        if (status === "DELIVERED") order.payment = true;
+        if (status === "DELIVERED") {order.payment = true;
+          order.payment = true;
+          // 🟢 CRITICAL FIX: Sync DeliveryAssignment
+            const assignment = await DeliveryAssignment.findOne({
+                where: { orderId: order.id, status: { [Op.ne]: "FAILED" } }
+            });
+            if (assignment) {
+                assignment.status = "DELIVERED";
+                await assignment.save();
+            }
+        }
         await order.save();
       }
     }
@@ -527,6 +547,7 @@ export const getVendorOrders = async (req, res) => {
 /* ======================================================
    DELIVERY BOY FUNCTIONS
 ====================================================== */
+/*
 export const assignDeliveryBoy = async (req, res) => {
   try {
     const { deliveryBoyId } = req.body;
@@ -570,20 +591,261 @@ export const deleteDeliveryBoy = async (req, res) => {
   }
 };
 export const reassignDeliveryBoy = async (req, res) => {
+    try { 
+        const { oldDeliveryBoyId, newDeliveryBoyId, reason } = req.body;
+        const { orderId } = req.params;
+        await DeliveryAssignment.update({ status: "FAILED", reason }, { where: { orderId, deliveryBoyId: oldDeliveryBoyId } });
+        await DeliveryAssignment.create({ orderId, deliveryBoyId: newDeliveryBoyId, status: "REASSIGNED" });
+        res.json({ message: "Reassigned" }); 
+    } catch(err) { res.status(500).json({ message: err.message }); }
+};
+*/
+
+
+
+
+/* ======================================================
+   DELIVERY BOY MANAGEMENT (CRUD)
+====================================================== */
+
+export const getAllDeliveryBoys = async (req, res) => {
+  try { 
+      const boys = await DeliveryBoy.findAll(); 
+      res.json(boys); 
+  } catch (err) { res.status(500).json({ message: "Failed to fetch delivery boys" }); }
+};
+
+export const createDeliveryBoy = async (req, res) => {
+  try { 
+      // Expects: { name, phone, address, maxOrders, assignedPinCodes: ["123", "456"] }
+      const newBoy = await DeliveryBoy.create({ 
+          ...req.body, 
+          active: true 
+      }); 
+      res.status(201).json(newBoy); 
+  } catch (err) { res.status(500).json({ message: "Failed to create delivery boy", error: err.message }); }
+};
+
+export const deleteDeliveryBoy = async (req, res) => {
+  try { 
+      await DeliveryBoy.destroy({ where: { id: req.params.id } }); 
+      res.json({ message: "Deleted" }); 
+  } catch (err) { res.status(500).json({ message: "Failed to delete" }); }
+};
+
+export const updateDeliveryBoy = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { maxOrders, assignedPinCodes, name, phone, address, active } = req.body;
+
+    const deliveryBoy = await DeliveryBoy.findByPk(id);
+    if (!deliveryBoy) return res.status(404).json({ message: "Delivery boy not found" });
+
+    if (maxOrders !== undefined) deliveryBoy.maxOrders = maxOrders;
+    
+    if (assignedPinCodes !== undefined) {
+        if(!Array.isArray(assignedPinCodes)) return res.status(400).json({ message: "assignedPinCodes must be an array" });
+        deliveryBoy.assignedPinCodes = assignedPinCodes;
+    }
+
+    if (name) deliveryBoy.name = name;
+    if (phone) deliveryBoy.phone = phone;
+    if (address) deliveryBoy.address = address;
+    if (active !== undefined) deliveryBoy.active = active;
+
+    await deliveryBoy.save();
+
+    res.json({ message: "Delivery boy updated successfully", deliveryBoy });
+  } catch (err) { res.status(500).json({ message: "Update failed", error: err.message }); }
+};
+
+/* ======================================================
+   ASSIGNMENT LOGIC (With Validations)
+====================================================== */
+
+export const assignDeliveryBoy = async (req, res) => {
+  try {
+    const { deliveryBoyId } = req.body;
+    const { orderId } = req.params;
+
+    if (!orderId) return res.status(400).json({ message: "Order ID required" });
+
+    // 1. Fetch Order & Boy
+    const order = await Order.findByPk(orderId);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    const deliveryBoy = await DeliveryBoy.findByPk(deliveryBoyId);
+    if (!deliveryBoy || !deliveryBoy.active) return res.status(400).json({ message: "Delivery boy invalid" });
+
+    // 2. VALIDATION: Location Check (Pin Code)
+    // Check if order address zip exists in boy's assigned list
+    const orderZip = order.address?.zip || order.address?.pincode;
+    if (orderZip && deliveryBoy.assignedPinCodes?.length > 0) {
+        if (!deliveryBoy.assignedPinCodes.includes(orderZip)) {
+            return res.status(400).json({ message: `Delivery boy does not cover Pincode: ${orderZip}` });
+        }
+    }
+
+    // 3. VALIDATION: Daily Capacity Check
+    const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(); endOfDay.setHours(23, 59, 59, 999);
+
+    const todayAssignments = await DeliveryAssignment.count({
+        where: {
+            deliveryBoyId: deliveryBoy.id,
+            status: { [Op.ne]: "FAILED" },
+            createdAt: { [Op.between]: [startOfDay, endOfDay] }
+        }
+    });
+
+    if (todayAssignments >= deliveryBoy.maxOrders) {
+        return res.status(400).json({ message: `Daily limit of ${deliveryBoy.maxOrders} orders reached` });
+    }
+
+    // 4. Assign
+    await DeliveryAssignment.create({ orderId, deliveryBoyId });
+    
+    if(order.status !== "DELIVERED") {
+        await Order.update({ status: "OUT_FOR_DELIVERY" }, { where: { id: orderId } });
+    }
+
+    res.json({ message: "Assigned successfully" });
+
+  } catch (err) { res.status(500).json({ message: "Assignment failed", error: err.message }); }
+};
+
+export const reassignDeliveryBoy = async (req, res) => {
   try {
     const { oldDeliveryBoyId, newDeliveryBoyId, reason } = req.body;
     const { orderId } = req.params;
+
+    // Fail old assignment
     await DeliveryAssignment.update(
-      { status: "FAILED", reason },
-      { where: { orderId, deliveryBoyId: oldDeliveryBoyId } }
+        { status: "FAILED", reason }, 
+        { where: { orderId, deliveryBoyId: oldDeliveryBoyId } }
     );
-    await DeliveryAssignment.create({
-      orderId,
-      deliveryBoyId: newDeliveryBoyId,
-      status: "REASSIGNED",
+
+    // Create new (You can reuse assignDeliveryBoy logic here for validation if strictly needed)
+    await DeliveryAssignment.create({ orderId, deliveryBoyId: newDeliveryBoyId, status: "REASSIGNED" });
+
+    res.json({ message: "Reassigned successfully" });
+  } catch (err) { res.status(500).json({ message: err.message }); }
+};
+
+/* ======================================================
+   RECONCILIATION & CASH MANAGEMENT
+====================================================== */
+
+// 1. Overview: Who owes what?
+export const getCODReconciliation = async (req, res) => {
+  try {
+    const pendingAssignments = await DeliveryAssignment.findAll({
+      where: { status: "DELIVERED", cashDeposited: false },
+      include: [
+        {
+          model: Order,
+          where: { paymentMethod: "COD", payment: true }, 
+          attributes: ["id", "amount", "address", "updatedAt"]
+        },
+        { model: DeliveryBoy, attributes: ["id", "name", "phone"] }
+      ]
     });
-    res.json({ message: "Reassigned" });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+
+    let report = {};
+    let grandTotal = 0;
+
+    pendingAssignments.forEach(assignment => {
+      if (!assignment.Order) return;
+      const boyId = assignment.deliveryBoyId;
+      const amount = assignment.Order.amount;
+
+      if (!report[boyId]) {
+        report[boyId] = {
+          deliveryBoyId: boyId,
+          deliveryBoyName: assignment.DeliveryBoy?.name || "Unknown",
+          totalCashOnHand: 0,
+          orders: []
+        };
+      }
+      report[boyId].totalCashOnHand += amount;
+      report[boyId].orders.push({
+        orderId: assignment.Order.id,
+        amount: amount,
+        deliveredAt: assignment.updatedAt
+      });
+      grandTotal += amount;
+    });
+
+    res.json({ totalUnsettledAmount: grandTotal, details: Object.values(report) });
+  } catch (err) { res.status(500).json({ message: "Failed", error: err.message }); }
+};
+
+// 2. Single Boy Detail (Verification)
+export const getDeliveryBoyCashStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deliveryBoy = await DeliveryBoy.findByPk(id, { attributes: ['id', 'name', 'phone', 'maxOrders'] });
+    if (!deliveryBoy) return res.status(404).json({ message: "Delivery boy not found" });
+
+    const assignments = await DeliveryAssignment.findAll({
+      where: { deliveryBoyId: id, status: { [Op.ne]: "FAILED" } },
+      include: [{
+        model: Order,
+        where: { paymentMethod: "COD" },
+        attributes: ["id", "amount", "status", "payment", "address"]
+      }]
+    });
+
+    let cashOnHand = 0, pendingCash = 0, depositedToday = 0;
+    const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
+    const activeOrders = []; 
+
+    assignments.forEach(assignment => {
+        const amt = assignment.Order.amount;
+        // CashOnHand: Delivered + Not Settled
+        if (assignment.status === "DELIVERED" && !assignment.cashDeposited) {
+            cashOnHand += amt;
+            activeOrders.push({ status: "COLLECTED_UNSETTLED", orderId: assignment.Order.id, amount: amt });
+        }
+        // Pending: Still Out
+        else if (["ASSIGNED", "OUT_FOR_DELIVERY"].includes(assignment.status)) {
+            pendingCash += amt;
+            activeOrders.push({ status: "PENDING_DELIVERY", orderId: assignment.Order.id, amount: amt });
+        }
+        // Deposited Today
+        else if (assignment.cashDeposited && assignment.depositedAt >= startOfDay) {
+            depositedToday += amt;
+        }
+    });
+
+    res.json({
+        deliveryBoy,
+        summary: { cashOnHand, pendingCash, depositedToday },
+        orders: activeOrders
+    });
+  } catch (err) { res.status(500).json({ message: "Failed", error: err.message }); }
+};
+
+// 3. Settle Cash (Action)
+export const settleCOD = async (req, res) => {
+  try {
+    const { deliveryBoyId, orderIds } = req.body; 
+    if (!deliveryBoyId || !orderIds?.length) return res.status(400).json({ message: "Boy ID and Order IDs required" });
+
+    const result = await DeliveryAssignment.update(
+      { cashDeposited: true, depositedAt: new Date() },
+      {
+        where: {
+          deliveryBoyId,
+          orderId: { [Op.in]: orderIds },
+          status: "DELIVERED",
+          cashDeposited: false
+        }
+      }
+    );
+
+    if (result[0] === 0) return res.status(404).json({ message: "No matching unsettled orders found." });
+    res.json({ message: "Cash settled successfully", count: result[0] });
+
+  } catch (err) { res.status(500).json({ message: "Settlement failed", error: err.message }); }
 };

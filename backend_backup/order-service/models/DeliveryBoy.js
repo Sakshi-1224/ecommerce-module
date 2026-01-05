@@ -1,6 +1,7 @@
 import { DataTypes } from "sequelize";
 import sequelize from "../config/db.js";
-import DeliveryAssignment from "../models/DeliveryAssignment.js";
+import DeliveryAssignment from "./DeliveryAssignment.js";
+
 const DeliveryBoy = sequelize.define("DeliveryBoy", {
   id: {
     type: DataTypes.INTEGER,
@@ -19,10 +20,25 @@ const DeliveryBoy = sequelize.define("DeliveryBoy", {
   active: {
     type: DataTypes.BOOLEAN,
     defaultValue: true
+  },
+  // 📍 LOCATION & CAPACITY
+  address: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  assignedPinCodes: {
+    // Stores array like: ["452001", "452010"]
+    type: DataTypes.JSON, 
+    defaultValue: [], 
+    allowNull: false
+  },
+  maxOrders: {
+    type: DataTypes.INTEGER,
+    defaultValue: 10, // Daily limit
+    allowNull: false
   }
 });
 
-export default DeliveryBoy;
 
-DeliveryBoy.hasMany(DeliveryAssignment, { foreignKey: "deliveryBoyId" });
-DeliveryAssignment.belongsTo(DeliveryBoy, { foreignKey: "deliveryBoyId" });
+
+export default DeliveryBoy;

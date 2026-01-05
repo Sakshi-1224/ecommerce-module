@@ -1,5 +1,7 @@
 import { DataTypes } from "sequelize";
 import sequelize from "../config/db.js";
+import Order from "./Order.js"; 
+import DeliveryBoy from "./DeliveryBoy.js";
 
 const DeliveryAssignment = sequelize.define("DeliveryAssignment", {
   id: {
@@ -21,13 +23,25 @@ const DeliveryAssignment = sequelize.define("DeliveryAssignment", {
       "PICKED",
       "DELIVERED",
       "FAILED",
-    "REASSIGNED"
+      "REASSIGNED"
     ),
     defaultValue: "ASSIGNED"
   },
   reason: {
     type: DataTypes.STRING
+  },
+  // 💰 RECONCILIATION FIELDS
+  cashDeposited: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false, 
+    comment: "True if delivery boy has handed over COD cash to Admin"
+  },
+  depositedAt: {
+    type: DataTypes.DATE,
+    allowNull: true
   }
 });
+
+
 
 export default DeliveryAssignment;

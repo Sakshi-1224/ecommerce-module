@@ -701,7 +701,16 @@ app.get("/api/orders/admin/all", async (req, res) => {
     res.status(err.response?.status || 500).json(err.response?.data);
   }
 });
-
+app.get("/api/orders/admin/:id", async (req, res) => {
+  try {
+    const response = await axios.get(`${ORDER_SERVICE_URL}/admin/${req.params.id}`, {
+      headers: { Authorization: req.headers.authorization },
+    });
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
 app.put("/api/orders/admin/:id/status", async (req, res) => {
   try {
     const response = await axios.put(
@@ -721,6 +730,62 @@ app.put("/api/orders/admin/:orderId/item/:itemId/status", async (req, res) => {
   try {
     const response = await axios.put(
       `${ORDER_SERVICE_URL}/admin/${req.params.orderId}/item/${req.params.itemId}/status`,
+      req.body,
+      {
+        headers: { Authorization: req.headers.authorization },
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+
+app.get("/api/orders/admin/reconciliation/cod", async (req, res) => {
+  try {
+    const response = await axios.get(`${ORDER_SERVICE_URL}/admin/reconciliation/cod`, {
+      headers: { Authorization: req.headers.authorization },
+    });
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+app.get("/api/orders/admin/delivery-boys/:id/cash-status", async (req, res) => {
+  try {
+    const response = await axios.get(`${ORDER_SERVICE_URL}/admin/delivery-boys/${req.params.id}/cash-status`, {
+      headers: { Authorization: req.headers.authorization },
+    });
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+
+
+app.put("/api/orders/admin/delivery-boys/:id", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${ORDER_SERVICE_URL}/admin/delivery-boys/${req.params.id}`,
+      req.body,
+      {
+        headers: { Authorization: req.headers.authorization },
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+
+app.post("/api/orders/admin/reconciliation/settle", async (req, res) => {
+  try {
+    const response = await axios.post(
+      `${ORDER_SERVICE_URL}/admin/reconciliation/settle`,
       req.body,
       {
         headers: { Authorization: req.headers.authorization },

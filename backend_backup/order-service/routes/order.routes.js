@@ -23,6 +23,10 @@ import {
   adminTotalSales,
   adminVendorSalesReport, // 🟢 Ensure this is imported
   adminAllVendorsSalesReport,
+  updateDeliveryBoy,
+  getDeliveryBoyCashStatus,
+  getCODReconciliation,
+  settleCOD,
 } from "../controllers/order.controller.js";
 
 const router = express.Router();
@@ -39,6 +43,16 @@ router.put("/:orderId/cancel", auth, cancelFullOrder);
 router.get("/vendor/orders", auth, vendor, getVendorOrders);
 router.get("/vendor/sales-report", auth, vendor, vendorSalesReport);
 
+/* ================= ADMIN: RECONCILIATION ================= */
+router.get("/admin/reconciliation/cod", auth, admin, getCODReconciliation);
+router.get(
+  "/admin/delivery-boys/:id/cash-status",
+  auth,
+  admin,
+  getDeliveryBoyCashStatus
+);
+router.post("/admin/reconciliation/settle", auth, admin, settleCOD);
+
 /* ================= ADMIN: SALES REPORTS ================= */
 router.get("/admin/sales/total", auth, admin, adminTotalSales);
 router.get("/admin/sales/vendors", auth, admin, adminAllVendorsSalesReport);
@@ -53,6 +67,7 @@ router.get(
 /* ================= ADMIN: DELIVERY ================= */
 router.get("/admin/delivery-boys", auth, admin, getAllDeliveryBoys);
 router.post("/admin/delivery-boys", auth, admin, createDeliveryBoy);
+router.put("/admin/delivery-boys/:id", auth, admin, updateDeliveryBoy);
 router.delete("/admin/delivery-boys/:id", auth, admin, deleteDeliveryBoy);
 router.post("/admin/assign-delivery/:orderId", auth, admin, assignDeliveryBoy);
 router.put(

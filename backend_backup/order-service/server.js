@@ -3,10 +3,15 @@ import dotenv from "dotenv";
 import sequelize from "./config/db.js";
 import orderRoutes from "./routes/order.routes.js";
 import paymentRoutes from "./routes/payment.routes.js";
+import defineAssociations from "./models/associations.js";
 dotenv.config();
 
 const app = express();
+// ... middleware ...
 app.use(express.json());
+// 👇 RUN ASSOCIATIONS HERE
+defineAssociations();
+
 app.use("/api/orders", orderRoutes);
 app.use("/api/orders/payment", paymentRoutes);
 
