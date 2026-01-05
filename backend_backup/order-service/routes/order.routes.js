@@ -42,6 +42,12 @@ router.put("/:orderId/cancel", auth, cancelFullOrder);
 /* ================= VENDOR ================= */
 router.get("/vendor/orders", auth, vendor, getVendorOrders);
 router.get("/vendor/sales-report", auth, vendor, vendorSalesReport);
+router.put(
+  "/vendor/item/:itemId/status",
+  auth,
+  vendor,
+  updateOrderItemStatusAdmin
+);
 
 /* ================= ADMIN: RECONCILIATION ================= */
 router.get("/admin/reconciliation/cod", auth, admin, getCODReconciliation);

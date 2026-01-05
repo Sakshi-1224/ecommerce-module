@@ -7,6 +7,29 @@ import { Op } from "sequelize";
    PUBLIC & VENDOR CRUD OPERATIONS
 ====================================================== */
 
+// ✅ ADD THIS FUNCTION
+export const getProductsBatch = async (req, res) => {
+  try {
+    const { ids } = req.query;
+    if (!ids) return res.json([]);
+
+    const idArray = ids.split(",").map((id) => parseInt(id));
+
+    const products = await Product.findAll({
+      where: {
+        id: { [Op.in]: idArray },
+      },
+      attributes: ["id", "name", "price", "imageUrl"], // Fetch name & price
+      include: { model: Category, attributes: ["name"] },
+    });
+
+    res.json(products);
+  } catch (err) {
+    console.error("Batch fetch error:", err);
+    res.status(500).json({ message: "Failed to fetch batch products" });
+  }
+};
+
 export const getProducts = async (req, res) => {
   try {
     const { category, sort, search } = req.query;
