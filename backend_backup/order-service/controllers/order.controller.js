@@ -15,7 +15,8 @@ export const checkout = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { items, amount, address, paymentMethod } = req.body;
-
+// Extract area directly from the address object (sent by React dropdown)
+    const selectedArea = address.area || "General";
     // 1. SYNC: RESERVE STOCK (Call Product Service)
 
     // 2. CREATE ORDER
@@ -24,6 +25,7 @@ export const checkout = async (req, res) => {
         userId: req.user.id,
         amount,
         address,
+        assignedArea: selectedArea,
         paymentMethod,
         payment: false,
         status: "PROCESSING",
@@ -230,9 +232,25 @@ export const updateOrderStatusAdmin = async (req, res) => {
 
       order.status = "PACKED";
       await order.save();
-      return res.json({ message: "Order packed & Stock Deducted" });
-    }
+let responseMsg = "Order packed & Stock Deducted";
 
+      if (order.assignedArea) {
+          // Call the helper
+          const result = await autoAssignDeliveryBoy(order.id, order.assignedArea);
+          
+          if (result.success) {
+              // ✅ CORRECT ACCESS: result.boy.name
+              responseMsg += ` & Auto-Assigned to ${result.boy.name}`;
+          } else {
+              // ❌ FAILURE MESSAGE
+              responseMsg += ` (Warning: ${result.message})`;
+          }
+      } else {
+          responseMsg += " (No Area in Order for Auto-Assign)";
+      }
+
+      return res.json({ message: responseMsg });
+    }
     // 🚚 OUT FOR DELIVERY
     if (status === "OUT_FOR_DELIVERY") {
       order.status = "OUT_FOR_DELIVERY";
@@ -331,10 +349,13 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
 
       if (order.status !== status) {
         order.status = status;
+        if (status === "PACKED" && order.assignedArea) {
+            await autoAssignDeliveryBoy(order.id, order.assignedArea);
+        }
+
+        // 🟢 UPDATE ASSIGNMENT IF PARENT BECOMES DELIVERED
         if (status === "DELIVERED") {
           order.payment = true;
-          order.payment = true;
-          // 🟢 CRITICAL FIX: Sync DeliveryAssignment
           const assignment = await DeliveryAssignment.findOne({
             where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
           });
@@ -659,124 +680,84 @@ export const deleteDeliveryBoy = async (req, res) => {
 };
 
 export const updateDeliveryBoy = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { maxOrders, assignedPinCodes, name, phone, address, active } =
-      req.body;
-
-    const deliveryBoy = await DeliveryBoy.findByPk(id);
-    if (!deliveryBoy)
-      return res.status(404).json({ message: "Delivery boy not found" });
-
-    if (maxOrders !== undefined) deliveryBoy.maxOrders = maxOrders;
-
-    if (assignedPinCodes !== undefined) {
-      if (!Array.isArray(assignedPinCodes))
-        return res
-          .status(400)
-          .json({ message: "assignedPinCodes must be an array" });
-      deliveryBoy.assignedPinCodes = assignedPinCodes;
-    }
-
-    if (name) deliveryBoy.name = name;
-    if (phone) deliveryBoy.phone = phone;
-    if (address) deliveryBoy.address = address;
-    if (active !== undefined) deliveryBoy.active = active;
-
-    await deliveryBoy.save();
-
-    res.json({ message: "Delivery boy updated successfully", deliveryBoy });
-  } catch (err) {
-    res.status(500).json({ message: "Update failed", error: err.message });
-  }
+  try { await DeliveryBoy.update(req.body, { where: { id: req.params.id } }); res.json({ message: "Updated" }); } 
+  catch (err) { res.status(500).json({ message: "Failed" }); }
 };
 
 /* ======================================================
    ASSIGNMENT LOGIC (With Validations)
 ====================================================== */
 
-export const assignDeliveryBoy = async (req, res) => {
+const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
   try {
-    const { deliveryBoyId } = req.body;
-    const { orderId } = req.params;
+    const allBoys = await DeliveryBoy.findAll({ where: { active: true } });
+    
+    // Filter: Find boys covering this exact area string
+    const validBoys = allBoys.filter(boy => 
+        boy.assignedAreas && boy.assignedAreas.includes(area)
+    );
 
-    if (!orderId) return res.status(400).json({ message: "Order ID required" });
+    if (validBoys.length === 0) {
+        return { success: false, boy: null, message: `No delivery boy found for area: ${area}` };
+    }
 
-    // 1. Fetch Order & Boy
-    const order = await Order.findByPk(orderId);
-    if (!order) return res.status(404).json({ message: "Order not found" });
+    // Load Balancing: Find boy with lowest load today
+    const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
+    let bestBoy = null;
+    let minLoad = Infinity;
 
-    const deliveryBoy = await DeliveryBoy.findByPk(deliveryBoyId);
-    if (!deliveryBoy || !deliveryBoy.active)
-      return res.status(400).json({ message: "Delivery boy invalid" });
-
-    // 2. VALIDATION: Location Check (Pin Code)
-    // Check if order address zip exists in boy's assigned list
-    const orderZip = order.address?.zip || order.address?.pincode;
-    if (orderZip && deliveryBoy.assignedPinCodes?.length > 0) {
-      if (!deliveryBoy.assignedPinCodes.includes(orderZip)) {
-        return res.status(400).json({
-          message: `Delivery boy does not cover Pincode: ${orderZip}`,
+    for (const boy of validBoys) {
+        const load = await DeliveryAssignment.count({
+            where: { 
+                deliveryBoyId: boy.id, 
+                createdAt: { [Op.gte]: startOfDay },
+                status: { [Op.ne]: "FAILED" }
+            }
         });
-      }
+
+        if (load < boy.maxOrders && load < minLoad) {
+            minLoad = load;
+            bestBoy = boy;
+        }
+    }
+    if (!bestBoy) {
+        return { success: false, boy: null, message: `All boys in ${area} are fully booked today` };
     }
 
-    // 3. VALIDATION: Daily Capacity Check
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date();
-    endOfDay.setHours(23, 59, 59, 999);
-
-    const todayAssignments = await DeliveryAssignment.count({
-      where: {
-        deliveryBoyId: deliveryBoy.id,
-        status: { [Op.ne]: "FAILED" },
-        createdAt: { [Op.between]: [startOfDay, endOfDay] },
-      },
-    });
-
-    if (todayAssignments >= deliveryBoy.maxOrders) {
-      return res.status(400).json({
-        message: `Daily limit of ${deliveryBoy.maxOrders} orders reached`,
-      });
+    if (bestBoy) {
+        await DeliveryAssignment.create({
+            orderId,
+            deliveryBoyId: bestBoy.id,
+            status: "ASSIGNED"
+        }, { transaction });
+       return { success: true, boy: bestBoy, message: "Assigned Successfully" };
     }
-
-    // 4. Assign
-    await DeliveryAssignment.create({ orderId, deliveryBoyId });
-
-    if (order.status !== "DELIVERED") {
-      await Order.update(
-        { status: "OUT_FOR_DELIVERY" },
-        { where: { id: orderId } }
-      );
-    }
-
-    res.json({ message: "Assigned successfully" });
-  } catch (err) {
-    res.status(500).json({ message: "Assignment failed", error: err.message });
-  }
+    return { success: false, boy: null, message: "No suitable delivery boy found" };
+  } catch (err) { console.error(err); return null; }
 };
 
 export const reassignDeliveryBoy = async (req, res) => {
+  const t = await sequelize.transaction();
   try {
     const { oldDeliveryBoyId, newDeliveryBoyId, reason } = req.body;
-    const { orderId } = req.params;
-
-    // Fail old assignment
+    
+    // Fail Old Assignment
     await DeliveryAssignment.update(
-      { status: "FAILED", reason },
-      { where: { orderId, deliveryBoyId: oldDeliveryBoyId } }
+        { status: "FAILED", reason },
+        { where: { orderId: req.params.orderId, deliveryBoyId: oldDeliveryBoyId }, transaction: t }
     );
 
-    // Create new (You can reuse assignDeliveryBoy logic here for validation if strictly needed)
+    // Create New Assignment
     await DeliveryAssignment.create({
-      orderId,
-      deliveryBoyId: newDeliveryBoyId,
-      status: "REASSIGNED",
-    });
+        orderId: req.params.orderId,
+        deliveryBoyId: newDeliveryBoyId,
+        status: "ASSIGNED"
+    }, { transaction: t });
 
-    res.json({ message: "Reassigned successfully" });
+    await t.commit();
+    res.json({ message: "Reassigned Successfully" });
   } catch (err) {
+    if (!t.finished) await t.rollback();
     res.status(500).json({ message: err.message });
   }
 };
@@ -927,5 +908,116 @@ export const settleCOD = async (req, res) => {
     res.json({ message: "Cash settled successfully", count: result[0] });
   } catch (err) {
     res.status(500).json({ message: "Settlement failed", error: err.message });
+  }
+};
+
+
+export const getDeliveryLocations = async (req, res) => {
+  try {
+    const boys = await DeliveryBoy.findAll({ 
+        where: { active: true },
+        attributes: ['state', 'city', 'assignedAreas'] 
+    });
+
+    // Build Tree: { "MP": { "Indore": ["Vijay Nagar"] } }
+    const locationMap = {};
+
+    boys.forEach(boy => {
+        const { state, city, assignedAreas } = boy;
+        if (!locationMap[state]) locationMap[state] = {};
+        if (!locationMap[state][city]) locationMap[state][city] = new Set();
+
+        if (Array.isArray(assignedAreas)) {
+            assignedAreas.forEach(area => {
+                if(area) locationMap[state][city].add(area.trim());
+            });
+        }
+    });
+
+    // Convert Sets to Arrays
+    const response = {};
+    for (const s in locationMap) {
+        response[s] = {};
+        for (const c in locationMap[s]) {
+            response[s][c] = [...locationMap[s][c]].sort();
+        }
+    }
+
+    res.json(response);
+  } catch (err) { res.status(500).json({ message: "Failed to fetch locations" }); }
+};
+
+
+
+/* ======================================================
+   🟢 GET REASSIGNMENT OPTIONS (FLEXIBLE)
+   Returns ALL boys, but sorts matching ones to the top.
+====================================================== */
+export const getReassignmentOptions = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    
+    // 1. Find the Order & Target Area
+    const order = await Order.findByPk(orderId);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    const targetArea = order.assignedArea; // e.g., "Shankar Nagar"
+
+    // 2. Fetch ALL Active Delivery Boys (No area filtering here)
+    const allBoys = await DeliveryBoy.findAll({ where: { active: true } });
+
+    const options = [];
+    const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
+
+    // 3. Process each boy to check Load & Area Match
+    for (const boy of allBoys) {
+      
+      // Calculate Daily Load
+      const currentLoad = await DeliveryAssignment.count({
+        where: { 
+            deliveryBoyId: boy.id, 
+            createdAt: { [Op.gte]: startOfDay }, 
+            status: { [Op.ne]: "FAILED" } 
+        }
+      });
+
+      // Check if this boy normally covers the area
+      const isAreaMatch = boy.assignedAreas && boy.assignedAreas.includes(targetArea);
+
+      // Add to list (We include EVERYONE now)
+      options.push({
+        id: boy.id,
+        name: boy.name,
+        phone: boy.phone,
+        city: boy.city, // Helpful if you have multiple cities
+        
+        // 🟢 Flags for Frontend UI
+        isAreaMatch: isAreaMatch, 
+        matchType: isAreaMatch ? "RECOMMENDED" : "OTHER_AREA",
+        
+        currentLoad: currentLoad,
+        maxOrders: boy.maxOrders,
+        isOverloaded: currentLoad >= boy.maxOrders
+      });
+    }
+
+    // 4. SORTING LOGIC:
+    // Priority 1: Area Match (Recommended first)
+    // Priority 2: Least Loaded (Empty boys first)
+    options.sort((a, b) => {
+        if (a.isAreaMatch !== b.isAreaMatch) {
+            return a.isAreaMatch ? -1 : 1; // True comes first
+        }
+        return a.currentLoad - b.currentLoad; // Low load comes first
+    });
+
+    res.json({ 
+        orderId: order.id, 
+        targetArea, 
+        options 
+    });
+
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 };

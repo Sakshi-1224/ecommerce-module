@@ -22,19 +22,27 @@ const DeliveryBoy = sequelize.define("DeliveryBoy", {
     defaultValue: true
   },
   // 📍 LOCATION & CAPACITY
-  address: {
-    type: DataTypes.STRING,
-    allowNull: true
+  state: { 
+    type: DataTypes.STRING, 
+    allowNull: false, 
+    defaultValue: "Chhattisgarh" 
   },
-  assignedPinCodes: {
-    // Stores array like: ["452001", "452010"]
+  city: { 
+    type: DataTypes.STRING, 
+    allowNull: false, 
+    defaultValue: "Raipur" 
+  },
+  
+  // 🟢 Specific Areas they cover (e.g. ["Vijay Nagar", "Palasia"])
+  // Used for Auto-Assignment & Dropdowns
+  assignedAreas: {
     type: DataTypes.JSON, 
     defaultValue: [], 
     allowNull: false
   },
   maxOrders: {
     type: DataTypes.INTEGER,
-    defaultValue: 10, // Daily limit
+    defaultValue: 100, // Daily limit
     allowNull: false
   }
 });

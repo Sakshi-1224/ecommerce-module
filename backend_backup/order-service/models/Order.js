@@ -6,6 +6,10 @@ const Order = sequelize.define("Order", {
   userId: { type: DataTypes.STRING, allowNull: false },
   amount: { type: DataTypes.FLOAT, allowNull: false },
   address: { type: DataTypes.JSON, allowNull: false },
+  assignedArea: { 
+    type: DataTypes.STRING, 
+    allowNull: false 
+  },
    status: {
     type: DataTypes.ENUM(
       "PROCESSING",

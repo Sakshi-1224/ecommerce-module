@@ -1,7 +1,7 @@
 import DeliveryBoy from "./DeliveryBoy.js";
 import DeliveryAssignment from "./DeliveryAssignment.js";
 import Order from "./Order.js";
-
+import OrderItem from "./OrderItem.js";
 // Call this function in your main index.js/app.js
 const defineAssociations = () => {
     
@@ -15,6 +15,8 @@ const defineAssociations = () => {
 
     // 3. Order <-> OrderItem (If you haven't defined it elsewhere)
     // Order.hasMany(OrderItem, ...);
+    Order.hasMany(OrderItem, { foreignKey: "orderId" });
+    OrderItem.belongsTo(Order, { foreignKey: "orderId" });
 };
 
 export default defineAssociations;

@@ -28,6 +28,7 @@ const Product = sequelize.define("Product", {
     defaultValue: 0
   },
   // 2. Reserved (Locked in processing orders)
+  // placed 
   reservedStock: { 
     type: DataTypes.INTEGER, 
     defaultValue: 0 
