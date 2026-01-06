@@ -12,6 +12,7 @@ const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL;
 const ADMIN_SERVICE_URL = process.env.ADMIN_SERVICE_URL;
 const VENDOR_SERVICE_URL = process.env.VENDOR_SERVICE_URL;
 const VENDOR_SERVICE_ADMIN_URL = process.env.VENDOR_SERVICE_ADMIN_URL;
+const ADDRESS_SERVICE_URL = process.env.ADDRESS_SERVICE_URL;
 const app = express();
 app.use(express.json());
 
@@ -24,6 +25,53 @@ app.use(
 /* ======================
    REGISTER
 ====================== */
+
+app.post("/api/addresses", async (req, res) => {
+  try {
+    const response = await axios.post(`${ADDRESS_SERVICE_URL}`,    req.body,
+      {
+        headers: {
+          Authorization: req.headers.authorization,
+        },
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "User service error",
+    });
+  }
+});
+
+app.get("/api/addresses", async (req, res) => {
+  try {
+    const response = await axios.get(`${ADDRESS_SERVICE_URL}`, {
+      headers: {
+        Authorization: req.headers.authorization,
+      },
+    });
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "User service error",
+    });
+  }
+});
+
+app.delete("/api/addresses/:id", async (req, res) => {
+  try {
+    const response = await axios.delete(`${ADDRESS_SERVICE_URL}/${req.params.id}`, {
+      headers: {
+        Authorization: req.headers.authorization,
+      },
+    });
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "User service error",
+    });
+  }
+});
 app.post("/api/auth/register", async (req, res) => {
   try {
     const response = await axios.post(`${USER_SERVICE_URL}/register`, req.body);
@@ -835,7 +883,7 @@ app.get("/api/orders/vendor/sales-report", async (req, res) => {
     res.status(err.response?.status || 500).json(err.response?.data);
   }
 });
-
+/*
 app.post("/api/orders/admin/assign-delivery/:orderId", async (req, res) => {
   try {
     const response = await axios.post(
@@ -849,7 +897,7 @@ app.post("/api/orders/admin/assign-delivery/:orderId", async (req, res) => {
     res.status(err.response?.status || 500).json(err.response?.data);
   }
 });
-
+*/
 app.put("/api/orders/admin/reassign-delivery/:orderId", async (req, res) => {
   try {
     const response = await axios.put(
@@ -1065,6 +1113,36 @@ app.put("/api/orders/vendor/item/:itemId/status", async (req, res) => {
       req.body,
       { headers: { Authorization: req.headers.authorization } }
     );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+
+
+app.get("/api/orders/locations", async (req, res) => {
+  try {
+    const response = await axios.get(`${ORDER_SERVICE_URL}/locations`, {
+      headers: {
+        Authorization: req.headers.authorization,
+      },
+    });
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+app.get("/api/orders/admin/reassign-options/:orderId", async (req, res) => {
+  try {
+    const response = await axios.get(`${ORDER_SERVICE_URL}/admin/reassign-options/${req.params.orderId}`, {
+      headers: {
+        Authorization: req.headers.authorization,
+      },
+    });
+
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json(err.response?.data);
