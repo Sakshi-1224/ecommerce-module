@@ -530,6 +530,7 @@ app.post("/api/orders/checkout", async (req, res) => {
 app.get("/api/orders", async (req, res) => {
   try {
     const response = await axios.get(`${ORDER_SERVICE_URL}`, {
+      params: req.query, // ✅ CRITICAL: Forward query params (page, limit)
       headers: { Authorization: req.headers.authorization },
     });
     res.status(response.status).json(response.data);
