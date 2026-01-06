@@ -485,15 +485,32 @@ export const adminAllVendorsSalesReport = async (req, res) => {
 ====================================================== */
 export const getUserOrders = async (req, res) => {
   try {
-    const orders = await Order.findAll({
+    // 1. Get page & limit from query params (default to Page 1, 10 items)
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    // 2. Use findAndCountAll for pagination
+    const { count, rows } = await Order.findAndCountAll({
       where: { userId: req.user.id },
       include: OrderItem,
+      limit: limit,
+      offset: offset,
+      order: [["createdAt", "DESC"]], // Show newest first
     });
-    res.json(orders);
-  } catch {
+
+    // 3. Return structured response
+    res.json({
+      orders: rows,
+      totalOrders: count,
+      totalPages: Math.ceil(count / limit),
+      currentPage: page,
+    });
+  } catch (err) {
     res.status(500).json({ message: "Failed to fetch orders" });
   }
 };
+
 export const getOrderById = async (req, res) => {
   try {
     const order = await Order.findOne({
