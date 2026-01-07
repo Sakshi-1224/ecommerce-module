@@ -27,7 +27,8 @@ import {
   getCODReconciliation,
   settleCOD,
   getReassignmentOptions,
-  getDeliveryLocations
+  getDeliveryLocations,
+  getDeliveryBoyOrders,
 } from "../controllers/order.controller.js";
 
 const router = express.Router();
@@ -84,7 +85,7 @@ router.put(
   admin,
   reassignDeliveryBoy
 );
-
+router.get("/admin/delivery-boys/:id/orders", auth, admin, getDeliveryBoyOrders);
 /* ================= ADMIN: ORDER MANAGEMENT ================= */
 router.get("/admin/all", auth, admin, getAllOrdersAdmin);
 router.get("/admin/:id", auth, admin, getOrderByIdAdmin);
