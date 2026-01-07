@@ -1152,6 +1152,22 @@ app.get("/api/orders/admin/reassign-options/:orderId", async (req, res) => {
   }
 });
 
+
+
+app.get("/api/orders/admin/delivery-boys/:id/orders", async (req, res) => {
+  try {
+    const response = await axios.get(`${ORDER_SERVICE_URL}/admin/delivery-boys/${req.params.id}/orders`, {
+      headers: {
+        Authorization: req.headers.authorization,
+      },
+    });
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
 app.listen(5007, () => {
   console.log("API Gateway running on port 5007");
 });

@@ -734,6 +734,21 @@ export const updateDeliveryBoy = async (req, res) => {
 
 const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
   try {
+
+    // 🛑 1. CHECK IF ALREADY ASSIGNED (Fix for Duplicate IDs)
+    const existingAssignment = await DeliveryAssignment.findOne({
+        where: { 
+            orderId, 
+            status: { [Op.ne]: 'FAILED' } // Find any active assignment
+        },
+        transaction 
+    });
+
+    if (existingAssignment) {
+        // If it exists, just return the existing boy info
+        const boy = await DeliveryBoy.findByPk(existingAssignment.deliveryBoyId, { transaction });
+        return { success: true, boy, message: "Already Assigned (Skipped Creation)" };
+    }
     const allBoys = await DeliveryBoy.findAll({ where: { active: true } });
 
     // Filter: Find boys covering this exact area string
@@ -1130,5 +1145,88 @@ export const getReassignmentOptions = async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+};
+
+export const getDeliveryBoyOrders = async (req, res) => {
+  try {
+    // ID comes from params (Admin viewing) OR req.user (Boy viewing own)
+    const deliveryBoyId = req.params.id || req.user.id; 
+
+    const assignments = await DeliveryAssignment.findAll({
+      where: { 
+        deliveryBoyId: deliveryBoyId,
+        status: { [Op.ne]: "FAILED" } // Don't show failed attempts
+      },
+      include: [
+        {
+          model: Order,
+          required: true,
+          attributes: [
+            "id", "amount", "address", "status", 
+            "paymentMethod", "payment", "date", "assignedArea"
+          ],
+          include: [
+            {
+              model: OrderItem,
+              attributes: ["id", "productId", "quantity", "price"]
+            }
+          ]
+        }
+      ],
+      order: [
+        ['status', 'ASC'], 
+        ['createdAt', 'DESC']
+      ]
+    });
+
+    const response = {
+      active: [],
+      history: []
+    };
+
+    assignments.forEach(a => {
+      // 🟢 LOGIC FIX:
+      // Show Amount IF:
+      // 1. Method is COD
+      // 2. AND Cash is NOT yet deposited to Admin (a.cashDeposited === false)
+      // 3. AND Order is not Cancelled
+      const isCodUnsettled = (
+          a.Order.paymentMethod === "COD" && 
+          !a.cashDeposited && 
+          a.Order.status !== "CANCELLED"
+      );
+
+      const orderData = {
+        assignmentId: a.id,
+        assignmentStatus: a.status, // ACTIVE status of assignment
+        
+        // 💰 This will now show 500 even if Delivered, until Admin settles it
+        cashToCollect: isCodUnsettled ? a.Order.amount : 0, 
+        
+        id: a.Order.id,
+        amount: a.Order.amount,
+        paymentMethod: a.Order.paymentMethod,
+        payment: a.Order.payment, // This might be true (customer paid), but cashToCollect remains if boy holds it
+        status: a.Order.status,
+        date: a.Order.date,
+        address: a.Order.address,
+        assignedArea: a.Order.assignedArea,
+        OrderItems: a.Order.OrderItems
+      };
+
+      // Grouping Logic
+      if (["ASSIGNED", "PICKED", "OUT_FOR_DELIVERY"].includes(a.status)) {
+        response.active.push(orderData);
+      } else {
+        // DELIVERED orders go to history, but 'cashToCollect' will still show amount if not settled
+        response.history.push(orderData);
+      }
+    });
+
+    res.json(response);
+
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch orders", error: err.message });
   }
 };
