@@ -731,11 +731,13 @@ export const updateDeliveryBoy = async (req, res) => {
 /* ======================================================
    ASSIGNMENT LOGIC (With Validations)
 ====================================================== */
-
+/* ======================================================
+   🟢 HELPER: AUTO-ASSIGN (Counts Unique Orders for Load)
+====================================================== */
 const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
   try {
 
-    // 🛑 1. CHECK IF ALREADY ASSIGNED (Fix for Duplicate IDs)
+    // 🛑 1. CHECK IF ALREADY ASSIGNED (Prevents Duplicates)
     const existingAssignment = await DeliveryAssignment.findOne({
         where: { 
             orderId, 
@@ -745,13 +747,18 @@ const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
     });
 
     if (existingAssignment) {
-        // If it exists, just return the existing boy info
         const boy = await DeliveryBoy.findByPk(existingAssignment.deliveryBoyId, { transaction });
         return { success: true, boy, message: "Already Assigned (Skipped Creation)" };
     }
-    const allBoys = await DeliveryBoy.findAll({ where: { active: true } });
 
-    // Filter: Find boys covering this exact area string
+    // 2. Fetch Active Boys
+    // 🟢 Added 'transaction' here to be safe
+    const allBoys = await DeliveryBoy.findAll({ 
+        where: { active: true },
+        transaction 
+    });
+
+    // 3. Filter by Area
     const validBoys = allBoys.filter(
       (boy) => boy.assignedAreas && boy.assignedAreas.includes(area)
     );
@@ -764,19 +771,25 @@ const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
       };
     }
 
-    // Load Balancing: Find boy with lowest load today
+    // 4. Load Balancing
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
+    
     let bestBoy = null;
     let minLoad = Infinity;
 
     for (const boy of validBoys) {
+      // 🟢 COUNT UNIQUE ORDERS
+      // distinct: true, col: 'orderId' ensures 1 Order = 1 Load
       const load = await DeliveryAssignment.count({
         where: {
           deliveryBoyId: boy.id,
           createdAt: { [Op.gte]: startOfDay },
-          status: { [Op.ne]: "FAILED" },
+          status: { [Op.notIn]: ["FAILED", "REASSIGNED"] },
         },
+        distinct: true, 
+        col: 'orderId', 
+        transaction // 🟢 Important: Use the transaction
       });
 
       if (load < boy.maxOrders && load < minLoad) {
@@ -784,6 +797,7 @@ const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
         bestBoy = boy;
       }
     }
+
     if (!bestBoy) {
       return {
         success: false,
@@ -792,28 +806,27 @@ const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
       };
     }
 
-    if (bestBoy) {
-      await DeliveryAssignment.create(
-        {
-          orderId,
-          deliveryBoyId: bestBoy.id,
-          status: "ASSIGNED",
-        },
-        { transaction }
-      );
-      return { success: true, boy: bestBoy, message: "Assigned Successfully" };
-    }
-    return {
-      success: false,
-      boy: null,
-      message: "No suitable delivery boy found",
-    };
+    // 5. Create Assignment
+    await DeliveryAssignment.create(
+      {
+        orderId,
+        deliveryBoyId: bestBoy.id,
+        status: "ASSIGNED",
+      },
+      { transaction }
+    );
+    
+    return { success: true, boy: bestBoy, message: "Assigned Successfully" };
+
   } catch (err) {
-    console.error(err);
-    return null;
+    console.error("Auto-Assign Error:", err);
+    return { success: false, message: "Internal Error" }; // Return object on error too
   }
 };
 
+/* ======================================================
+   🟢 REASSIGN DELIVERY BOY (Fixed Load Logic)
+====================================================== */
 export const reassignDeliveryBoy = async (req, res) => {
   const t = await sequelize.transaction();
   try {
@@ -821,46 +834,37 @@ export const reassignDeliveryBoy = async (req, res) => {
     const orderId = parseInt(rawId, 10);
     const { newDeliveryBoyId } = req.body;
 
-    // Check if ID is missing
+    // 1. Validation
     if (isNaN(orderId)) {
       await t.rollback();
-      return res.status(400).json({
-        message: `Invalid Order ID (Backend received NaN). Route used: ${req.route?.path}`,
-      });
+      return res.status(400).json({ message: "Invalid Order ID" });
     }
-
     if (!newDeliveryBoyId) {
       await t.rollback();
       return res.status(400).json({ message: "Missing New Delivery Boy ID" });
     }
 
-    // 3. Find Active Assignment
+    // 2. Find Current Active Assignment
+    // We look for any status that is considered "Active" (ASSIGNED, PICKED)
     const currentAssignment = await DeliveryAssignment.findOne({
       where: {
         orderId: orderId,
-        status: { [Op.or]: ["ASSIGNED", "PICKED"] },
+        status: { [Op.or]: ["ASSIGNED", "PICKED"] }, 
       },
       transaction: t,
     });
 
-    // 4. Update Old Assignment
+    // 3. "Fail" the Old Assignment
+    // By marking it FAILED, your autoAssign logic (status != FAILED) will stop counting it as load.
     if (currentAssignment) {
-      currentAssignment.status = "REASSIGNED";
-      currentAssignment.reason = "Manual Reassignment by Admin";
+      currentAssignment.status = "FAILED"; // 🟢 Critical Change
+      currentAssignment.reason = "Manual Reassignment by Admin"; 
+      // Note: We do NOT need to manually decrement oldBoy.currentLoad here
+      // The system calculates it dynamically.
       await currentAssignment.save({ transaction: t });
-
-      // Decrease load of old boy
-      const oldBoy = await DeliveryBoy.findByPk(
-        currentAssignment.deliveryBoyId,
-        { transaction: t }
-      );
-      if (oldBoy && oldBoy.currentLoad > 0) {
-        oldBoy.currentLoad -= 1;
-        await oldBoy.save({ transaction: t });
-      }
     }
 
-    // 5. Create New Assignment
+    // 4. Create New Assignment
     await DeliveryAssignment.create(
       {
         orderId: orderId,
@@ -870,25 +874,17 @@ export const reassignDeliveryBoy = async (req, res) => {
       { transaction: t }
     );
 
-    // 6. Increase load of new boy
-    const newBoy = await DeliveryBoy.findByPk(newDeliveryBoyId, {
-      transaction: t,
-    });
-    if (newBoy) {
-      newBoy.currentLoad += 1;
-      await newBoy.save({ transaction: t });
-    }
-
+    // 5. Commit
     await t.commit();
-    console.log("✅ SUCCESS: Reassigned to Boy", newDeliveryBoyId);
+    console.log(`✅ Reassigned Order ${orderId} to Boy ${newDeliveryBoyId}`);
     res.json({ message: "Reassignment Successful" });
+
   } catch (err) {
     if (!t.finished) await t.rollback();
-    console.error("❌ EXCEPTION:", err);
+    console.error("❌ Reassign Error:", err);
     res.status(500).json({ message: err.message });
   }
 };
-
 /* ======================================================
    RECONCILIATION & CASH MANAGEMENT
 ====================================================== */
