@@ -15,7 +15,7 @@ export const checkout = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { items, amount, address, paymentMethod } = req.body;
-// Extract area directly from the address object (sent by React dropdown)
+    // Extract area directly from the address object (sent by React dropdown)
     const selectedArea = address.area || "General";
     // 1. SYNC: RESERVE STOCK (Call Product Service)
 
@@ -232,21 +232,24 @@ export const updateOrderStatusAdmin = async (req, res) => {
 
       order.status = "PACKED";
       await order.save();
-let responseMsg = "Order packed & Stock Deducted";
+      let responseMsg = "Order packed & Stock Deducted";
 
       if (order.assignedArea) {
-          // Call the helper
-          const result = await autoAssignDeliveryBoy(order.id, order.assignedArea);
-          
-          if (result.success) {
-              // ✅ CORRECT ACCESS: result.boy.name
-              responseMsg += ` & Auto-Assigned to ${result.boy.name}`;
-          } else {
-              // ❌ FAILURE MESSAGE
-              responseMsg += ` (Warning: ${result.message})`;
-          }
+        // Call the helper
+        const result = await autoAssignDeliveryBoy(
+          order.id,
+          order.assignedArea
+        );
+
+        if (result.success) {
+          // ✅ CORRECT ACCESS: result.boy.name
+          responseMsg += ` & Auto-Assigned to ${result.boy.name}`;
+        } else {
+          // ❌ FAILURE MESSAGE
+          responseMsg += ` (Warning: ${result.message})`;
+        }
       } else {
-          responseMsg += " (No Area in Order for Auto-Assign)";
+        responseMsg += " (No Area in Order for Auto-Assign)";
       }
 
       return res.json({ message: responseMsg });
@@ -350,7 +353,7 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
       if (order.status !== status) {
         order.status = status;
         if (status === "PACKED" && order.assignedArea) {
-            await autoAssignDeliveryBoy(order.id, order.assignedArea);
+          await autoAssignDeliveryBoy(order.id, order.assignedArea);
         }
 
         // 🟢 UPDATE ASSIGNMENT IF PARENT BECOMES DELIVERED
@@ -546,7 +549,15 @@ export const getAllOrdersAdmin = async (req, res) => {
 };
 export const getOrderByIdAdmin = async (req, res) => {
   try {
-    const order = await Order.findByPk(req.params.id, { include: OrderItem });
+    const order = await Order.findByPk(req.params.id, {
+      include: [
+        OrderItem,
+        {
+          model: DeliveryAssignment, // 🟢 Include Assignment
+          include: [DeliveryBoy], // 🟢 Include Boy Details
+        },
+      ],
+    });
     res.json(order);
   } catch {
     res.status(500).json({ message: "Failed" });
@@ -697,8 +708,12 @@ export const deleteDeliveryBoy = async (req, res) => {
 };
 
 export const updateDeliveryBoy = async (req, res) => {
-  try { await DeliveryBoy.update(req.body, { where: { id: req.params.id } }); res.json({ message: "Updated" }); } 
-  catch (err) { res.status(500).json({ message: "Failed" }); }
+  try {
+    await DeliveryBoy.update(req.body, { where: { id: req.params.id } });
+    res.json({ message: "Updated" });
+  } catch (err) {
+    res.status(500).json({ message: "Failed" });
+  }
 };
 
 /* ======================================================
@@ -708,68 +723,93 @@ export const updateDeliveryBoy = async (req, res) => {
 const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
   try {
     const allBoys = await DeliveryBoy.findAll({ where: { active: true } });
-    
+
     // Filter: Find boys covering this exact area string
-    const validBoys = allBoys.filter(boy => 
-        boy.assignedAreas && boy.assignedAreas.includes(area)
+    const validBoys = allBoys.filter(
+      (boy) => boy.assignedAreas && boy.assignedAreas.includes(area)
     );
 
     if (validBoys.length === 0) {
-        return { success: false, boy: null, message: `No delivery boy found for area: ${area}` };
+      return {
+        success: false,
+        boy: null,
+        message: `No delivery boy found for area: ${area}`,
+      };
     }
 
     // Load Balancing: Find boy with lowest load today
-    const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
     let bestBoy = null;
     let minLoad = Infinity;
 
     for (const boy of validBoys) {
-        const load = await DeliveryAssignment.count({
-            where: { 
-                deliveryBoyId: boy.id, 
-                createdAt: { [Op.gte]: startOfDay },
-                status: { [Op.ne]: "FAILED" }
-            }
-        });
+      const load = await DeliveryAssignment.count({
+        where: {
+          deliveryBoyId: boy.id,
+          createdAt: { [Op.gte]: startOfDay },
+          status: { [Op.ne]: "FAILED" },
+        },
+      });
 
-        if (load < boy.maxOrders && load < minLoad) {
-            minLoad = load;
-            bestBoy = boy;
-        }
+      if (load < boy.maxOrders && load < minLoad) {
+        minLoad = load;
+        bestBoy = boy;
+      }
     }
     if (!bestBoy) {
-        return { success: false, boy: null, message: `All boys in ${area} are fully booked today` };
+      return {
+        success: false,
+        boy: null,
+        message: `All boys in ${area} are fully booked today`,
+      };
     }
 
     if (bestBoy) {
-        await DeliveryAssignment.create({
-            orderId,
-            deliveryBoyId: bestBoy.id,
-            status: "ASSIGNED"
-        }, { transaction });
-       return { success: true, boy: bestBoy, message: "Assigned Successfully" };
+      await DeliveryAssignment.create(
+        {
+          orderId,
+          deliveryBoyId: bestBoy.id,
+          status: "ASSIGNED",
+        },
+        { transaction }
+      );
+      return { success: true, boy: bestBoy, message: "Assigned Successfully" };
     }
-    return { success: false, boy: null, message: "No suitable delivery boy found" };
-  } catch (err) { console.error(err); return null; }
+    return {
+      success: false,
+      boy: null,
+      message: "No suitable delivery boy found",
+    };
+  } catch (err) {
+    console.error(err);
+    return null;
+  }
 };
 
 export const reassignDeliveryBoy = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { oldDeliveryBoyId, newDeliveryBoyId, reason } = req.body;
-    
+
     // Fail Old Assignment
     await DeliveryAssignment.update(
-        { status: "FAILED", reason },
-        { where: { orderId: req.params.orderId, deliveryBoyId: oldDeliveryBoyId }, transaction: t }
+      { status: "FAILED", reason },
+      {
+        where: { orderId: req.params.orderId, deliveryBoyId: oldDeliveryBoyId },
+        transaction: t,
+      }
     );
 
     // Create New Assignment
-    await DeliveryAssignment.create({
+    await DeliveryAssignment.create(
+      {
         orderId: req.params.orderId,
         deliveryBoyId: newDeliveryBoyId,
-        status: "ASSIGNED"
-    }, { transaction: t });
+        status: "ASSIGNED",
+      },
+      { transaction: t }
+    );
 
     await t.commit();
     res.json({ message: "Reassigned Successfully" });
@@ -928,43 +968,42 @@ export const settleCOD = async (req, res) => {
   }
 };
 
-
 export const getDeliveryLocations = async (req, res) => {
   try {
-    const boys = await DeliveryBoy.findAll({ 
-        where: { active: true },
-        attributes: ['state', 'city', 'assignedAreas'] 
+    const boys = await DeliveryBoy.findAll({
+      where: { active: true },
+      attributes: ["state", "city", "assignedAreas"],
     });
 
     // Build Tree: { "MP": { "Indore": ["Vijay Nagar"] } }
     const locationMap = {};
 
-    boys.forEach(boy => {
-        const { state, city, assignedAreas } = boy;
-        if (!locationMap[state]) locationMap[state] = {};
-        if (!locationMap[state][city]) locationMap[state][city] = new Set();
+    boys.forEach((boy) => {
+      const { state, city, assignedAreas } = boy;
+      if (!locationMap[state]) locationMap[state] = {};
+      if (!locationMap[state][city]) locationMap[state][city] = new Set();
 
-        if (Array.isArray(assignedAreas)) {
-            assignedAreas.forEach(area => {
-                if(area) locationMap[state][city].add(area.trim());
-            });
-        }
+      if (Array.isArray(assignedAreas)) {
+        assignedAreas.forEach((area) => {
+          if (area) locationMap[state][city].add(area.trim());
+        });
+      }
     });
 
     // Convert Sets to Arrays
     const response = {};
     for (const s in locationMap) {
-        response[s] = {};
-        for (const c in locationMap[s]) {
-            response[s][c] = [...locationMap[s][c]].sort();
-        }
+      response[s] = {};
+      for (const c in locationMap[s]) {
+        response[s][c] = [...locationMap[s][c]].sort();
+      }
     }
 
     res.json(response);
-  } catch (err) { res.status(500).json({ message: "Failed to fetch locations" }); }
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch locations" });
+  }
 };
-
-
 
 /* ======================================================
    🟢 GET REASSIGNMENT OPTIONS (FLEXIBLE)
@@ -973,7 +1012,7 @@ export const getDeliveryLocations = async (req, res) => {
 export const getReassignmentOptions = async (req, res) => {
   try {
     const { orderId } = req.params;
-    
+
     // 1. Find the Order & Target Area
     const order = await Order.findByPk(orderId);
     if (!order) return res.status(404).json({ message: "Order not found" });
@@ -984,22 +1023,23 @@ export const getReassignmentOptions = async (req, res) => {
     const allBoys = await DeliveryBoy.findAll({ where: { active: true } });
 
     const options = [];
-    const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
 
     // 3. Process each boy to check Load & Area Match
     for (const boy of allBoys) {
-      
       // Calculate Daily Load
       const currentLoad = await DeliveryAssignment.count({
-        where: { 
-            deliveryBoyId: boy.id, 
-            createdAt: { [Op.gte]: startOfDay }, 
-            status: { [Op.ne]: "FAILED" } 
-        }
+        where: {
+          deliveryBoyId: boy.id,
+          createdAt: { [Op.gte]: startOfDay },
+          status: { [Op.ne]: "FAILED" },
+        },
       });
 
       // Check if this boy normally covers the area
-      const isAreaMatch = boy.assignedAreas && boy.assignedAreas.includes(targetArea);
+      const isAreaMatch =
+        boy.assignedAreas && boy.assignedAreas.includes(targetArea);
 
       // Add to list (We include EVERYONE now)
       options.push({
@@ -1007,14 +1047,14 @@ export const getReassignmentOptions = async (req, res) => {
         name: boy.name,
         phone: boy.phone,
         city: boy.city, // Helpful if you have multiple cities
-        
+
         // 🟢 Flags for Frontend UI
-        isAreaMatch: isAreaMatch, 
+        isAreaMatch: isAreaMatch,
         matchType: isAreaMatch ? "RECOMMENDED" : "OTHER_AREA",
-        
+
         currentLoad: currentLoad,
         maxOrders: boy.maxOrders,
-        isOverloaded: currentLoad >= boy.maxOrders
+        isOverloaded: currentLoad >= boy.maxOrders,
       });
     }
 
@@ -1022,18 +1062,17 @@ export const getReassignmentOptions = async (req, res) => {
     // Priority 1: Area Match (Recommended first)
     // Priority 2: Least Loaded (Empty boys first)
     options.sort((a, b) => {
-        if (a.isAreaMatch !== b.isAreaMatch) {
-            return a.isAreaMatch ? -1 : 1; // True comes first
-        }
-        return a.currentLoad - b.currentLoad; // Low load comes first
+      if (a.isAreaMatch !== b.isAreaMatch) {
+        return a.isAreaMatch ? -1 : 1; // True comes first
+      }
+      return a.currentLoad - b.currentLoad; // Low load comes first
     });
 
-    res.json({ 
-        orderId: order.id, 
-        targetArea, 
-        options 
+    res.json({
+      orderId: order.id,
+      targetArea,
+      options,
     });
-
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
