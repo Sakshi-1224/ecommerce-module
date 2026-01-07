@@ -197,7 +197,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
       const itemsToShip = [];
       const itemsToUpdate = [];
 
-      // 1. Identify valid items
+      // 1. Identify valid items (Skip Cancelled OR Already Packed items)
       for (const item of order.OrderItems) {
         if (item.status === "CANCELLED" || item.status === "PACKED") continue;
         itemsToShip.push({
@@ -208,7 +208,6 @@ export const updateOrderStatusAdmin = async (req, res) => {
       }
 
       // 2. SYNC: Call 'ship' endpoint BEFORE updating DB
-      // If this fails (e.g. Insufficient Warehouse Stock), we CATCH error and STOP.
       try {
         if (itemsToShip.length > 0) {
           await axios.post(
@@ -218,35 +217,44 @@ export const updateOrderStatusAdmin = async (req, res) => {
           );
         }
       } catch (apiErr) {
-        // Return the specific error from Product Service (e.g. "Insufficient Stock")
         return res.status(400).json({
           message: apiErr.response?.data?.message || "Shipment Sync Failed",
         });
       }
 
-      // 3. Update DB (Only if Sync succeeded)
+      // 3. Update DB Items
       for (const item of itemsToUpdate) {
         item.status = "PACKED";
         await item.save();
       }
 
+      // 4. Update Parent Order Status (THIS IS CORRECT HERE)
       order.status = "PACKED";
       await order.save();
+
       let responseMsg = "Order packed & Stock Deducted";
 
+      // 5. Auto-Assign Delivery Boy (With Safety Check)
       if (order.assignedArea) {
-        // Call the helper
-        const result = await autoAssignDeliveryBoy(
-          order.id,
-          order.assignedArea
-        );
+        // 🛡️ SAFETY CHECK: Don't assign if already assigned
+        const existingAssignment = await DeliveryAssignment.findOne({
+          where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
+        });
 
-        if (result.success) {
-          // ✅ CORRECT ACCESS: result.boy.name
-          responseMsg += ` & Auto-Assigned to ${result.boy.name}`;
+        if (!existingAssignment) {
+          const result = await autoAssignDeliveryBoy(
+            order.id,
+            order.assignedArea
+          );
+          if (result && result.success) {
+            responseMsg += ` & Auto-Assigned to ${result.boy.name}`;
+          } else {
+            responseMsg += ` (Warning: ${
+              result?.message || "Assignment Failed"
+            })`;
+          }
         } else {
-          // ❌ FAILURE MESSAGE
-          responseMsg += ` (Warning: ${result.message})`;
+          responseMsg += " (Delivery Partner already assigned)";
         }
       } else {
         responseMsg += " (No Area in Order for Auto-Assign)";
@@ -254,18 +262,18 @@ export const updateOrderStatusAdmin = async (req, res) => {
 
       return res.json({ message: responseMsg });
     }
+
     // 🚚 OUT FOR DELIVERY
     if (status === "OUT_FOR_DELIVERY") {
       order.status = "OUT_FOR_DELIVERY";
       await order.save();
 
-      // Update all non-cancelled items for consistency
-      for (const item of order.OrderItems) {
-        if (item.status !== "CANCELLED" && item.status !== "DELIVERED") {
-          item.status = "OUT_FOR_DELIVERY";
-          await item.save();
-        }
-      }
+      // for (const item of order.OrderItems) {
+      //   if (item.status !== "CANCELLED" && item.status !== "DELIVERED") {
+      //     item.status = "OUT_FOR_DELIVERY";
+      //     await item.save();
+      //   }
+      // }
       return res.json({ message: "Order is Out for Delivery" });
     }
 
@@ -281,8 +289,6 @@ export const updateOrderStatusAdmin = async (req, res) => {
         }
       }
 
-      // Catch-all for other statuses
-      // C. Update Delivery Assignment (CRITICAL FOR RECONCILIATION)
       const assignment = await DeliveryAssignment.findOne({
         where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
       });
@@ -294,6 +300,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
 
       return res.json({ message: "Delivered" });
     }
+
     order.status = status;
     await order.save();
     res.json({ message: `Status updated to ${status}` });
@@ -315,7 +322,7 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
     if (item.status === status)
       return res.status(400).json({ message: `Already ${status}` });
 
-    // 🟢 PACKED: Sync Logic
+    // 🟢 PACKED: Sync Logic (Deduct Warehouse Stock)
     if (
       status === "PACKED" &&
       (item.status === "PENDING" || item.status === "PROCESSING")
@@ -347,14 +354,18 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
 
     if (allMatch && activeItems.length > 0) {
       const order = await Order.findByPk(orderId);
-      // Define flow: PACKED -> OUT_FOR_DELIVERY -> DELIVERED
-      // Only auto-update parent if it makes sense (e.g. don't go back to PACKED if already OUT)
 
-      if (order.status !== status) {
+      // 🛑 BUG FIX START: Prevent Auto-Update for PACKED status
+      if (status === "PACKED") {
+        console.log(
+          "All items PACKED. Waiting for manual 'Complete Packing' confirmation."
+        );
+        // We purposefully DO NOT update order.status here.
+        // This keeps the order in 'PROCESSING' so the frontend button appears.
+      }
+      // For other statuses (e.g. OUT_FOR_DELIVERY, DELIVERED), we allow auto-update
+      else if (order.status !== status) {
         order.status = status;
-        if (status === "PACKED" && order.assignedArea) {
-          await autoAssignDeliveryBoy(order.id, order.assignedArea);
-        }
 
         // 🟢 UPDATE ASSIGNMENT IF PARENT BECOMES DELIVERED
         if (status === "DELIVERED") {
@@ -369,6 +380,7 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
         }
         await order.save();
       }
+      // 🛑 BUG FIX END
     }
 
     res.json({ message: `Item updated to ${status}` });
@@ -805,31 +817,74 @@ const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
 export const reassignDeliveryBoy = async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    const { oldDeliveryBoyId, newDeliveryBoyId, reason } = req.body;
+    const rawId = req.params.orderId;
+    const orderId = parseInt(rawId, 10);
+    const { newDeliveryBoyId } = req.body;
 
-    // Fail Old Assignment
-    await DeliveryAssignment.update(
-      { status: "FAILED", reason },
-      {
-        where: { orderId: req.params.orderId, deliveryBoyId: oldDeliveryBoyId },
-        transaction: t,
+    // Check if ID is missing
+    if (isNaN(orderId)) {
+      await t.rollback();
+      return res.status(400).json({
+        message: `Invalid Order ID (Backend received NaN). Route used: ${req.route?.path}`,
+      });
+    }
+
+    if (!newDeliveryBoyId) {
+      await t.rollback();
+      return res.status(400).json({ message: "Missing New Delivery Boy ID" });
+    }
+
+    // 3. Find Active Assignment
+    const currentAssignment = await DeliveryAssignment.findOne({
+      where: {
+        orderId: orderId,
+        status: { [Op.or]: ["ASSIGNED", "PICKED"] },
+      },
+      transaction: t,
+    });
+
+    // 4. Update Old Assignment
+    if (currentAssignment) {
+      currentAssignment.status = "REASSIGNED";
+      currentAssignment.reason = "Manual Reassignment by Admin";
+      await currentAssignment.save({ transaction: t });
+
+      // Decrease load of old boy
+      const oldBoy = await DeliveryBoy.findByPk(
+        currentAssignment.deliveryBoyId,
+        { transaction: t }
+      );
+      if (oldBoy && oldBoy.currentLoad > 0) {
+        oldBoy.currentLoad -= 1;
+        await oldBoy.save({ transaction: t });
       }
-    );
+    }
 
-    // Create New Assignment
+    // 5. Create New Assignment
     await DeliveryAssignment.create(
       {
-        orderId: req.params.orderId,
+        orderId: orderId,
         deliveryBoyId: newDeliveryBoyId,
         status: "ASSIGNED",
       },
       { transaction: t }
     );
 
+    // 6. Increase load of new boy
+    const newBoy = await DeliveryBoy.findByPk(newDeliveryBoyId, {
+      transaction: t,
+    });
+    if (newBoy) {
+      newBoy.currentLoad += 1;
+      await newBoy.save({ transaction: t });
+    }
+
     await t.commit();
-    res.json({ message: "Reassigned Successfully" });
+    console.log("✅ SUCCESS: Reassigned to Boy", newDeliveryBoyId);
+    res.json({ message: "Reassignment Successful" });
   } catch (err) {
     if (!t.finished) await t.rollback();
+    console.error("❌ EXCEPTION:", err);
     res.status(500).json({ message: err.message });
   }
 };
