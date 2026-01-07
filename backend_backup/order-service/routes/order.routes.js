@@ -27,7 +27,7 @@ import {
   getCODReconciliation,
   settleCOD,
   getReassignmentOptions,
-  getDeliveryLocations
+  getDeliveryLocations,
 } from "../controllers/order.controller.js";
 
 const router = express.Router();
@@ -35,7 +35,7 @@ const router = express.Router();
 /* ================= USER ================= */
 router.post("/checkout", auth, checkout);
 router.get("/", auth, getUserOrders);
-router.get("/locations",auth, getDeliveryLocations);
+router.get("/locations", auth, getDeliveryLocations);
 router.get("/track/:id", auth, trackOrder);
 
 router.put("/:orderId/cancel-item/:itemId", auth, cancelOrderItem);
@@ -77,12 +77,17 @@ router.get("/admin/delivery-boys", auth, admin, getAllDeliveryBoys);
 router.post("/admin/delivery-boys", auth, admin, createDeliveryBoy);
 router.put("/admin/delivery-boys/:id", auth, admin, updateDeliveryBoy);
 router.delete("/admin/delivery-boys/:id", auth, admin, deleteDeliveryBoy);
-router.get("/admin/reassign-options/:orderId", auth, admin, getReassignmentOptions);
 router.put(
   "/admin/reassign-delivery/:orderId",
   auth,
   admin,
   reassignDeliveryBoy
+);
+router.get(
+  "/admin/reassign-options/:orderId",
+  auth,
+  admin,
+  getReassignmentOptions
 );
 
 /* ================= ADMIN: ORDER MANAGEMENT ================= */

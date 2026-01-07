@@ -28,13 +28,11 @@ app.use(
 
 app.post("/api/addresses", async (req, res) => {
   try {
-    const response = await axios.post(`${ADDRESS_SERVICE_URL}`,    req.body,
-      {
-        headers: {
-          Authorization: req.headers.authorization,
-        },
-      }
-    );
+    const response = await axios.post(`${ADDRESS_SERVICE_URL}`, req.body, {
+      headers: {
+        Authorization: req.headers.authorization,
+      },
+    });
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
@@ -60,11 +58,14 @@ app.get("/api/addresses", async (req, res) => {
 
 app.delete("/api/addresses/:id", async (req, res) => {
   try {
-    const response = await axios.delete(`${ADDRESS_SERVICE_URL}/${req.params.id}`, {
-      headers: {
-        Authorization: req.headers.authorization,
-      },
-    });
+    const response = await axios.delete(
+      `${ADDRESS_SERVICE_URL}/${req.params.id}`,
+      {
+        headers: {
+          Authorization: req.headers.authorization,
+        },
+      }
+    );
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
@@ -900,8 +901,9 @@ app.post("/api/orders/admin/assign-delivery/:orderId", async (req, res) => {
 */
 app.put("/api/orders/admin/reassign-delivery/:orderId", async (req, res) => {
   try {
+    const { orderId } = req.params;
     const response = await axios.put(
-      `${ORDER_SERVICE_URL}/admin/reassign-delivery/:orderId`,
+      `${ORDER_SERVICE_URL}/admin/reassign-delivery/${orderId}`,
       req.body,
       {
         headers: { Authorization: req.headers.authorization },
@@ -1119,8 +1121,6 @@ app.put("/api/orders/vendor/item/:itemId/status", async (req, res) => {
   }
 });
 
-
-
 app.get("/api/orders/locations", async (req, res) => {
   try {
     const response = await axios.get(`${ORDER_SERVICE_URL}/locations`, {
@@ -1137,11 +1137,14 @@ app.get("/api/orders/locations", async (req, res) => {
 
 app.get("/api/orders/admin/reassign-options/:orderId", async (req, res) => {
   try {
-    const response = await axios.get(`${ORDER_SERVICE_URL}/admin/reassign-options/${req.params.orderId}`, {
-      headers: {
-        Authorization: req.headers.authorization,
-      },
-    });
+    const response = await axios.get(
+      `${ORDER_SERVICE_URL}/admin/reassign-options/${req.params.orderId}`,
+      {
+        headers: {
+          Authorization: req.headers.authorization,
+        },
+      }
+    );
 
     res.status(response.status).json(response.data);
   } catch (err) {
