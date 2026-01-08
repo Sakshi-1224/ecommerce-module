@@ -1168,6 +1168,51 @@ app.get("/api/orders/admin/delivery-boys/:id/orders", async (req, res) => {
   }
 });
 
+
+
+app.post("/api/orders/delivery/login", async (req, res) => {
+  try {
+    // Forward to Order Service
+    const response = await axios.post(
+      `${ORDER_SERVICE_URL}/delivery/login`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+app.get("/api/orders/delivery/my-tasks", async (req, res) => {
+  try {
+    const response = await axios.get(`${ORDER_SERVICE_URL}/delivery/my-tasks`, {
+      headers: {
+        Authorization: req.headers.authorization,
+      },
+    });
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+
+app.put("/api/orders/delivery/update-status/:assignmentId", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${ORDER_SERVICE_URL}/delivery/update-status/${req.params.assignmentId}`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+
 app.listen(5007, () => {
   console.log("API Gateway running on port 5007");
 });
