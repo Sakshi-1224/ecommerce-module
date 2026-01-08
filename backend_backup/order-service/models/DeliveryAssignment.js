@@ -21,6 +21,7 @@ const DeliveryAssignment = sequelize.define("DeliveryAssignment", {
     type: DataTypes.ENUM(
       "ASSIGNED",
       "PICKED",
+      "OUT_FOR_DELIVERY",
       "DELIVERED",
       "FAILED",
       "REASSIGNED"

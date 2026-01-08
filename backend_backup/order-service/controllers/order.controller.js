@@ -192,12 +192,12 @@ export const updateOrderStatusAdmin = async (req, res) => {
     const order = await Order.findByPk(req.params.id, { include: OrderItem });
     if (!order) return res.status(404).json({ message: "Order not found" });
 
-    // 🟢 PACKED: Trigger Shipment (Calls Product Service)
+    // 🟢 PACKED: Trigger Shipment & Auto-Assign
     if (status === "PACKED") {
       const itemsToShip = [];
       const itemsToUpdate = [];
 
-      // 1. Identify valid items (Skip Cancelled OR Already Packed items)
+      // 1. Identify valid items (Skip Cancelled OR Already Packed)
       for (const item of order.OrderItems) {
         if (item.status === "CANCELLED" || item.status === "PACKED") continue;
         itemsToShip.push({
@@ -211,7 +211,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
       try {
         if (itemsToShip.length > 0) {
           await axios.post(
-            `${PRODUCT_SERVICE_URL}/inventory/ship`,
+            `${process.env.PRODUCT_SERVICE_URL}/inventory/ship`,
             { items: itemsToShip },
             { headers: { Authorization: req.headers.authorization } }
           );
@@ -228,15 +228,13 @@ export const updateOrderStatusAdmin = async (req, res) => {
         await item.save();
       }
 
-      // 4. Update Parent Order Status (THIS IS CORRECT HERE)
       order.status = "PACKED";
       await order.save();
 
       let responseMsg = "Order packed & Stock Deducted";
 
-      // 5. Auto-Assign Delivery Boy (With Safety Check)
+      // 5. Auto-Assign Delivery Boy
       if (order.assignedArea) {
-        // 🛡️ SAFETY CHECK: Don't assign if already assigned
         const existingAssignment = await DeliveryAssignment.findOne({
           where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
         });
@@ -263,17 +261,28 @@ export const updateOrderStatusAdmin = async (req, res) => {
       return res.json({ message: responseMsg });
     }
 
+    // 🛑 SAFETY CHECK: Ensure Delivery Boy Assigned
+    // Used for both OUT_FOR_DELIVERY and DELIVERED
+    if (status === "OUT_FOR_DELIVERY" || status === "DELIVERED") {
+      const activeAssignment = await DeliveryAssignment.findOne({
+        where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
+      });
+
+      if (!activeAssignment) {
+        return res.status(400).json({
+          message: `Cannot mark as ${status}. No Delivery Boy assigned yet! Please assign one first.`,
+        });
+      }
+    }
+
     // 🚚 OUT FOR DELIVERY
     if (status === "OUT_FOR_DELIVERY") {
       order.status = "OUT_FOR_DELIVERY";
       await order.save();
 
-      // for (const item of order.OrderItems) {
-      //   if (item.status !== "CANCELLED" && item.status !== "DELIVERED") {
-      //     item.status = "OUT_FOR_DELIVERY";
-      //     await item.save();
-      //   }
-      // }
+      // (Optional) Update Item Statuses
+      // for (const item of order.OrderItems) { ... }
+
       return res.json({ message: "Order is Out for Delivery" });
     }
 
@@ -282,6 +291,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
       order.status = "DELIVERED";
       order.payment = true;
       await order.save();
+
       for (const item of order.OrderItems) {
         if (item.status !== "CANCELLED") {
           item.status = "DELIVERED";
@@ -289,8 +299,11 @@ export const updateOrderStatusAdmin = async (req, res) => {
         }
       }
 
+      // Update Assignment Status (We know it exists because of the safety check above)
+      // 🟢 CRITICAL: Use the latest assignment found earlier
       const assignment = await DeliveryAssignment.findOne({
         where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
+        order: [['createdAt', 'DESC']] // Ensure we update the latest one
       });
 
       if (assignment) {
@@ -298,9 +311,10 @@ export const updateOrderStatusAdmin = async (req, res) => {
         await assignment.save();
       }
 
-      return res.json({ message: "Delivered" });
+      return res.json({ message: "Delivered & Assignment Updated" });
     }
 
+    // Default Update
     order.status = status;
     await order.save();
     res.json({ message: `Status updated to ${status}` });
@@ -308,7 +322,6 @@ export const updateOrderStatusAdmin = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
-
 // Single Item Update
 export const updateOrderItemStatusAdmin = async (req, res) => {
   try {

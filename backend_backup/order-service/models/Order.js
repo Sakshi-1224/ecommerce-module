@@ -16,7 +16,8 @@ const Order = sequelize.define("Order", {
       "PACKED",
       "OUT_FOR_DELIVERY",
       "DELIVERED",
-      "CANCELLED"
+      "CANCELLED",
+      "PARTIALLY_CANCELLED"
     ),
     defaultValue: "PROCESSING",
   },

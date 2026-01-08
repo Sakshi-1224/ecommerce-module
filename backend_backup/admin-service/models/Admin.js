@@ -31,4 +31,19 @@ const Admin = sequelize.define("Admin", {
   }
 });
 
+// 🔒 Hash Password Before Saving
+Admin.beforeCreate(async (boy) => {
+  if (boy.password) {
+    const salt = await bcrypt.genSalt(10);
+    boy.password = await bcrypt.hash(boy.password, salt);
+  }
+});
+
+Admin.beforeUpdate(async (boy) => {
+  if (boy.changed("password")) {
+    const salt = await bcrypt.genSalt(10);
+    boy.password = await bcrypt.hash(boy.password, salt);
+  }
+});
+
 export default Admin;
