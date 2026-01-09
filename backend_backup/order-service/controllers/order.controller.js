@@ -132,7 +132,10 @@ export const cancelFullOrder = async (req, res) => {
 
     // Block if any item is already processed
     const blockedItem = order.OrderItems.find(
-      (item) => item.status !== "PENDING" && item.status !== "PROCESSING"
+      (item) =>
+        item.status !== "PENDING" &&
+        item.status !== "PROCESSING" &&
+        item.status !== "CANCELLED"
     );
     if (blockedItem) {
       throw new Error(
@@ -765,26 +768,31 @@ export const updateDeliveryBoy = async (req, res) => {
 ====================================================== */
 const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
   try {
-
     // 🛑 1. CHECK IF ALREADY ASSIGNED (Prevents Duplicates)
     const existingAssignment = await DeliveryAssignment.findOne({
-        where: { 
-            orderId, 
-            status: { [Op.ne]: 'FAILED' } // Find any active assignment
-        },
-        transaction 
+      where: {
+        orderId,
+        status: { [Op.ne]: "FAILED" }, // Find any active assignment
+      },
+      transaction,
     });
 
     if (existingAssignment) {
-        const boy = await DeliveryBoy.findByPk(existingAssignment.deliveryBoyId, { transaction });
-        return { success: true, boy, message: "Already Assigned (Skipped Creation)" };
+      const boy = await DeliveryBoy.findByPk(existingAssignment.deliveryBoyId, {
+        transaction,
+      });
+      return {
+        success: true,
+        boy,
+        message: "Already Assigned (Skipped Creation)",
+      };
     }
 
     // 2. Fetch Active Boys
     // 🟢 Added 'transaction' here to be safe
-    const allBoys = await DeliveryBoy.findAll({ 
-        where: { active: true },
-        transaction 
+    const allBoys = await DeliveryBoy.findAll({
+      where: { active: true },
+      transaction,
     });
 
     // 3. Filter by Area
@@ -803,7 +811,7 @@ const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
     // 4. Load Balancing
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
-    
+
     let bestBoy = null;
     let minLoad = Infinity;
 
@@ -816,9 +824,9 @@ const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
           createdAt: { [Op.gte]: startOfDay },
           status: { [Op.notIn]: ["FAILED", "REASSIGNED"] },
         },
-        distinct: true, 
-        col: 'orderId', 
-        transaction // 🟢 Important: Use the transaction
+        distinct: true,
+        col: "orderId",
+        transaction, // 🟢 Important: Use the transaction
       });
 
       if (load < boy.maxOrders && load < minLoad) {
@@ -844,9 +852,8 @@ const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
       },
       { transaction }
     );
-    
-    return { success: true, boy: bestBoy, message: "Assigned Successfully" };
 
+    return { success: true, boy: bestBoy, message: "Assigned Successfully" };
   } catch (err) {
     console.error("Auto-Assign Error:", err);
     return { success: false, message: "Internal Error" }; // Return object on error too
@@ -878,7 +885,7 @@ export const reassignDeliveryBoy = async (req, res) => {
     const currentAssignment = await DeliveryAssignment.findOne({
       where: {
         orderId: orderId,
-        status: { [Op.or]: ["ASSIGNED", "PICKED"] }, 
+        status: { [Op.or]: ["ASSIGNED", "PICKED"] },
       },
       transaction: t,
     });
@@ -887,7 +894,7 @@ export const reassignDeliveryBoy = async (req, res) => {
     // By marking it FAILED, your autoAssign logic (status != FAILED) will stop counting it as load.
     if (currentAssignment) {
       currentAssignment.status = "FAILED"; // 🟢 Critical Change
-      currentAssignment.reason = "Manual Reassignment by Admin"; 
+      currentAssignment.reason = "Manual Reassignment by Admin";
       // Note: We do NOT need to manually decrement oldBoy.currentLoad here
       // The system calculates it dynamically.
       await currentAssignment.save({ transaction: t });
@@ -907,7 +914,6 @@ export const reassignDeliveryBoy = async (req, res) => {
     await t.commit();
     console.log(`✅ Reassigned Order ${orderId} to Boy ${newDeliveryBoyId}`);
     res.json({ message: "Reassignment Successful" });
-
   } catch (err) {
     if (!t.finished) await t.rollback();
     console.error("❌ Reassign Error:", err);
@@ -1176,59 +1182,64 @@ export const getReassignmentOptions = async (req, res) => {
 export const getDeliveryBoyOrders = async (req, res) => {
   try {
     // ID comes from params (Admin viewing) OR req.user (Boy viewing own)
-    const deliveryBoyId = req.params.id || req.user.id; 
+    const deliveryBoyId = req.params.id || req.user.id;
 
     const assignments = await DeliveryAssignment.findAll({
-      where: { 
+      where: {
         deliveryBoyId: deliveryBoyId,
-        status: { [Op.ne]: "FAILED" } // Don't show failed attempts
+        status: { [Op.ne]: "FAILED" }, // Don't show failed attempts
       },
       include: [
         {
           model: Order,
           required: true,
           attributes: [
-            "id", "amount", "address", "status", 
-            "paymentMethod", "payment", "date", "assignedArea"
+            "id",
+            "amount",
+            "address",
+            "status",
+            "paymentMethod",
+            "payment",
+            "date",
+            "assignedArea",
           ],
           include: [
             {
               model: OrderItem,
-              attributes: ["id", "productId", "quantity", "price"]
-            }
-          ]
-        }
+              attributes: ["id", "productId", "quantity", "price"],
+            },
+          ],
+        },
       ],
       order: [
-        ['status', 'ASC'], 
-        ['createdAt', 'DESC']
-      ]
+        ["status", "ASC"],
+        ["createdAt", "DESC"],
+      ],
     });
 
     const response = {
       active: [],
-      history: []
+      history: [],
     };
 
-    assignments.forEach(a => {
+    assignments.forEach((a) => {
       // 🟢 LOGIC FIX:
       // Show Amount IF:
       // 1. Method is COD
       // 2. AND Cash is NOT yet deposited to Admin (a.cashDeposited === false)
       // 3. AND Order is not Cancelled
-      const isCodUnsettled = (
-          a.Order.paymentMethod === "COD" && 
-          !a.cashDeposited && 
-          a.Order.status !== "CANCELLED"
-      );
+      const isCodUnsettled =
+        a.Order.paymentMethod === "COD" &&
+        !a.cashDeposited &&
+        a.Order.status !== "CANCELLED";
 
       const orderData = {
         assignmentId: a.id,
         assignmentStatus: a.status, // ACTIVE status of assignment
-        
+
         // 💰 This will now show 500 even if Delivered, until Admin settles it
-        cashToCollect: isCodUnsettled ? a.Order.amount : 0, 
-        
+        cashToCollect: isCodUnsettled ? a.Order.amount : 0,
+
         id: a.Order.id,
         amount: a.Order.amount,
         paymentMethod: a.Order.paymentMethod,
@@ -1237,7 +1248,7 @@ export const getDeliveryBoyOrders = async (req, res) => {
         date: a.Order.date,
         address: a.Order.address,
         assignedArea: a.Order.assignedArea,
-        OrderItems: a.Order.OrderItems
+        OrderItems: a.Order.OrderItems,
       };
 
       // Grouping Logic
@@ -1250,9 +1261,10 @@ export const getDeliveryBoyOrders = async (req, res) => {
     });
 
     res.json(response);
-
   } catch (err) {
-    res.status(500).json({ message: "Failed to fetch orders", error: err.message });
+    res
+      .status(500)
+      .json({ message: "Failed to fetch orders", error: err.message });
   }
 };
 
@@ -1415,7 +1427,6 @@ export const updateReturnStatusAdmin = async (req, res) => {
 
 /* ======================================================
    🟢 ADMIN: GET ALL RETURN REQUESTS (With Pickup Info)
-====================================================== */
 export const getAllReturnOrdersAdmin = async (req, res) => {
   try {
     // Fetch all OrderItems where a return has been initiated

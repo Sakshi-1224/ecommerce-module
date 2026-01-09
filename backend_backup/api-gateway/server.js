@@ -196,7 +196,9 @@ app.put("/api/auth/profile", async (req, res) => {
 // get all products
 app.get("/api/products", async (req, res) => {
   try {
-    const response = await axios.get(`${PRODUCT_SERVICE_URL}`);
+    const response = await axios.get(`${PRODUCT_SERVICE_URL}`, {
+      params: req.query, // 🔥 FORWARD SEARCH, FILTERS, SORT
+    });
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json(err.response?.data);
@@ -1152,23 +1154,22 @@ app.get("/api/orders/admin/reassign-options/:orderId", async (req, res) => {
   }
 });
 
-
-
 app.get("/api/orders/admin/delivery-boys/:id/orders", async (req, res) => {
   try {
-    const response = await axios.get(`${ORDER_SERVICE_URL}/admin/delivery-boys/${req.params.id}/orders`, {
-      headers: {
-        Authorization: req.headers.authorization,
-      },
-    });
+    const response = await axios.get(
+      `${ORDER_SERVICE_URL}/admin/delivery-boys/${req.params.id}/orders`,
+      {
+        headers: {
+          Authorization: req.headers.authorization,
+        },
+      }
+    );
 
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json(err.response?.data);
   }
 });
-
-
 
 app.post("/api/orders/delivery/login", async (req, res) => {
   try {
@@ -1198,20 +1199,21 @@ app.get("/api/orders/delivery/my-tasks", async (req, res) => {
   }
 });
 
-
-app.put("/api/orders/delivery/update-status/:assignmentId", async (req, res) => {
-  try {
-    const response = await axios.put(
-      `${ORDER_SERVICE_URL}/delivery/update-status/${req.params.assignmentId}`,
-      req.body,
-      { headers: { Authorization: req.headers.authorization } }
-    );
-    res.status(response.status).json(response.data);
-  } catch (err) {
-    res.status(err.response?.status || 500).json(err.response?.data);
+app.put(
+  "/api/orders/delivery/update-status/:assignmentId",
+  async (req, res) => {
+    try {
+      const response = await axios.put(
+        `${ORDER_SERVICE_URL}/delivery/update-status/${req.params.assignmentId}`,
+        req.body,
+        { headers: { Authorization: req.headers.authorization } }
+      );
+      res.status(response.status).json(response.data);
+    } catch (err) {
+      res.status(err.response?.status || 500).json(err.response?.data);
+    }
   }
-});
-
+);
 
 app.listen(5007, () => {
   console.log("API Gateway running on port 5007");
