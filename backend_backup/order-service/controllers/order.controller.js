@@ -103,13 +103,14 @@ export const cancelOrderItem = async (req, res) => {
     await t.commit();
 
     // 3. SYNC: RELEASE STOCK (Product Service)
+    
     try {
       await axios.post(`${PRODUCT_SERVICE_URL}/inventory/release`, {
         items: [{ productId: item.productId, quantity: item.quantity }],
       });
     } catch (apiErr) {
       console.error("Product service sync failed", apiErr.message);
-    }
+  }
 
     res.json({ message: "Item cancelled", orderStatus: order.status });
   } catch (err) {
@@ -192,15 +193,17 @@ export const cancelFullOrder = async (req, res) => {
 export const updateOrderStatusAdmin = async (req, res) => {
   try {
     const { status } = req.body;
+    // Include OrderItems so we can iterate and update them
     const order = await Order.findByPk(req.params.id, { include: OrderItem });
+    
     if (!order) return res.status(404).json({ message: "Order not found" });
 
-    // 🟢 PACKED: Trigger Shipment & Auto-Assign
+    // 🟢 1. PACKED: Trigger Shipment (Syncs with Inventory)
     if (status === "PACKED") {
       const itemsToShip = [];
       const itemsToUpdate = [];
 
-      // 1. Identify valid items (Skip Cancelled OR Already Packed)
+      // Filter valid items
       for (const item of order.OrderItems) {
         if (item.status === "CANCELLED" || item.status === "PACKED") continue;
         itemsToShip.push({
@@ -210,7 +213,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
         itemsToUpdate.push(item);
       }
 
-      // 2. SYNC: Call 'ship' endpoint BEFORE updating DB
+      // Sync with Product Service
       try {
         if (itemsToShip.length > 0) {
           await axios.post(
@@ -225,7 +228,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
         });
       }
 
-      // 3. Update DB Items
+      // Update DB Items
       for (const item of itemsToUpdate) {
         item.status = "PACKED";
         await item.save();
@@ -236,7 +239,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
 
       let responseMsg = "Order packed & Stock Deducted";
 
-      // 5. Auto-Assign Delivery Boy
+      // Auto-Assign Delivery Boy
       if (order.assignedArea) {
         const existingAssignment = await DeliveryAssignment.findOne({
           where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
@@ -250,9 +253,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
           if (result && result.success) {
             responseMsg += ` & Auto-Assigned to ${result.boy.name}`;
           } else {
-            responseMsg += ` (Warning: ${
-              result?.message || "Assignment Failed"
-            })`;
+            responseMsg += ` (Warning: ${result?.message || "Assignment Failed"})`;
           }
         } else {
           responseMsg += " (Delivery Partner already assigned)";
@@ -265,7 +266,6 @@ export const updateOrderStatusAdmin = async (req, res) => {
     }
 
     // 🛑 SAFETY CHECK: Ensure Delivery Boy Assigned
-    // Used for both OUT_FOR_DELIVERY and DELIVERED
     if (status === "OUT_FOR_DELIVERY" || status === "DELIVERED") {
       const activeAssignment = await DeliveryAssignment.findOne({
         where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
@@ -278,23 +278,29 @@ export const updateOrderStatusAdmin = async (req, res) => {
       }
     }
 
-    // 🚚 OUT FOR DELIVERY
+    // 🚚 2. OUT FOR DELIVERY (Fixed: Now Updates Items too)
     if (status === "OUT_FOR_DELIVERY") {
       order.status = "OUT_FOR_DELIVERY";
       await order.save();
 
-      // (Optional) Update Item Statuses
-      // for (const item of order.OrderItems) { ... }
-
-      return res.json({ message: "Order is Out for Delivery" });
+      // 🟢 UNCOMMENTED & FIXED THIS LOOP
+      for (const item of order.OrderItems) {
+        // Only update active items
+        if (item.status !== "CANCELLED" && item.status !== "DELIVERED") {
+          item.status = "OUT_FOR_DELIVERY";
+          await item.save();
+        }
+      }
+      return res.json({ message: "Order & Items marked Out for Delivery" });
     }
 
-    // ✅ DELIVERED
+    // ✅ 3. DELIVERED (Fixed: Ensures all items are marked Delivered)
     if (status === "DELIVERED") {
       order.status = "DELIVERED";
       order.payment = true;
       await order.save();
 
+      // 🟢 SYNC ITEMS
       for (const item of order.OrderItems) {
         if (item.status !== "CANCELLED") {
           item.status = "DELIVERED";
@@ -302,11 +308,10 @@ export const updateOrderStatusAdmin = async (req, res) => {
         }
       }
 
-      // Update Assignment Status (We know it exists because of the safety check above)
-      // 🟢 CRITICAL: Use the latest assignment found earlier
+      // Update Assignment Status
       const assignment = await DeliveryAssignment.findOne({
         where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
-        order: [["createdAt", "DESC"]], // Ensure we update the latest one
+        order: [['createdAt', 'DESC']]
       });
 
       if (assignment) {
@@ -314,17 +319,19 @@ export const updateOrderStatusAdmin = async (req, res) => {
         await assignment.save();
       }
 
-      return res.json({ message: "Delivered & Assignment Updated" });
+      return res.json({ message: "Order & Items Delivered Successfully" });
     }
 
-    // Default Update
+    // Default Update for other statuses
     order.status = status;
     await order.save();
     res.json({ message: `Status updated to ${status}` });
+
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
+// Single Item Update
 // Single Item Update
 export const updateOrderItemStatusAdmin = async (req, res) => {
   try {
@@ -344,14 +351,12 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
       (item.status === "PENDING" || item.status === "PROCESSING")
     ) {
       try {
-        // Call Product Service FIRST
         await axios.post(
-          `${PRODUCT_SERVICE_URL}/inventory/ship`,
+          `${process.env.PRODUCT_SERVICE_URL}/inventory/ship`,
           { items: [{ productId: item.productId, quantity: item.quantity }] },
           { headers: { Authorization: req.headers.authorization } }
         );
       } catch (apiErr) {
-        // Stop if warehouse stock is missing
         return res.status(400).json({
           message: apiErr.response?.data?.message || "Shipment Sync Failed",
         });
@@ -363,7 +368,6 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
     await item.save();
 
     // 🔄 Smart Parent Update
-    // Check if ALL items now match this status
     const allItems = await OrderItem.findAll({ where: { orderId } });
     const activeItems = allItems.filter((i) => i.status !== "CANCELLED");
     const allMatch = activeItems.every((i) => i.status === status);
@@ -371,24 +375,37 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
     if (allMatch && activeItems.length > 0) {
       const order = await Order.findByPk(orderId);
 
-      // 🛑 BUG FIX START: Prevent Auto-Update for PACKED status
+      // 🛑 Logic: Prevent Auto-Update for PACKED (Wait for manual "Ship" click)
       if (status === "PACKED") {
-        console.log(
-          "All items PACKED. Waiting for manual 'Complete Packing' confirmation."
-        );
-        // We purposefully DO NOT update order.status here.
-        // This keeps the order in 'PROCESSING' so the frontend button appears.
+        console.log("All items PACKED. Waiting for manual confirmation.");
       }
-      // For other statuses (e.g. OUT_FOR_DELIVERY, DELIVERED), we allow auto-update
+      
+      // For OUT_FOR_DELIVERY or DELIVERED, we auto-update parent
       else if (order.status !== status) {
+        
+        // 🟢 SAFETY CHECK: If moving to DELIVERED/OUT_FOR_DELIVERY, ensure Boy exists
+        if (["OUT_FOR_DELIVERY", "DELIVERED"].includes(status)) {
+             const hasBoy = await DeliveryAssignment.findOne({
+                 where: { orderId: order.id, status: { [Op.ne]: "FAILED" } }
+             });
+             if (!hasBoy) {
+                 // We don't block the Item update (it's already saved above), 
+                 // but we stop the Order from auto-completing to avoid data mismatch.
+                 return res.json({ message: `Item updated to ${status}, but Parent Order not updated (No Delivery Boy assigned).` });
+             }
+        }
+
         order.status = status;
 
         // 🟢 UPDATE ASSIGNMENT IF PARENT BECOMES DELIVERED
         if (status === "DELIVERED") {
           order.payment = true;
+          
           const assignment = await DeliveryAssignment.findOne({
             where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
+            order: [['createdAt', 'DESC']] // 🟢 CRITICAL FIX
           });
+          
           if (assignment) {
             assignment.status = "DELIVERED";
             await assignment.save();
@@ -396,7 +413,6 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
         }
         await order.save();
       }
-      // 🛑 BUG FIX END
     }
 
     res.json({ message: `Item updated to ${status}` });
@@ -1249,5 +1265,228 @@ export const getDeliveryBoyOrders = async (req, res) => {
     res
       .status(500)
       .json({ message: "Failed to fetch orders", error: err.message });
+  }
+};
+
+
+
+
+
+//RETURN
+
+
+// 🟢 1. USER: REQUEST RETURN
+export const requestReturn = async (req, res) => {
+  try {
+    const { orderId, itemId } = req.params;
+    const { reason } = req.body;
+    const userId = req.user.id;
+
+    // Verify User owns the item & it was delivered
+    const item = await OrderItem.findOne({
+      where: { id: itemId, orderId },
+      include: [{ model: Order, where: { userId } }]
+    });
+
+    if (!item) return res.status(404).json({ message: "Item not found" });
+    if (item.status !== "DELIVERED") return res.status(400).json({ message: "Item must be delivered first." });
+    if (item.returnStatus !== "NONE") return res.status(400).json({ message: "Return already active." });
+
+    item.returnStatus = "REQUESTED";
+    item.returnReason = reason;
+    await item.save();
+
+    res.json({ message: "Return requested. Waiting for approval." });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// 🟢 2. ADMIN: MANAGE RETURN (Approve -> Notify -> Assign -> Complete)
+export const updateReturnStatusAdmin = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const { orderId, itemId } = req.params;
+    const { status } = req.body; // APPROVED, REJECTED, COMPLETED
+
+    const item = await OrderItem.findOne({ 
+        where: { id: itemId, orderId },
+        include: [{ model: Order }], 
+        transaction: t
+    });
+
+    if (!item) { await t.rollback(); return res.status(404).json({ message: "Item not found" }); }
+
+    // =========================================================
+    // ✅ PHASE A: ADMIN APPROVES
+    // Actions: Notify Vendor + Auto-Assign Pickup Boy
+    // =========================================================
+    if (status === "APPROVED") {
+      item.returnStatus = "APPROVED";
+      
+      // 🔔 1. NOTIFY VENDOR (Placeholder)
+      if (item.vendorId) {
+          console.log(`🔔 VENDOR ALERT: Vendor ${item.vendorId} notified of incoming return for Order #${orderId}`);
+          // await axios.post(`${process.env.VENDOR_SERVICE}/notify`, { ... });
+      }
+
+      // 🚚 2. AUTO-ASSIGN PICKUP BOY
+      const area = item.Order.assignedArea;
+      const allBoys = await DeliveryBoy.findAll({ where: { active: true }, transaction: t });
+      const validBoys = allBoys.filter(boy => boy.assignedAreas && boy.assignedAreas.includes(area));
+
+      if (validBoys.length > 0) {
+        // Load Balancer (Find boy with least work today)
+        const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
+        let bestBoy = validBoys[0];
+        let minLoad = Infinity;
+
+        for (const boy of validBoys) {
+            const load = await DeliveryAssignment.count({
+                where: { deliveryBoyId: boy.id, createdAt: { [Op.gte]: startOfDay }, status: { [Op.ne]: 'FAILED' } },
+                transaction: t
+            });
+            if (load < minLoad) { minLoad = load; bestBoy = boy; }
+        }
+
+        // Create Task with Special Reason
+        await DeliveryAssignment.create({
+            orderId: item.Order.id,
+            deliveryBoyId: bestBoy.id,
+            status: "ASSIGNED",
+            reason: "RETURN_PICKUP" // 🟢 This triggers the "Red Box" in the App
+        }, { transaction: t });
+
+        console.log(`✅ Pickup Assigned to ${bestBoy.name}`);
+      } else {
+        console.warn("⚠️ Approved, but no Delivery Boy found in area.");
+      }
+    } 
+    
+    // =========================================================
+    // ❌ PHASE B: REJECT
+    // =========================================================
+    else if (status === "REJECTED") {
+      item.returnStatus = "REJECTED";
+    }
+
+    // =========================================================
+    // 📦 PHASE C: COMPLETE (Item Physically Received at Warehouse)
+    // Actions: Restock Inventory + Refund Money + Close Task
+    // =========================================================
+    else if (status === "COMPLETED") {
+      // if (item.returnStatus === "COMPLETED") {
+      //     await t.rollback(); return res.status(400).json({ message: "Already completed" });
+      // }
+
+      // 1. Restock Inventory (Call Product Service)
+      try {
+        await axios.post(
+          `${process.env.PRODUCT_SERVICE_URL}/admin/inventory/restock`, 
+          { items: [{ productId: item.productId, quantity: item.quantity }] }, 
+          { headers: { Authorization: req.headers.authorization } }
+        );
+      } catch (apiErr) {
+        await t.rollback();
+        return res.status(500).json({ message: "Stock Update Failed", error: apiErr.message });
+      }
+
+      // 2. Update Statuses
+      item.returnStatus = "COMPLETED";
+      item.status = "RETURNED"; 
+
+      // 3. Close the Pickup Task (Mark as Delivered/Done)
+      const pickupTask = await DeliveryAssignment.findOne({
+          where: { orderId: item.Order.id, reason: "RETURN_PICKUP", status: { [Op.ne]: "DELIVERED" } },
+          transaction: t
+      });
+      if (pickupTask) {
+          pickupTask.status = "DELIVERED";
+          await pickupTask.save({ transaction: t });
+      }
+
+      // 4. Trigger Online Refund
+      console.log(`💰 REFUND INITIATED: Sending ₹${item.price} to User ID ${item.Order.userId}`);
+      // await axios.post(`${process.env.PAYMENT_SERVICE}/refund`, { ... });
+    } 
+    
+    else {
+      await t.rollback(); return res.status(400).json({ message: "Invalid Status" });
+    }
+
+    await item.save({ transaction: t });
+    await t.commit();
+    res.json({ message: `Return status updated to ${status}` });
+
+  } catch (err) {
+    if (!t.finished) await t.rollback();
+    res.status(500).json({ message: err.message });
+  }
+};
+
+
+/* ======================================================
+   🟢 ADMIN: GET ALL RETURN REQUESTS (With Pickup Info)
+export const getAllReturnOrdersAdmin = async (req, res) => {
+  try {
+    // Fetch all OrderItems where a return has been initiated
+    const returns = await OrderItem.findAll({
+      where: {
+        returnStatus: { [Op.ne]: "NONE" } // Fetch everything except "NONE"
+      },
+      include: [
+        {
+          model: Order,
+          attributes: ["id", "userId", "address", "date", "createdAt"],
+          include: [
+             // 🟢 Fetch the specific "RETURN_PICKUP" assignment for this order
+             { 
+                 model: DeliveryAssignment, 
+                 required: false, // Left Join (Show return even if no boy assigned yet)
+                 where: { reason: "RETURN_PICKUP" },
+                 include: [{ model: DeliveryBoy, attributes: ["name", "phone"] }]
+             }
+          ]
+        }
+        // Optional: Include Product Model if you want the Name/Image
+        // { model: Product, attributes: ["name", "image"] }
+      ],
+      order: [['updatedAt', 'DESC']] // Show most recent changes first
+    });
+
+    // Format the data for a clean Admin Table
+    const formattedReturns = returns.map(item => {
+        // Find the pickup info (if it exists)
+        const pickupTask = item.Order.DeliveryAssignment;
+        
+        return {
+            itemId: item.id,
+            orderId: item.Order.id,
+            productId: item.productId,
+            quantity: item.quantity,
+            amountToRefund: item.price, // The price of the specific item being returned
+            
+            // Return Details
+            status: item.returnStatus, // REQUESTED, APPROVED, COMPLETED, etc.
+            reason: item.returnReason,
+            lastUpdated: item.updatedAt,
+            
+            // Customer Info
+            customerName: item.Order.address.fullName,
+            customerPhone: item.Order.address.phone,
+            pickupAddress: item.Order.address,
+
+            // Pickup Logistics
+            pickupBoy: pickupTask ? pickupTask.DeliveryBoy.name : "Pending Assignment",
+            pickupBoyPhone: pickupTask ? pickupTask.DeliveryBoy.phone : "N/A",
+            pickupStatus: pickupTask ? pickupTask.status : "N/A"
+        };
+    });
+
+    res.json(formattedReturns);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch returns", error: err.message });
   }
 };

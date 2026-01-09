@@ -29,14 +29,19 @@ import {
   getReassignmentOptions,
   getDeliveryLocations,
   getDeliveryBoyOrders,
+  requestReturn, updateReturnStatusAdmin,
+  getAllReturnOrdersAdmin
 } from "../controllers/order.controller.js";
 
 const router = express.Router();
 
+router.get("/admin/delivery-boys", auth, admin, getAllDeliveryBoys);
 /* ================= USER ================= */
 router.post("/checkout", auth, checkout);
 router.get("/", auth, getUserOrders);
 router.get("/locations", auth, getDeliveryLocations);
+// 🟢 ADMIN: View All Returns
+router.get("/admin/returns/all", auth, admin, getAllReturnOrdersAdmin);
 router.get("/track/:id", auth, trackOrder);
 
 router.put("/:orderId/cancel-item/:itemId", auth, cancelOrderItem);
@@ -74,7 +79,6 @@ router.get(
 );
 
 /* ================= ADMIN: DELIVERY ================= */
-router.get("/admin/delivery-boys", auth, admin, getAllDeliveryBoys);
 router.post("/admin/delivery-boys", auth, admin, createDeliveryBoy);
 router.put("/admin/delivery-boys/:id", auth, admin, updateDeliveryBoy);
 router.delete("/admin/delivery-boys/:id", auth, admin, deleteDeliveryBoy);
@@ -90,10 +94,10 @@ router.get(
   admin,
   getReassignmentOptions
 );
-
+router.get("/admin/all", auth, admin, getAllOrdersAdmin);
 router.get("/admin/delivery-boys/:id/orders", auth, admin, getDeliveryBoyOrders);
 /* ================= ADMIN: ORDER MANAGEMENT ================= */
-router.get("/admin/all", auth, admin, getAllOrdersAdmin);
+
 router.get("/admin/:id", auth, admin, getOrderByIdAdmin);
 router.put("/admin/:id/status", auth, admin, updateOrderStatusAdmin);
 router.put(
@@ -102,7 +106,10 @@ router.put(
   admin,
   updateOrderItemStatusAdmin
 );
+// 🟢 USER
+router.post("/:orderId/items/:itemId/return", auth, requestReturn);
 
+// 🟢 ADMIN
+router.put("/admin/:orderId/items/:itemId/return-status", auth, admin, updateReturnStatusAdmin);
 router.get("/:id", auth, getOrderById); // Generic ID route last
-
 export default router;

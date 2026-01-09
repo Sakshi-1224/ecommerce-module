@@ -2,7 +2,7 @@ import Product from "../models/Product.js";
 import Category from "../models/Category.js";
 import { uploadImageToMinio } from "../utils/uploadToMinio.js";
 import { Op } from "sequelize";
-
+import sequelize from "../config/db.js";
 /* ======================================================
    PUBLIC & VENDOR CRUD OPERATIONS
 ====================================================== */
@@ -432,5 +432,36 @@ export const getProductsByVendorId = async (req, res) => {
     res.json(products);
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch vendor products" });
+  }
+};
+
+
+
+export const restockInventory = async (req, res) => {
+  const t = await sequelize.transaction(); 
+  try {
+    const { items } = req.body; // Expects [{ productId, quantity }]
+
+    for (const item of items) {
+      const product = await Product.findByPk(item.productId, { transaction: t });
+      
+      if (product) {
+        // 1. Add back to Warehouse (Physical Location)
+        product.warehouseStock += item.quantity;
+
+        // 2. Add back to Total (Global Inventory Count)
+        product.totalStock += item.quantity;
+
+        // 3. Save (This triggers your 'beforeUpdate' hook to fix availableStock)
+        await product.save({ transaction: t });
+      }
+    }
+
+    await t.commit();
+    res.json({ message: "Stock returned to warehouse & counts updated" });
+
+  } catch (err) {
+    if (!t.finished) await t.rollback();
+    res.status(500).json({ message: err.message });
   }
 };

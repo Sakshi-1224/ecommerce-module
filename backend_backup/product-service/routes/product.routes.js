@@ -21,6 +21,7 @@ import {
   shipStock,
   getProductsByVendorId,
   getProductsBatch,
+  restockInventory
 } from "../controllers/product.controller.js";
 
 const router = express.Router();
@@ -44,7 +45,7 @@ router.get("/vendor/:vendorId", auth, admin, getProductsByVendorId);
 router.get("/admin/inventory", auth, admin, getAllWarehouseInventory); // Admin Dashboard
 router.post("/admin/inventory/transfer", auth, admin, transferToWarehouse); // Transfer Stock
 router.put("/admin/inventory/update", auth, admin, updateWarehouseStock); // Edit Stock
-
+router.post("/admin/inventory/restock", auth, admin, restockInventory);
 /* ================= CRUD (Vendor or Admin) ================= */
 router.get("/batch", getProductsBatch);
 router.post("/", auth, vendorOrAdmin, upload.single("image"), createProduct);
