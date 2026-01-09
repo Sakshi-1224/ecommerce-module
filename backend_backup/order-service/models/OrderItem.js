@@ -10,9 +10,14 @@ const OrderItem = sequelize.define("OrderItem", {
   quantity: DataTypes.INTEGER,
   price: DataTypes.FLOAT,
   status: {
-    type: DataTypes.ENUM("PENDING", "PACKED", "DELIVERED", "CANCELLED"),
+    type: DataTypes.ENUM("PENDING", "PACKED", "DELIVERED", "CANCELLED", "RETURNED"),
     defaultValue: "PENDING",
   },
+  returnStatus: {
+    type: DataTypes.ENUM("NONE", "REQUESTED", "APPROVED", "REJECTED", "PICKUP_SCHEDULED", "COMPLETED"),
+    defaultValue: "NONE"
+  },
+  returnReason: { type: DataTypes.STRING, allowNull: true }
 });
 
 export default OrderItem;
