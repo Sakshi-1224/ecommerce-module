@@ -1425,8 +1425,7 @@ export const updateReturnStatusAdmin = async (req, res) => {
 };
 
 
-/* ======================================================
-   🟢 ADMIN: GET ALL RETURN REQUESTS (With Pickup Info)
+
 export const getAllReturnOrdersAdmin = async (req, res) => {
   try {
     // Fetch all OrderItems where a return has been initiated
