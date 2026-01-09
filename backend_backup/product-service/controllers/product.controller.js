@@ -32,23 +32,47 @@ export const getProductsBatch = async (req, res) => {
 
 export const getProducts = async (req, res) => {
   try {
-    const { category, sort, search } = req.query;
-    let whereCondition = {};
-    if (search) whereCondition.name = { [Op.like]: `%${search}%` };
+    const { category, sort, search, minPrice, maxPrice } = req.query;
 
-    let orderCondition = [["price", "ASC"]];
-    if (sort === "desc") orderCondition = [["price", "DESC"]];
+    let whereCondition = {};
+
+    // 🔍 SEARCH (MySQL-safe)
+    if (search) {
+      whereCondition[Op.or] = [
+        { name: { [Op.like]: `%${search}%` } },
+        { description: { [Op.like]: `%${search}%` } },
+      ];
+    }
+
+    // 💰 PRICE
+    if (minPrice || maxPrice) {
+      whereCondition.price = {};
+      if (minPrice) whereCondition.price[Op.gte] = Number(minPrice);
+      if (maxPrice) whereCondition.price[Op.lte] = Number(maxPrice);
+    }
+
+    // ↕️ SORT
+    let orderCondition = [["createdAt", "DESC"]];
+    if (sort === "price_low") orderCondition = [["price", "ASC"]];
+    if (sort === "price_high") orderCondition = [["price", "DESC"]];
 
     const products = await Product.findAll({
       where: whereCondition,
-      include: {
-        model: Category,
-        where: category && category !== "all" ? { name: category } : undefined,
-      },
+      include: [
+        {
+          model: Category,
+          attributes: ["name"],
+          where:
+            category && category !== "all" ? { name: category } : undefined,
+          required: false,
+        },
+      ],
       order: orderCondition,
     });
+
     res.json(products);
   } catch (err) {
+    console.error(err);
     res.status(500).json({ message: "Failed to fetch products" });
   }
 };
