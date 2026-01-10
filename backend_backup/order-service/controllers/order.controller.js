@@ -160,7 +160,7 @@ export const cancelFullOrder = async (req, res) => {
     // Cancel order
     order.status = "CANCELLED";
     await order.save({ transaction: t });
-
+  
     await t.commit();
 
     // SYNC: RELEASE STOCK (Product Service)
