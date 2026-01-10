@@ -20,22 +20,35 @@ export const getMyTasks = async (req, res) => {
       where: {
         deliveryBoyId: boyId,
         // We generally exclude 'FAILED' unless you want them in history
-        status: { [Op.ne]: "FAILED" } 
+        status: { [Op.ne]: "FAILED" },
       },
       include: [
         {
           model: Order,
           attributes: [
-            "id", "amount", "address", "status", 
-            "paymentMethod", "payment", "createdAt", "updatedAt"
+            "id",
+            "amount",
+            "address",
+            "status",
+            "paymentMethod",
+            "payment",
+            "createdAt",
+            "updatedAt",
           ],
           include: [
             {
               model: OrderItem,
               // Fetch return status to help filter items later
-              attributes: ["id", "productId", "quantity", "price", "returnStatus", "returnReason"]
-            }
-          ]
+              attributes: [
+                "id",
+                "productId",
+                "quantity",
+                "price",
+                "returnStatus",
+                "returnReason",
+              ],
+            },
+          ],
         },
       ],
       order: [["updatedAt", "DESC"]], // Sort by recent updates
@@ -56,34 +69,40 @@ export const getMyTasks = async (req, res) => {
       // If it's a Delivery, show all items.
       let displayItems = task.Order.OrderItems;
       if (isReturn) {
-          displayItems = task.Order.OrderItems.filter(item => 
-              ["APPROVED", "PICKUP_SCHEDULED", "COMPLETED", "RETURNED"].includes(item.returnStatus)
-          );
+        displayItems = task.Order.OrderItems.filter((item) =>
+          ["APPROVED", "PICKUP_SCHEDULED", "COMPLETED", "RETURNED"].includes(
+            item.returnStatus
+          )
+        );
       }
 
       // 🟢 C. CASH LOGIC
       // Returns = 0 Cash.
       // Deliveries = Amount (if COD & Unpaid).
-      const amountToCollect = (!isReturn && task.Order.paymentMethod === "COD" && !task.Order.payment)
-          ? task.Order.amount 
+      const amountToCollect =
+        !isReturn && task.Order.paymentMethod === "COD" && !task.Order.payment
+          ? task.Order.amount
           : 0;
 
       // 🟢 D. FORMAT DATA
       const formattedTask = {
-          assignmentId: task.id,
-          status: task.status,
-          type: type, // Frontend uses this for Red/Green Icon
-          
-          cashToCollect: amountToCollect,
+        assignmentId: task.id,
+        status: task.status,
+        type: type, // Frontend uses this for Red/Green Icon
+        cashToCollect: amountToCollect,
 
-          orderId: task.Order.id,
-          customerName: task.Order.address.fullName,
-          address: task.Order.address,
-          phone: task.Order.address.phone,
-          date: task.Order.createdAt,
-          updatedAt: task.Order.updatedAt,
-          
-          items: displayItems
+        // Add these two lines:
+        amount: task.Order.amount, // <--- ADD THIS
+        paymentMethod: task.Order.paymentMethod, // <--- ADD THIS
+
+        orderId: task.Order.id,
+        customerName: task.Order.address.fullName,
+        address: task.Order.address,
+        phone: task.Order.address.phone,
+        date: task.Order.createdAt,
+        updatedAt: task.Order.updatedAt,
+
+        items: displayItems,
       };
 
       // 🟢 E. PUSH TO CORRECT ARRAY
@@ -96,7 +115,6 @@ export const getMyTasks = async (req, res) => {
 
     // 3. Return structured object
     res.json({ active, history });
-
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -110,7 +128,7 @@ export const updateTaskStatus = async (req, res) => {
 
     // 1. Find the Assignment
     const assignment = await DeliveryAssignment.findOne({
-      where: { id: assignmentId, deliveryBoyId: boyId }
+      where: { id: assignmentId, deliveryBoyId: boyId },
     });
 
     if (!assignment) return res.status(404).json({ message: "Task not found" });
@@ -121,53 +139,54 @@ export const updateTaskStatus = async (req, res) => {
 
     // 🟢 CASE 1: RETURN PICKUP
     if (assignment.reason === "RETURN_PICKUP") {
-        if (status === "DELIVERED") {
-            console.log(`📦 Return #${assignment.orderId} is back at Warehouse.`);
-            // Note: We do NOT update OrderItems here. 
-            // The Admin must physically verify the item and click "Complete Return" 
-            // to change the status to "RETURNED" and trigger the refund.
-        }
-    } 
-    
+      if (status === "DELIVERED") {
+        console.log(`📦 Return #${assignment.orderId} is back at Warehouse.`);
+        // Note: We do NOT update OrderItems here.
+        // The Admin must physically verify the item and click "Complete Return"
+        // to change the status to "RETURNED" and trigger the refund.
+      }
+    }
+
     // 🟢 CASE 2: NORMAL DELIVERY (To Customer)
     else {
-        // Fetch Order WITH Items to update them
-        const order = await Order.findByPk(assignment.orderId, { include: OrderItem });
-        
-        if (order) {
-            // A. Boy Picks Up -> "OUT_FOR_DELIVERY"
-            if (status === "PICKED") {
-                order.status = "OUT_FOR_DELIVERY";
-                
-                // 🔄 Sync Items
-                for (const item of order.OrderItems) {
-                    if (item.status !== "CANCELLED" && item.status !== "DELIVERED") {
-                        item.status = "OUT_FOR_DELIVERY";
-                        await item.save();
-                    }
-                }
-            } 
-            
-            // B. Boy Delivers -> "DELIVERED"
-            else if (status === "DELIVERED") {
-                order.status = "DELIVERED";
-                order.payment = true; // Mark as Paid
-                
-                // 🔄 Sync Items
-                for (const item of order.OrderItems) {
-                    if (item.status !== "CANCELLED") {
-                        item.status = "DELIVERED";
-                        await item.save();
-                    }
-                }
+      // Fetch Order WITH Items to update them
+      const order = await Order.findByPk(assignment.orderId, {
+        include: OrderItem,
+      });
+
+      if (order) {
+        // A. Boy Picks Up -> "OUT_FOR_DELIVERY"
+        if (status === "PICKED") {
+          order.status = "OUT_FOR_DELIVERY";
+
+          // 🔄 Sync Items
+          for (const item of order.OrderItems) {
+            if (item.status !== "CANCELLED" && item.status !== "DELIVERED") {
+              item.status = "OUT_FOR_DELIVERY";
+              await item.save();
             }
-            
-            await order.save();
+          }
         }
+
+        // B. Boy Delivers -> "DELIVERED"
+        else if (status === "DELIVERED") {
+          order.status = "DELIVERED";
+          order.payment = true; // Mark as Paid
+
+          // 🔄 Sync Items
+          for (const item of order.OrderItems) {
+            if (item.status !== "CANCELLED") {
+              item.status = "DELIVERED";
+              await item.save();
+            }
+          }
+        }
+
+        await order.save();
+      }
     }
 
     res.json({ message: `Task & Items updated to ${status}` });
-
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
