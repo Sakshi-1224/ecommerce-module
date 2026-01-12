@@ -1215,6 +1215,52 @@ app.put(
   }
 );
 
+
+app.put(
+  "/api/orders/admin/:orderId/items/:itemId/return-status",
+  async (req, res) => {
+    try {
+      const response = await axios.put(
+        `${ORDER_SERVICE_URL}/admin/${req.params.orderId}/items/${req.params.itemId}/return-status`,
+        req.body,
+        { headers: { Authorization: req.headers.authorization } }
+      );
+      res.status(response.status).json(response.data);
+    } catch (err) {
+      res.status(err.response?.status || 500).json(err.response?.data);
+    }
+  }
+);
+
+app.get("/api/orders/admin/returns/all", async (req, res) => {
+  try {
+    const response = await axios.get(`${ORDER_SERVICE_URL}/admin/returns/all`, {
+      headers: {
+        Authorization: req.headers.authorization,
+      },
+    });
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+app.post("/api/orders/:orderId/items/:itemId/return", async (req, res) => {
+  try {
+    // Forward to Order Service
+    const response = await axios.post(
+      `${ORDER_SERVICE_URL}/${req.params.orderId}/items/${req.params.itemId}/return`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+
 app.listen(5007, () => {
   console.log("API Gateway running on port 5007");
 });
