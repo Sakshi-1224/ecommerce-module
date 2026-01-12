@@ -109,39 +109,31 @@ export const cancelOrderItem = async (req, res) => {
     );
     order.status =
       activeItems.length === 0 ? "CANCELLED" : "PARTIALLY_CANCELLED";
-<<<<<<< Updated upstream
-=======
-
-    if (order.status === "CANCELLED") {
-      order.amount = 0;
+    await order.save({ transaction: t });
+      
+ if(order.status === "CANCELLED"){
+      order.amount=0;
     }
 
->>>>>>> Stashed changes
     await order.save({ transaction: t });
-
+   
     await t.commit();
 
     // 3. SYNC: RELEASE STOCK (Product Service)
 
-<<<<<<< Updated upstream
     try {
       await axios.post(`${PRODUCT_SERVICE_URL}/inventory/release`, {
         items: [{ productId: item.productId, quantity: item.quantity }],
       });
-=======
-    // 3. SYNC: RELEASE STOCK (Product Service)
-    try {
-      await axios.post(
-        `${PRODUCT_SERVICE_URL}/inventory/release`,
         {
           items: [{ productId: item.productId, quantity: item.quantity }],
         },
         // 👇 ADD THIS HEADER OBJECT
         {
-          headers: { Authorization: req.headers.authorization },
+          headers: { Authorization: req.headers.authorization }
         }
       );
->>>>>>> Stashed changes
+
     } catch (apiErr) {
       console.error("Product service sync failed", apiErr.message);
     }
@@ -201,24 +193,19 @@ export const cancelFullOrder = async (req, res) => {
 
     // SYNC: RELEASE STOCK (Product Service)
     try {
-<<<<<<< Updated upstream
       if (itemsToRelease.length > 0) {
         await axios.post(`${PRODUCT_SERVICE_URL}/inventory/release`, {
           items: itemsToRelease,
         });
       }
-=======
-      await axios.post(
-        `${PRODUCT_SERVICE_URL}/inventory/release`,
         {
           items: [{ productId: item.productId, quantity: item.quantity }],
         },
         // 👇 ADD THIS HEADER OBJECT
         {
-          headers: { Authorization: req.headers.authorization },
+          headers: { Authorization: req.headers.authorization }
         }
       );
->>>>>>> Stashed changes
     } catch (apiErr) {
       console.error("Product service sync failed", apiErr.message);
     }
