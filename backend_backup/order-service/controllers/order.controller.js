@@ -187,7 +187,7 @@ export const cancelFullOrder = async (req, res) => {
     // 🟢 ADD THIS LINE: Reset Amount to 0
     order.amount = 0;
     await order.save({ transaction: t });
-  
+
     await t.commit();
 
     // SYNC: RELEASE STOCK (Product Service)
@@ -962,7 +962,11 @@ export const reassignDeliveryBoy = async (req, res) => {
 export const getCODReconciliation = async (req, res) => {
   try {
     const pendingAssignments = await DeliveryAssignment.findAll({
-      where: { status: "DELIVERED", cashDeposited: false },
+      where: {
+        status: "DELIVERED",
+        cashDeposited: false,
+        reason: { [Op.ne]: "RETURN_PICKUP" },
+      },
       include: [
         {
           model: Order,
@@ -1338,7 +1342,7 @@ export const updateReturnStatusAdmin = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { orderId, itemId } = req.params;
-    const { status } = req.body; // APPROVED, REJECTED, COMPLETED
+    const { status } = req.body; // APPROVED, REJECTED, RETURNED_TO_WAREHOUSE
 
     const item = await OrderItem.findOne({
       where: { id: itemId, orderId },
@@ -1363,7 +1367,6 @@ export const updateReturnStatusAdmin = async (req, res) => {
         console.log(
           `🔔 VENDOR ALERT: Vendor ${item.vendorId} notified of incoming return for Order #${orderId}`
         );
-        // await axios.post(`${process.env.VENDOR_SERVICE}/notify`, { ... });
       }
 
       // 🚚 2. AUTO-ASSIGN PICKUP BOY
@@ -1425,13 +1428,15 @@ export const updateReturnStatusAdmin = async (req, res) => {
     // =========================================================
     // 📦 PHASE C: COMPLETE (Item Physically Received at Warehouse)
     // Actions: Restock Inventory + Refund Money + Close Task
+    // 🟢 UPDATE: Accept "RETURNED_TO_WAREHOUSE" OR "COMPLETED"
     // =========================================================
-    else if (status === "COMPLETED") {
-      // if (item.returnStatus === "COMPLETED") {
-      //     await t.rollback(); return res.status(400).json({ message: "Already completed" });
-      // }
+    else if (status === "RETURNED_TO_WAREHOUSE" || status === "COMPLETED") {
+      if (item.returnStatus === "COMPLETED") {
+        await t.rollback();
+        return res.status(400).json({ message: "Return already completed" });
+      }
 
-      // 1. Restock Inventory (Call Product Service)
+      // 1. Restock Inventory
       try {
         await axios.post(
           `${process.env.PRODUCT_SERVICE_URL}/admin/inventory/restock`,
@@ -1445,11 +1450,27 @@ export const updateReturnStatusAdmin = async (req, res) => {
           .json({ message: "Stock Update Failed", error: apiErr.message });
       }
 
-      // 2. Update Statuses
+      // 2. Update Item Statuses
       item.returnStatus = "COMPLETED";
       item.status = "RETURNED";
+      await item.save({ transaction: t });
 
-      // 3. Close the Pickup Task (Mark as Delivered/Done)
+      // 🟢 3. UPDATE PARENT ORDER AMOUNT (Deduct Refund)
+      const order = await Order.findByPk(item.orderId, { transaction: t });
+      if (order) {
+        const deduction = item.price * item.quantity;
+        // Prevent negative values
+        const newAmount = Math.max(0, order.amount - deduction);
+
+        order.amount = newAmount;
+        await order.save({ transaction: t });
+
+        console.log(
+          `📉 Order #${order.id} amount reduced by ₹${deduction}. New Total: ₹${newAmount}`
+        );
+      }
+
+      // 4. Close the Pickup Task
       const pickupTask = await DeliveryAssignment.findOne({
         where: {
           orderId: item.Order.id,
@@ -1463,11 +1484,11 @@ export const updateReturnStatusAdmin = async (req, res) => {
         await pickupTask.save({ transaction: t });
       }
 
-      // 4. Trigger Online Refund
-      console.log(
-        `💰 REFUND INITIATED: Sending ₹${item.price} to User ID ${item.Order.userId}`
-      );
-      // await axios.post(`${process.env.PAYMENT_SERVICE}/refund`, { ... });
+      // 5. Trigger Refund (Razorpay/COD Logic)
+      // (Your refund logic from the previous step goes here...)
+
+      await t.commit();
+      res.json({ message: `Return Completed & Amount Updated` });
     } else {
       await t.rollback();
       return res.status(400).json({ message: "Invalid Status" });
@@ -1484,61 +1505,63 @@ export const updateReturnStatusAdmin = async (req, res) => {
 
 export const getAllReturnOrdersAdmin = async (req, res) => {
   try {
-    // Fetch all OrderItems where a return has been initiated
     const returns = await OrderItem.findAll({
       where: {
-        returnStatus: { [Op.ne]: "NONE" }, // Fetch everything except "NONE"
+        returnStatus: { [Op.ne]: "NONE" },
       },
       include: [
         {
           model: Order,
           attributes: ["id", "userId", "address", "date", "createdAt"],
           include: [
-            // 🟢 Fetch the specific "RETURN_PICKUP" assignment for this order
             {
               model: DeliveryAssignment,
-              required: false, // Left Join (Show return even if no boy assigned yet)
+              required: false,
               where: { reason: "RETURN_PICKUP" },
               include: [{ model: DeliveryBoy, attributes: ["name", "phone"] }],
             },
           ],
         },
-        // Optional: Include Product Model if you want the Name/Image
-        // { model: Product, attributes: ["name", "image"] }
       ],
-      order: [["updatedAt", "DESC"]], // Show most recent changes first
+      order: [["updatedAt", "DESC"]],
     });
 
-    // Format the data for a clean Admin Table
-    const formattedReturns = returns.map((item) => {
-      // Find the pickup info (if it exists)
-      const pickupTask = item.Order.DeliveryAssignment;
+    // 🟢 DEDUPLICATION LOGIC
+    // Since one Order can have multiple Assignments, Sequelize might return the same Item multiple times.
+    // We filter to ensure each itemId appears only once.
+    const seenItemIds = new Set();
 
-      return {
-        itemId: item.id,
-        orderId: item.Order.id,
-        productId: item.productId,
-        quantity: item.quantity,
-        amountToRefund: item.price, // The price of the specific item being returned
+    const formattedReturns = returns.reduce((acc, item) => {
+      if (!seenItemIds.has(item.id)) {
+        seenItemIds.add(item.id);
 
-        // Return Details
-        status: item.returnStatus, // REQUESTED, APPROVED, COMPLETED, etc.
-        reason: item.returnReason,
-        lastUpdated: item.updatedAt,
+        // Logic to find the most relevant pickup task (e.g., the latest one)
+        // If an order has multiple return assignments, we just grab the last one added
+        const assignments = item.Order.DeliveryAssignments || []; // Access as array if multiple
+        const pickupTask =
+          assignments.length > 0
+            ? assignments[assignments.length - 1] // Get the latest assignment
+            : item.Order.DeliveryAssignment || null; // Fallback to singular object
 
-        // Customer Info
-        customerName: item.Order.address.fullName,
-        customerPhone: item.Order.address.phone,
-        pickupAddress: item.Order.address,
-
-        // Pickup Logistics
-        pickupBoy: pickupTask
-          ? pickupTask.DeliveryBoy.name
-          : "Pending Assignment",
-        pickupBoyPhone: pickupTask ? pickupTask.DeliveryBoy.phone : "N/A",
-        pickupStatus: pickupTask ? pickupTask.status : "N/A",
-      };
-    });
+        acc.push({
+          itemId: item.id,
+          orderId: item.Order.id,
+          productId: item.productId,
+          quantity: item.quantity,
+          amountToRefund: item.price,
+          status: item.returnStatus,
+          reason: item.returnReason,
+          lastUpdated: item.updatedAt,
+          customerName: item.Order.address?.fullName || "Guest",
+          customerPhone: item.Order.address?.phone || "N/A",
+          pickupAddress: item.Order.address,
+          pickupBoy: pickupTask?.DeliveryBoy?.name || "Pending Assignment",
+          pickupBoyPhone: pickupTask?.DeliveryBoy?.phone || "N/A",
+          pickupStatus: pickupTask?.status || "N/A",
+        });
+      }
+      return acc;
+    }, []);
 
     res.json(formattedReturns);
   } catch (err) {
