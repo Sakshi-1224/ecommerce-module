@@ -15,9 +15,7 @@ export const checkout = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { items, amount, address, paymentMethod } = req.body;
-    // Extract area directly from the address object (sent by React dropdown)
     const selectedArea = address.area || "General";
-    // 1. SYNC: RESERVE STOCK (Call Product Service)
 
     // 2. CREATE ORDER
     const order = await Order.create(
@@ -214,10 +212,6 @@ export const cancelFullOrder = async (req, res) => {
 };
 
 /* ======================================================
-   ADMIN: UPDATE STATUS (SHIPMENT)
-====================================================== */
-
-/* ======================================================
    ADMIN: UPDATE STATUS (SHIPMENT & DELIVERY)
 ====================================================== */
 
@@ -365,7 +359,6 @@ export const updateOrderStatusAdmin = async (req, res) => {
   }
 };
 // Single Item Update
-// Single Item Update
 export const updateOrderItemStatusAdmin = async (req, res) => {
   try {
     const { status } = req.body;
@@ -378,7 +371,6 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
     if (item.status === status)
       return res.status(400).json({ message: `Already ${status}` });
 
-    // 🟢 PACKED: Sync Logic (Deduct Warehouse Stock)
     if (
       status === "PACKED" &&
       (item.status === "PENDING" || item.status === "PROCESSING")
@@ -407,22 +399,15 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
 
     if (allMatch && activeItems.length > 0) {
       const order = await Order.findByPk(orderId);
-
-      // 🛑 Logic: Prevent Auto-Update for PACKED (Wait for manual "Ship" click)
       if (status === "PACKED") {
         console.log("All items PACKED. Waiting for manual confirmation.");
       }
-
-      // For OUT_FOR_DELIVERY or DELIVERED, we auto-update parent
       else if (order.status !== status) {
-        // 🟢 SAFETY CHECK: If moving to DELIVERED/OUT_FOR_DELIVERY, ensure Boy exists
         if (["OUT_FOR_DELIVERY", "DELIVERED"].includes(status)) {
           const hasBoy = await DeliveryAssignment.findOne({
             where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
           });
           if (!hasBoy) {
-            // We don't block the Item update (it's already saved above),
-            // but we stop the Order from auto-completing to avoid data mismatch.
             return res.json({
               message: `Item updated to ${status}, but Parent Order not updated (No Delivery Boy assigned).`,
             });
@@ -692,63 +677,6 @@ export const getVendorOrders = async (req, res) => {
 };
 
 /* ======================================================
-   DELIVERY BOY FUNCTIONS
-====================================================== */
-/*
-export const assignDeliveryBoy = async (req, res) => {
-  try {
-    const { deliveryBoyId } = req.body;
-    if (!req.params.orderId)
-      return res.status(400).json({ message: "Order ID required" });
-    await DeliveryAssignment.create({
-      orderId: req.params.orderId,
-      deliveryBoyId,
-    });
-    await Order.update(
-      { status: "OUT_FOR_DELIVERY" },
-      { where: { id: req.params.orderId } }
-    );
-    res.json({ message: "Assigned" });
-  } catch (err) {
-    res.status(500).json({ message: "Assignment failed" });
-  }
-};
-export const getAllDeliveryBoys = async (req, res) => {
-  try {
-    const boys = await DeliveryBoy.findAll();
-    res.json(boys);
-  } catch (err) {
-    res.status(500).json({ message: "Failed" });
-  }
-};
-export const createDeliveryBoy = async (req, res) => {
-  try {
-    const newBoy = await DeliveryBoy.create({ ...req.body, active: true });
-    res.status(201).json(newBoy);
-  } catch (err) {
-    res.status(500).json({ message: "Failed" });
-  }
-};
-export const deleteDeliveryBoy = async (req, res) => {
-  try {
-    await DeliveryBoy.destroy({ where: { id: req.params.id } });
-    res.json({ message: "Deleted" });
-  } catch (err) {
-    res.status(500).json({ message: "Failed" });
-  }
-};
-export const reassignDeliveryBoy = async (req, res) => {
-    try { 
-        const { oldDeliveryBoyId, newDeliveryBoyId, reason } = req.body;
-        const { orderId } = req.params;
-        await DeliveryAssignment.update({ status: "FAILED", reason }, { where: { orderId, deliveryBoyId: oldDeliveryBoyId } });
-        await DeliveryAssignment.create({ orderId, deliveryBoyId: newDeliveryBoyId, status: "REASSIGNED" });
-        res.json({ message: "Reassigned" }); 
-    } catch(err) { res.status(500).json({ message: err.message }); }
-};
-*/
-
-/* ======================================================
    DELIVERY BOY MANAGEMENT (CRUD)
 ====================================================== */
 
@@ -796,9 +724,6 @@ export const updateDeliveryBoy = async (req, res) => {
 
 /* ======================================================
    ASSIGNMENT LOGIC (With Validations)
-====================================================== */
-/* ======================================================
-   🟢 HELPER: AUTO-ASSIGN (Counts Unique Orders for Load)
 ====================================================== */
 const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
   try {
@@ -1257,11 +1182,6 @@ export const getDeliveryBoyOrders = async (req, res) => {
     };
 
     assignments.forEach((a) => {
-      // 🟢 LOGIC FIX:
-      // Show Amount IF:
-      // 1. Method is COD
-      // 2. AND Cash is NOT yet deposited to Admin (a.cashDeposited === false)
-      // 3. AND Order is not Cancelled
       const isCodUnsettled =
         a.Order.paymentMethod === "COD" &&
         !a.cashDeposited &&
@@ -1271,7 +1191,6 @@ export const getDeliveryBoyOrders = async (req, res) => {
         assignmentId: a.id,
         assignmentStatus: a.status, // ACTIVE status of assignment
 
-        // 💰 This will now show 500 even if Delivered, until Admin settles it
         cashToCollect: isCodUnsettled ? a.Order.amount : 0,
 
         id: a.Order.id,
@@ -1289,7 +1208,6 @@ export const getDeliveryBoyOrders = async (req, res) => {
       if (["ASSIGNED", "PICKED", "OUT_FOR_DELIVERY"].includes(a.status)) {
         response.active.push(orderData);
       } else {
-        // DELIVERED orders go to history, but 'cashToCollect' will still show amount if not settled
         response.history.push(orderData);
       }
     });
@@ -1351,10 +1269,6 @@ export const updateReturnStatusAdmin = async (req, res) => {
       return res.status(404).json({ message: "Item not found" });
     }
 
-    // =========================================================
-    // ✅ PHASE A: ADMIN APPROVES
-    // Actions: Notify Vendor + Auto-Assign Pickup Boy
-    // =========================================================
     if (status === "APPROVED") {
       item.returnStatus = "APPROVED";
 
@@ -1414,24 +1328,10 @@ export const updateReturnStatusAdmin = async (req, res) => {
         console.warn("⚠️ Approved, but no Delivery Boy found in area.");
       }
     }
-
-    // =========================================================
-    // ❌ PHASE B: REJECT
-    // =========================================================
     else if (status === "REJECTED") {
       item.returnStatus = "REJECTED";
     }
-
-    // =========================================================
-    // 📦 PHASE C: COMPLETE (Item Physically Received at Warehouse)
-    // Actions: Restock Inventory + Refund Money + Close Task
-    // =========================================================
     else if (status === "COMPLETED") {
-      // if (item.returnStatus === "COMPLETED") {
-      //     await t.rollback(); return res.status(400).json({ message: "Already completed" });
-      // }
-
-      // 1. Restock Inventory (Call Product Service)
       try {
         await axios.post(
           `${process.env.PRODUCT_SERVICE_URL}/admin/inventory/restock`,
@@ -1484,7 +1384,6 @@ export const updateReturnStatusAdmin = async (req, res) => {
 
 export const getAllReturnOrdersAdmin = async (req, res) => {
   try {
-    // Fetch all OrderItems where a return has been initiated
     const returns = await OrderItem.findAll({
       where: {
         returnStatus: { [Op.ne]: "NONE" }, // Fetch everything except "NONE"
@@ -1494,7 +1393,6 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
           model: Order,
           attributes: ["id", "userId", "address", "date", "createdAt"],
           include: [
-            // 🟢 Fetch the specific "RETURN_PICKUP" assignment for this order
             {
               model: DeliveryAssignment,
               required: false, // Left Join (Show return even if no boy assigned yet)
@@ -1503,13 +1401,9 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
             },
           ],
         },
-        // Optional: Include Product Model if you want the Name/Image
-        // { model: Product, attributes: ["name", "image"] }
       ],
       order: [["updatedAt", "DESC"]], // Show most recent changes first
     });
-
-    // Format the data for a clean Admin Table
     const formattedReturns = returns.map((item) => {
       // Find the pickup info (if it exists)
       const pickupTask = item.Order.DeliveryAssignment;
@@ -1519,10 +1413,9 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
         orderId: item.Order.id,
         productId: item.productId,
         quantity: item.quantity,
-        amountToRefund: item.price, // The price of the specific item being returned
-
+        amountToRefund: item.price, 
         // Return Details
-        status: item.returnStatus, // REQUESTED, APPROVED, COMPLETED, etc.
+        status: item.returnStatus, 
         reason: item.returnReason,
         lastUpdated: item.updatedAt,
 
