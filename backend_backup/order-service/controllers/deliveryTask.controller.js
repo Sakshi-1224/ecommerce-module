@@ -2,10 +2,8 @@ import DeliveryAssignment from "../models/DeliveryAssignment.js";
 import Order from "../models/Order.js";
 import { Op } from "sequelize";
 import OrderItem from "../models/OrderItem.js";
-/* ======================================================
-   🟢 1. GET MY NEW ASSIGNMENTS
-   (Shows orders that are assigned but not yet Delivered)
-====================================================== */
+import axios from "axios"; // ✅ Import Axios
+
 /* ======================================================
    🟢 1. GET MY TASKS (Active & History)
    (Returns { active: [], history: [] })
@@ -13,13 +11,12 @@ import OrderItem from "../models/OrderItem.js";
 
 export const getMyTasks = async (req, res) => {
   try {
-    const boyId = req.user.id; // From Auth Middleware
+    const boyId = req.user.id;
 
-    // 1. Fetch ALL assignments
+    // 1. Fetch Assignments (WITHOUT Product Include)
     const allTasks = await DeliveryAssignment.findAll({
       where: {
         deliveryBoyId: boyId,
-        // We generally exclude 'FAILED' unless you want them in history
         status: { [Op.ne]: "FAILED" },
       },
       include: [
@@ -38,10 +35,9 @@ export const getMyTasks = async (req, res) => {
           include: [
             {
               model: OrderItem,
-              // Fetch return status to help filter items later
               attributes: [
                 "id",
-                "productId",
+                "productId", // We only have this ID
                 "quantity",
                 "price",
                 "returnStatus",
@@ -51,61 +47,90 @@ export const getMyTasks = async (req, res) => {
           ],
         },
       ],
-      order: [["updatedAt", "DESC"]], // Sort by recent updates
+      order: [["updatedAt", "DESC"]],
     });
 
-    // 2. Separate into Active and History
+    // 2. 🟢 Collect All Product IDs to Fetch
+    const productIds = new Set();
+    allTasks.forEach((task) => {
+      task.Order?.OrderItems?.forEach((item) => {
+        if (item.productId) productIds.add(item.productId);
+      });
+    });
+
+    // 3. 🟢 Fetch Product Details from Product Service
+    let productMap = {};
+    if (productIds.size > 0) {
+      try {
+        const idsStr = Array.from(productIds).join(",");
+        // Ensure PRODUCT_SERVICE_URL is set in your .env (e.g., http://localhost:5002/api/products)
+        const response = await axios.get(
+          `${process.env.PRODUCT_SERVICE_URL}/batch?ids=${idsStr}`
+        );
+
+        // Map products by ID for easy lookup
+        response.data.forEach((p) => {
+          productMap[p.id] = p;
+        });
+      } catch (err) {
+        console.error("⚠️ Failed to fetch product details:", err.message);
+      }
+    }
+
+    // 4. Separate into Active and History
     const active = [];
     const history = [];
     const activeStatuses = ["ASSIGNED", "PICKED", "OUT_FOR_DELIVERY"];
 
     allTasks.forEach((task) => {
-      // 🟢 A. IDENTIFY TYPE
       const isReturn = task.reason === "RETURN_PICKUP";
       const type = isReturn ? "RETURN_PICKUP" : "DELIVERY";
 
-      // 🟢 B. FILTER ITEMS (Don't confuse the boy)
-      // If it's a Return, only show the item(s) approved for return.
-      // If it's a Delivery, show all items.
-      let displayItems = task.Order.OrderItems;
+      // Filter Items based on Type
+      let rawItems = task.Order.OrderItems;
       if (isReturn) {
-        displayItems = task.Order.OrderItems.filter((item) =>
+        rawItems = task.Order.OrderItems.filter((item) =>
           ["APPROVED", "PICKUP_SCHEDULED", "COMPLETED", "RETURNED"].includes(
             item.returnStatus
           )
         );
       }
 
-      // 🟢 C. CASH LOGIC
-      // Returns = 0 Cash.
-      // Deliveries = Amount (if COD & Unpaid).
+      // 5. 🟢 Attach Product Info to Items
+      const displayItems = rawItems.map((item) => {
+        const productData = productMap[item.productId] || {
+          name: "Unknown Item",
+          imageUrl: "",
+        };
+        return {
+          ...item.toJSON(), // Convert Sequelize model to plain object
+          Product: productData, // Manually attach the fetched product data
+        };
+      });
+
       const amountToCollect =
         !isReturn && task.Order.paymentMethod === "COD" && !task.Order.payment
           ? task.Order.amount
           : 0;
 
-      // 🟢 D. FORMAT DATA
       const formattedTask = {
         assignmentId: task.id,
         status: task.status,
-        type: type, // Frontend uses this for Red/Green Icon
+        type: type,
         cashToCollect: amountToCollect,
-
-        // Add these two lines:
-        amount: task.Order.amount, // <--- ADD THIS
-        paymentMethod: task.Order.paymentMethod, // <--- ADD THIS
+        amount: task.Order.amount,
+        paymentMethod: task.Order.paymentMethod,
 
         orderId: task.Order.id,
-        customerName: task.Order.address.fullName,
+        customerName: task.Order.address?.fullName || "Guest",
         address: task.Order.address,
-        phone: task.Order.address.phone,
+        phone: task.Order.address?.phone,
         date: task.Order.createdAt,
         updatedAt: task.Order.updatedAt,
 
-        items: displayItems,
+        items: displayItems, // Now contains { ..., Product: { name, imageUrl } }
       };
 
-      // 🟢 E. PUSH TO CORRECT ARRAY
       if (activeStatuses.includes(task.status)) {
         active.push(formattedTask);
       } else {
@@ -113,12 +138,13 @@ export const getMyTasks = async (req, res) => {
       }
     });
 
-    // 3. Return structured object
     res.json({ active, history });
   } catch (err) {
+    console.error("Delivery Task Error:", err);
     res.status(500).json({ message: err.message });
   }
 };
+
 // 🟢 2. UPDATE STATUS (Pickup / Delivered to Warehouse)
 export const updateTaskStatus = async (req, res) => {
   try {
