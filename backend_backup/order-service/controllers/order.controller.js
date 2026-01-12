@@ -109,11 +109,11 @@ export const cancelOrderItem = async (req, res) => {
     );
     order.status =
       activeItems.length === 0 ? "CANCELLED" : "PARTIALLY_CANCELLED";
+    await order.save({ transaction: t });
       
  if(order.status === "CANCELLED"){
       order.amount=0;
     }
-
 
     await order.save({ transaction: t });
    
@@ -121,10 +121,10 @@ export const cancelOrderItem = async (req, res) => {
 
     // 3. SYNC: RELEASE STOCK (Product Service)
 
-   // 3. SYNC: RELEASE STOCK (Product Service)
     try {
-      await axios.post(
-        `${PRODUCT_SERVICE_URL}/inventory/release`, 
+      await axios.post(`${PRODUCT_SERVICE_URL}/inventory/release`, {
+        items: [{ productId: item.productId, quantity: item.quantity }],
+      });
         {
           items: [{ productId: item.productId, quantity: item.quantity }],
         },
@@ -133,6 +133,7 @@ export const cancelOrderItem = async (req, res) => {
           headers: { Authorization: req.headers.authorization }
         }
       );
+
     } catch (apiErr) {
       console.error("Product service sync failed", apiErr.message);
     }
@@ -192,8 +193,11 @@ export const cancelFullOrder = async (req, res) => {
 
     // SYNC: RELEASE STOCK (Product Service)
     try {
-      await axios.post(
-        `${PRODUCT_SERVICE_URL}/inventory/release`, 
+      if (itemsToRelease.length > 0) {
+        await axios.post(`${PRODUCT_SERVICE_URL}/inventory/release`, {
+          items: itemsToRelease,
+        });
+      }
         {
           items: [{ productId: item.productId, quantity: item.quantity }],
         },
@@ -965,11 +969,13 @@ export const getCODReconciliation = async (req, res) => {
       where: {
         status: "DELIVERED",
         cashDeposited: false,
-        reason: { [Op.ne]: "RETURN_PICKUP" },
+        // 🟢 FIX: Allow NULL (Normal Delivery) OR anything that is NOT a Return
+        [Op.or]: [{ reason: null }, { reason: { [Op.ne]: "RETURN_PICKUP" } }],
       },
       include: [
         {
           model: Order,
+          // Ensure it's a COD order that has been "Paid" (collected by boy)
           where: { paymentMethod: "COD", payment: true },
           attributes: ["id", "amount", "address", "updatedAt"],
         },
