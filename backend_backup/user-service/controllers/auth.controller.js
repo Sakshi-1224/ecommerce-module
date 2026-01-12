@@ -17,7 +17,13 @@ export const register = async (req, res) => {
         message: "All fields are required",
       });
     }
-
+      const hasBankDetails = bankName || accountNumber || ifscCode;
+    if (hasBankDetails) {
+        if (!bankName || !accountNumber || !ifscCode) {
+            return res.status(400).json({ 
+                message: "Please provide all bank details (Name, Account No, IFSC)" 
+            });
+      }
     if (!phone || !/^\d{10}$/.test(phone)) {
       return res.status(400).json({
         message: "Phone number must be exactly 10 digits",
@@ -29,17 +35,38 @@ export const register = async (req, res) => {
         message: "Invalid email format",
       });
     }
+
+    const accountRegex = /^\d{9,18}$/;
+        if (!accountRegex.test(accountNumber)) {
+            return res.status(400).json({ 
+                message: "Invalid Account Number. It must contain only digits (9-18 chars)." 
+            });
+        }
+
+
+        const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+        if (!ifscRegex.test(ifscCode)) {
+            return res.status(400).json({ 
+                message: "Invalid IFSC Code. Format example: SBIN0001234" 
+            });
+        }
+    }
+
     if (password.length < 6) {
       return res.status(400).json({
         message: "Password must be at least 6 characters long",
       });
     }
+
     if (!/(?=.*[A-Z])(?=.*\d)/.test(password)) {
       return res.status(400).json({
         message:
           "Password must contain at least one number and one uppercase letter",
       });
     }
+
+   
+
     const existingUser = await User.findOne({ where: { phone } });
     if (existingUser) {
       return res.status(400).json({ message: "User already exists" });
@@ -53,6 +80,9 @@ export const register = async (req, res) => {
       phone,
       password: hashedPassword,
       role: "user",
+      bankName: bankName,        
+      accountNumber: accountNumber, 
+      ifscCode: ifscCode
     });
 
     const token = jwt.sign(
@@ -73,7 +103,10 @@ export const register = async (req, res) => {
         phone: user.phone,
         email: user.email,
         role: user.role,
-        profilePic: user.profilePic, // Even if null, send the key
+        profilePic: user.profilePic,
+        bankName: user.bankName,
+        accountNumber: user.accountNumber,
+        ifscCode: user.ifscCode
       },
     });
 
@@ -120,6 +153,10 @@ export const login = async (req, res) => {
         phone: user.phone,
         email: user.email,
         profilePic: user.profilePic,
+        role: user.role,
+        bankName: user.bankName,
+        accountNumber: user.accountNumber,
+        ifscCode: user.ifscCode
       },
     });
   } catch (err) {
@@ -205,64 +242,6 @@ export const getAllUsers = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
-
-/*
-export const updateProfile = async (req, res) => {
-  try {
-    const { name, email } = req.body;
-    const userId = req.user.id;
-
-    // Nothing to update
-    if (!name && !email) {
-      return res.status(400).json({
-        message: "Nothing to update",
-      });
-    }
-
-    const user = await User.findByPk(userId);
-
-    if (!user) {
-      return res.status(404).json({
-        message: "User not found",
-      });
-    }
-
-    // Update name only if user changed it
-    if (name && name !== user.name) {
-      user.name = name;
-    }
-
-    // Update email only if user changed it
-    if (email && email !== user.email) {
-      const emailExists = await User.findOne({ where: { email } });
-
-      if (emailExists) {
-        return res.status(400).json({
-          message: "Email already in use",
-        });
-      }
-
-      user.email = email;
-    }
-
-    await user.save();
-
-    res.json({
-      message: "Profile updated successfully",
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-      },
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      message: "Failed to update profile",
-    });
-  }
-};
-*/
 
 export const updateProfile = async (req, res) => {
   try {

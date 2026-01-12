@@ -690,7 +690,6 @@ export const getAllDeliveryBoys = async (req, res) => {
 
 export const createDeliveryBoy = async (req, res) => {
   try {
-    // Expects: { name, phone, address, maxOrders, assignedPinCodes: ["123", "456"] }
     const newBoy = await DeliveryBoy.create({
       ...req.body,
       active: true,
@@ -726,7 +725,6 @@ export const updateDeliveryBoy = async (req, res) => {
 ====================================================== */
 const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
   try {
-    // 🛑 1. CHECK IF ALREADY ASSIGNED (Prevents Duplicates)
     const existingAssignment = await DeliveryAssignment.findOne({
       where: {
         orderId,
@@ -745,9 +743,7 @@ const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
         message: "Already Assigned (Skipped Creation)",
       };
     }
-
-    // 2. Fetch Active Boys
-    // 🟢 Added 'transaction' here to be safe
+    
     const allBoys = await DeliveryBoy.findAll({
       where: { active: true },
       transaction,
@@ -774,8 +770,7 @@ const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
     let minLoad = Infinity;
 
     for (const boy of validBoys) {
-      // 🟢 COUNT UNIQUE ORDERS
-      // distinct: true, col: 'orderId' ensures 1 Order = 1 Load
+      
       const load = await DeliveryAssignment.count({
         where: {
           deliveryBoyId: boy.id,

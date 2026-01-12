@@ -5,34 +5,46 @@ const User = sequelize.define("User", {
   id: {
     type: DataTypes.INTEGER,
     autoIncrement: true,
-    primaryKey: true
+    primaryKey: true,
   },
-  name:{
+  name: {
     type: DataTypes.STRING,
-     allowNull: false
+    allowNull: false,
   },
-   email: {
+  email: {
     type: DataTypes.STRING,
     unique: true,
-    allowNull: false
+    allowNull: false,
   },
   phone: {
     type: DataTypes.STRING,
     allowNull: false,
-    unique: true
+    unique: true,
   },
   password: {
     type: DataTypes.STRING,
-    allowNull: false
+    allowNull: false,
   },
   profilePic: {
-    type: DataTypes.STRING, 
-    allowNull: true
+    type: DataTypes.STRING,
+    allowNull: true,
   },
   role: {
-  type: DataTypes.ENUM("user"),
-  allowNull: false
-}
+    type: DataTypes.ENUM("user"),
+    allowNull: false,
+  },
+  bankName: {
+    type: DataTypes.STRING,
+    allowNull: false,
+  },
+  accountNumber: {
+    type: DataTypes.STRING,
+    allowNull: false,
+  },
+  ifscCode: {
+    type: DataTypes.STRING,
+    allowNull: false,
+  }
 });
 
 export default User;
