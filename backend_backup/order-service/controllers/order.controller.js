@@ -109,28 +109,27 @@ export const cancelOrderItem = async (req, res) => {
     );
     order.status =
       activeItems.length === 0 ? "CANCELLED" : "PARTIALLY_CANCELLED";
-      
- if(order.status === "CANCELLED"){
-      order.amount=0;
+
+    if (order.status === "CANCELLED") {
+      order.amount = 0;
     }
 
-
     await order.save({ transaction: t });
-   
+
     await t.commit();
 
     // 3. SYNC: RELEASE STOCK (Product Service)
 
-   // 3. SYNC: RELEASE STOCK (Product Service)
+    // 3. SYNC: RELEASE STOCK (Product Service)
     try {
       await axios.post(
-        `${PRODUCT_SERVICE_URL}/inventory/release`, 
+        `${PRODUCT_SERVICE_URL}/inventory/release`,
         {
           items: [{ productId: item.productId, quantity: item.quantity }],
         },
         // 👇 ADD THIS HEADER OBJECT
         {
-          headers: { Authorization: req.headers.authorization }
+          headers: { Authorization: req.headers.authorization },
         }
       );
     } catch (apiErr) {
@@ -193,13 +192,13 @@ export const cancelFullOrder = async (req, res) => {
     // SYNC: RELEASE STOCK (Product Service)
     try {
       await axios.post(
-        `${PRODUCT_SERVICE_URL}/inventory/release`, 
+        `${PRODUCT_SERVICE_URL}/inventory/release`,
         {
           items: [{ productId: item.productId, quantity: item.quantity }],
         },
         // 👇 ADD THIS HEADER OBJECT
         {
-          headers: { Authorization: req.headers.authorization }
+          headers: { Authorization: req.headers.authorization },
         }
       );
     } catch (apiErr) {
@@ -965,11 +964,13 @@ export const getCODReconciliation = async (req, res) => {
       where: {
         status: "DELIVERED",
         cashDeposited: false,
-        reason: { [Op.ne]: "RETURN_PICKUP" },
+        // 🟢 FIX: Allow NULL (Normal Delivery) OR anything that is NOT a Return
+        [Op.or]: [{ reason: null }, { reason: { [Op.ne]: "RETURN_PICKUP" } }],
       },
       include: [
         {
           model: Order,
+          // Ensure it's a COD order that has been "Paid" (collected by boy)
           where: { paymentMethod: "COD", payment: true },
           attributes: ["id", "amount", "address", "updatedAt"],
         },
