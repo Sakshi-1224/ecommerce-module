@@ -3,7 +3,6 @@ import axios from "axios";
 import dotenv from "dotenv";
 import cors from "cors";
 import FormData from "form-data";
-import morgan from "morgan";
 import upload from "./middleware/upload.js";
 dotenv.config();
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL;
@@ -23,7 +22,6 @@ app.use(
     credentials: true,
   })
 );
-app.use(morgan("dev"));
 /* ======================
    REGISTER
 ====================== */
@@ -1219,7 +1217,6 @@ app.put(
   }
 );
 
-
 app.put(
   "/api/orders/admin/:orderId/items/:itemId/return-status",
   async (req, res) => {
@@ -1263,7 +1260,6 @@ app.post("/api/orders/:orderId/items/:itemId/return", async (req, res) => {
     res.status(err.response?.status || 500).json(err.response?.data);
   }
 });
-
 
 app.listen(5007, () => {
   console.log("API Gateway running on port 5007");
