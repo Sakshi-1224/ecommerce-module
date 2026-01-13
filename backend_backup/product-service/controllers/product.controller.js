@@ -13,19 +13,26 @@ export const getProductsBatch = async (req, res) => {
     const { ids } = req.query;
     if (!ids) return res.json([]);
 
-    const idArray = ids.split(",").map((id) => parseInt(id));
+    // 1. Safety Filter (Prevents crashes if list has bad values)
+    const idArray = ids
+      .split(",")
+      .map((id) => parseInt(id))
+      .filter((id) => !isNaN(id));
+
+    if (idArray.length === 0) return res.json([]);
 
     const products = await Product.findAll({
       where: {
         id: { [Op.in]: idArray },
       },
-      attributes: ["id", "name", "price", "imageUrl"], // Fetch name & price
+      // 🔴 CRITICAL FIX: Changed 'imageUrl' to 'images'
+      attributes: ["id", "name", "price", "images"],
       include: { model: Category, attributes: ["name"] },
     });
 
     res.json(products);
   } catch (err) {
-    console.error("Batch fetch error:", err);
+    console.error("Batch fetch error:", err); // Check terminal for specific SQL errors
     res.status(500).json({ message: "Failed to fetch batch products" });
   }
 };
@@ -118,14 +125,13 @@ export const createProduct = async (req, res) => {
       return res.status(400).json({ message: "Missing required fields" });
     if (stock < 0)
       return res.status(400).json({ message: "Stock cannot be negative" });
-// 🛑 NEGATIVE CHECKS FOR FILES
+    // 🛑 NEGATIVE CHECKS FOR FILES
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
-        
         // Check 1: Empty File (0 Bytes)
         if (file.size === 0) {
-          return res.status(400).json({ 
-            message: `File '${file.originalname}' is empty (0 bytes). Please upload a valid image.` 
+          return res.status(400).json({
+            message: `File '${file.originalname}' is empty (0 bytes). Please upload a valid image.`,
           });
         }
 
@@ -133,32 +139,39 @@ export const createProduct = async (req, res) => {
         // Note: Useful if your global Multer limit is 50MB but you want 5MB for products
         const MAX_SIZE = 5 * 1024 * 1024; // 5MB
         if (file.size > MAX_SIZE) {
-          return res.status(400).json({ 
-            message: `File '${file.originalname}' exceeds the 5MB limit.` 
+          return res.status(400).json({
+            message: `File '${file.originalname}' exceeds the 5MB limit.`,
           });
         }
 
         // Check 3: Strict File Type Check
-        const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/jpg"];
+        const allowedTypes = [
+          "image/jpeg",
+          "image/png",
+          "image/webp",
+          "image/jpg",
+        ];
         if (!allowedTypes.includes(file.mimetype)) {
-          return res.status(400).json({ 
-            message: `File '${file.originalname}' is not a supported image type (JPEG, PNG, WEBP only).` 
+          return res.status(400).json({
+            message: `File '${file.originalname}' is not a supported image type (JPEG, PNG, WEBP only).`,
           });
         }
       }
     }
-let imageUrls = [];
+    let imageUrls = [];
     if (req.files && req.files.length > 0) {
       try {
         imageUrls = await Promise.all(
           req.files.map((file) => uploadImageToMinio(file))
         );
       } catch (err) {
-        return res.status(500).json({ message: "Image upload failed", error: err.message });
+        return res
+          .status(500)
+          .json({ message: "Image upload failed", error: err.message });
       }
     }
 
-  const product = await Product.create({
+    const product = await Product.create({
       name,
       price,
       description,
@@ -190,7 +203,7 @@ export const updateProduct = async (req, res) => {
     if (description) product.description = description;
     if (price) product.price = price;
 
-// 🟢 Handle New Images (Append to existing)
+    // 🟢 Handle New Images (Append to existing)
     if (req.files && req.files.length > 0) {
       try {
         const newUrls = await Promise.all(
@@ -246,7 +259,7 @@ export const getVendorInventory = async (req, res) => {
       attributes: [
         "id",
         "name",
-        "imageUrl",
+        "images",
         "price",
         "totalStock",
         "reservedStock",
@@ -258,7 +271,7 @@ export const getVendorInventory = async (req, res) => {
     const formatted = products.map((p) => ({
       productId: p.id,
       name: p.name,
-      imageUrl: p.imageUrl,
+      imageUrl: p.images && p.images.length > 0 ? p.images[0] : null,
       total: p.totalStock,
       reserved: p.reservedStock,
       available: p.availableStock,
@@ -278,7 +291,7 @@ export const getAllWarehouseInventory = async (req, res) => {
       attributes: [
         "id",
         "name",
-        "imageUrl",
+        "images",
         "price",
         "totalStock",
         "reservedStock",
@@ -293,7 +306,7 @@ export const getAllWarehouseInventory = async (req, res) => {
     const formatted = products.map((p) => ({
       productId: p.id,
       name: p.name,
-      imageUrl: p.imageUrl,
+      imageUrl: p.images && p.images.length > 0 ? p.images[0] : null,
       price: p.price,
       vendorId: p.vendorId,
       category: p.Category ? p.Category.name : "Uncategorized",
@@ -476,16 +489,16 @@ export const getProductsByVendorId = async (req, res) => {
   }
 };
 
-
-
 export const restockInventory = async (req, res) => {
-  const t = await sequelize.transaction(); 
+  const t = await sequelize.transaction();
   try {
     const { items } = req.body; // Expects [{ productId, quantity }]
 
     for (const item of items) {
-      const product = await Product.findByPk(item.productId, { transaction: t });
-      
+      const product = await Product.findByPk(item.productId, {
+        transaction: t,
+      });
+
       if (product) {
         // 1. Add back to Warehouse (Physical Location)
         product.warehouseStock += item.quantity;
@@ -500,7 +513,6 @@ export const restockInventory = async (req, res) => {
 
     await t.commit();
     res.json({ message: "Stock returned to warehouse & counts updated" });
-
   } catch (err) {
     if (!t.finished) await t.rollback();
     res.status(500).json({ message: err.message });

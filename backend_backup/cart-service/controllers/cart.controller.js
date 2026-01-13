@@ -158,6 +158,7 @@ export const getCart = async (req, res) => {
             id: product.id,
             name: product.name,
             imageUrl: product.imageUrl,
+            images: product.images, // Pass the new images array to frontend!
             price: product.price,
             category: product.category,
             // Ensure we send the correct stock field

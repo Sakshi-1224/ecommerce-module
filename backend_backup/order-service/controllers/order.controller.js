@@ -400,8 +400,7 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
       const order = await Order.findByPk(orderId);
       if (status === "PACKED") {
         console.log("All items PACKED. Waiting for manual confirmation.");
-      }
-      else if (order.status !== status) {
+      } else if (order.status !== status) {
         if (["OUT_FOR_DELIVERY", "DELIVERED"].includes(status)) {
           const hasBoy = await DeliveryAssignment.findOne({
             where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
@@ -625,52 +624,52 @@ export const getOrderByIdAdmin = async (req, res) => {
     res.status(500).json({ message: "Failed" });
   }
 };
+
+// Ensure this is at the top of the file
 export const getVendorOrders = async (req, res) => {
   try {
-    console.log("🔍 [getVendorOrders] Called by vendor ID:", req.user?.id);
-    console.log("🔍 [getVendorOrders] User object:", req.user);
-
     const items = await OrderItem.findAll({
       where: { vendorId: req.user.id },
       include: Order,
       order: [["createdAt", "DESC"]],
     });
 
-    console.log(
-      `✅ Found ${items.length} order items for vendor ${req.user.id}`
-    );
-
-    // Fetch product details from Product Service
+    // Extract Product IDs
     const productIds = [...new Set(items.map((item) => item.productId))];
     let productsMap = {};
 
     if (productIds.length > 0) {
       try {
-        const productsResponse = await axios.get(
-          `${PRODUCT_SERVICE_URL}/batch`,
-          {
-            params: { ids: productIds.join(",") },
-            headers: { Authorization: req.headers.authorization },
-          }
-        );
+        const targetUrl = `${PRODUCT_SERVICE_URL}/batch`;
+
+        const productsResponse = await axios.get(targetUrl, {
+          params: { ids: productIds.join(",") },
+          headers: { Authorization: req.headers.authorization },
+        });
+
         productsMap = productsResponse.data.reduce((acc, product) => {
           acc[product.id] = product;
           return acc;
         }, {});
       } catch (err) {
-        console.error("Failed to fetch product details:", err.message);
+        console.error("❌ FAILED to fetch product details:", err.message);
+        // If 404, check your URL. If ECONNREFUSED, check if Product Service is running.
       }
     }
 
-    // Attach product info to each item
+    // Attach product info
     const enrichedItems = items.map((item) => ({
       ...item.toJSON(),
-      Product: productsMap[item.productId] || null,
+      Product: productsMap[item.productId] || {
+        name: "Product Info Unavailable",
+        imageUrl: null,
+        Category: { name: "N/A" },
+      },
     }));
 
     res.json(enrichedItems);
   } catch (err) {
-    console.error("❌ [getVendorOrders] Error:", err);
+    console.error("Vendor Order Error:", err);
     res.status(500).json({ message: "Failed" });
   }
 };
@@ -743,7 +742,7 @@ const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
         message: "Already Assigned (Skipped Creation)",
       };
     }
-    
+
     const allBoys = await DeliveryBoy.findAll({
       where: { active: true },
       transaction,
@@ -770,7 +769,6 @@ const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
     let minLoad = Infinity;
 
     for (const boy of validBoys) {
-      
       const load = await DeliveryAssignment.count({
         where: {
           deliveryBoyId: boy.id,
@@ -1251,12 +1249,11 @@ export const requestReturn = async (req, res) => {
   }
 };
 
-// 🟢 2. ADMIN: MANAGE RETURN (Approve -> Notify -> Assign -> Complete)
 export const updateReturnStatusAdmin = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { orderId, itemId } = req.params;
-    const { status } = req.body; // APPROVED, REJECTED, RETURNED_TO_WAREHOUSE
+    const { status } = req.body; // Frontend sends: "APPROVED", "REJECTED", "RETURNED", or "REFUNDED"
 
     const item = await OrderItem.findOne({
       where: { id: itemId, orderId },
@@ -1269,17 +1266,13 @@ export const updateReturnStatusAdmin = async (req, res) => {
       return res.status(404).json({ message: "Item not found" });
     }
 
+    // =========================================================
+    // 🟢 CASE 1: APPROVAL
+    // =========================================================
     if (status === "APPROVED") {
       item.returnStatus = "APPROVED";
 
-      // 🔔 1. NOTIFY VENDOR (Placeholder)
-      if (item.vendorId) {
-        console.log(
-          `🔔 VENDOR ALERT: Vendor ${item.vendorId} notified of incoming return for Order #${orderId}`
-        );
-      }
-
-      // 🚚 2. AUTO-ASSIGN PICKUP BOY
+      // Auto-Assign Pickup Logic (Keep your existing logic here)
       const area = item.Order.assignedArea;
       const allBoys = await DeliveryBoy.findAll({
         where: { active: true },
@@ -1290,7 +1283,7 @@ export const updateReturnStatusAdmin = async (req, res) => {
       );
 
       if (validBoys.length > 0) {
-        // Load Balancer (Find boy with least work today)
+        // Load Balancer
         const startOfDay = new Date();
         startOfDay.setHours(0, 0, 0, 0);
         let bestBoy = validBoys[0];
@@ -1311,72 +1304,43 @@ export const updateReturnStatusAdmin = async (req, res) => {
           }
         }
 
-        // Create Task with Special Reason
         await DeliveryAssignment.create(
           {
             orderId: item.Order.id,
             deliveryBoyId: bestBoy.id,
             status: "ASSIGNED",
-            reason: "RETURN_PICKUP", // 🟢 This triggers the "Red Box" in the App
+            reason: "RETURN_PICKUP",
           },
           { transaction: t }
         );
-
-        console.log(`✅ Pickup Assigned to ${bestBoy.name}`);
-      } else {
-        console.warn("⚠️ Approved, but no Delivery Boy found in area.");
       }
     }
+
+    // =========================================================
+    // 🟢 CASE 2: REJECTION
+    // =========================================================
     else if (status === "REJECTED") {
       item.returnStatus = "REJECTED";
     }
 
     // =========================================================
-    // 📦 PHASE C: COMPLETE (Item Physically Received at Warehouse)
-    // Actions: Restock Inventory + Refund Money + Close Task
-    // 🟢 UPDATE: Accept "RETURNED_TO_WAREHOUSE" OR "COMPLETED"
+    // 🟢 CASE 3: ITEM RETURNED TO WAREHOUSE (Confirm Received)
+    // Actions: Restock Inventory + Close Pickup Task
     // =========================================================
-    else if (status === "RETURNED_TO_WAREHOUSE" || status === "COMPLETED") {
-      if (item.returnStatus === "COMPLETED") {
-        await t.rollback();
-        return res.status(400).json({ message: "Return already completed" });
-      }
-
+    else if (status === "RETURNED") {
       // 1. Restock Inventory
       try {
         await axios.post(
-          `${process.env.PRODUCT_SERVICE_URL}/admin/inventory/restock`,
+          `${process.env.PRODUCT_SERVICE_URL}/inventory/restock`,
           { items: [{ productId: item.productId, quantity: item.quantity }] },
           { headers: { Authorization: req.headers.authorization } }
         );
       } catch (apiErr) {
-        await t.rollback();
-        return res
-          .status(500)
-          .json({ message: "Stock Update Failed", error: apiErr.message });
+        console.error("Stock Update Failed", apiErr.message);
+        // We continue even if stock fail, or you can rollback
       }
 
-      // 2. Update Item Statuses
-      item.returnStatus = "COMPLETED";
-      item.status = "RETURNED";
-      await item.save({ transaction: t });
-
-      // 🟢 3. UPDATE PARENT ORDER AMOUNT (Deduct Refund)
-      const order = await Order.findByPk(item.orderId, { transaction: t });
-      if (order) {
-        const deduction = item.price * item.quantity;
-        // Prevent negative values
-        const newAmount = Math.max(0, order.amount - deduction);
-
-        order.amount = newAmount;
-        await order.save({ transaction: t });
-
-        console.log(
-          `📉 Order #${order.id} amount reduced by ₹${deduction}. New Total: ₹${newAmount}`
-        );
-      }
-
-      // 4. Close the Pickup Task
+      // 2. Close the Pickup Task
       const pickupTask = await DeliveryAssignment.findOne({
         where: {
           orderId: item.Order.id,
@@ -1390,14 +1354,37 @@ export const updateReturnStatusAdmin = async (req, res) => {
         await pickupTask.save({ transaction: t });
       }
 
-      // 5. Trigger Refund (Razorpay/COD Logic)
-      // (Your refund logic from the previous step goes here...)
+      // 3. Update Status
+      item.returnStatus = "RETURNED";
+      item.status = "RETURNED";
+    }
 
-      await t.commit();
-      res.json({ message: `Return Completed & Amount Updated` });
-    } else {
+    // =========================================================
+    // 🟢 CASE 4: REFUND PROCESSED (Financial)
+    // Actions: Deduct Money from Order Amount
+    // =========================================================
+    else if (status === "REFUNDED") {
+      // 1. Deduct Refund Amount from Order Total
+      const order = await Order.findByPk(item.orderId, { transaction: t });
+      if (order) {
+        const deduction = item.price * item.quantity;
+        const newAmount = Math.max(0, order.amount - deduction);
+        order.amount = newAmount;
+        await order.save({ transaction: t });
+      }
+
+      // 2. Update Status
+      item.returnStatus = "REFUNDED";
+    }
+
+    // =========================================================
+    // 🛑 ERROR: UNKNOWN STATUS
+    // =========================================================
+    else {
       await t.rollback();
-      return res.status(400).json({ message: "Invalid Status" });
+      return res
+        .status(400)
+        .json({ message: `Invalid Status Sent: ${status}` });
     }
 
     await item.save({ transaction: t });
