@@ -48,8 +48,8 @@ router.put("/admin/inventory/update", auth, admin, updateWarehouseStock); // Edi
 router.post("/admin/inventory/restock", auth, admin, restockInventory);
 /* ================= CRUD (Vendor or Admin) ================= */
 router.get("/batch", getProductsBatch);
-router.post("/", auth, vendorOrAdmin, upload.single("image"), createProduct);
-router.put("/:id", auth, vendorOrAdmin, upload.single("image"), updateProduct);
+router.post("/", auth, vendorOrAdmin, upload.array("images", 5), createProduct);
+router.put("/:id", auth, vendorOrAdmin, upload.array("images", 5), updateProduct);
 router.delete("/:id", auth, vendorOrAdmin, deleteProduct);
 
 // Single Product (Keep last)

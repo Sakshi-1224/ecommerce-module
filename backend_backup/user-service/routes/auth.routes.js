@@ -1,33 +1,31 @@
 import express from "express";
-import { register, login, logout, me,changePassword,updateProfile } from "../controllers/auth.controller.js";
-import { 
-    addAddress, 
-    getAddresses, 
-    deleteAddress 
-} from "../controllers/address.controller.js";
+import {
+  register,
+  login,
+  logout,
+  me,
+  changePassword,
+  updateProfile,
+} from "../controllers/auth.controller.js";
 import authMiddleware from "../middleware/auth.middleware.js";
-import {admin} from "../middleware/admin.middleware.js";
+import { admin } from "../middleware/admin.middleware.js";
 import { getAllUsers } from "../controllers/auth.controller.js";
 import upload from "../middleware/uploadMiddleware.js";
 const router = express.Router();
 
-router.post("/", authMiddleware, addAddress);        // POST: Save new address
-router.get("/", authMiddleware, getAddresses);
 router.post("/register", register);
 router.post("/login", login);
 router.post("/logout", authMiddleware, logout);
 router.get("/me", authMiddleware, me);
 router.put(
-  "/profile", 
-  authMiddleware, 
+  "/profile",
+  authMiddleware,
   upload.single("profilePic"), // Must match frontend FormData key
   updateProfile
 );
 router.post("/change-password", authMiddleware, changePassword);
 
-//admin routes 
+//admin routes
 router.get("/users", authMiddleware, admin, getAllUsers);
-router.delete("/:id", authMiddleware, deleteAddress);
-
 
 export default router;

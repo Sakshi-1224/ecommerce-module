@@ -3,6 +3,7 @@ import axios from "axios";
 import dotenv from "dotenv";
 import cors from "cors";
 import FormData from "form-data";
+import morgan from "morgan";
 import upload from "./middleware/upload.js";
 dotenv.config();
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL;
@@ -22,6 +23,7 @@ app.use(
     credentials: true,
   })
 );
+app.use(morgan("dev"));
 /* ======================
    REGISTER
 ====================== */
@@ -379,15 +381,13 @@ app.get("/api/products/vendor/:vendorId", async (req, res) => {
 ====================================================== */
 
 // create product
-app.post("/api/products", upload.single("image"), async (req, res) => {
-  try {
-    // 🔴 OLD BROKEN CODE:
-    // const response = await axios.post(
-    //   `${PRODUCT_SERVICE_URL}`,
-    //   req.body, ...
-    // );
+/* ======================================================
+   PRODUCT CRUD (VENDOR / ADMIN) - MULTI-IMAGE SUPPORT
+====================================================== */
 
-    // 🟢 NEW CORRECT CODE:
+// create product (Supports Multiple Images)
+app.post("/api/products", upload.array("images"), async (req, res) => {
+  try {
     const formData = new FormData();
 
     // 1. Add all text fields (name, price, etc.)
@@ -395,9 +395,12 @@ app.post("/api/products", upload.single("image"), async (req, res) => {
       formData.append(key, req.body[key]);
     });
 
-    // 2. Add the file (Important!)
-    if (req.file) {
-      formData.append("image", req.file.buffer, req.file.originalname);
+    // 2. Add the files (Loop through req.files array)
+    if (req.files && req.files.length > 0) {
+      req.files.forEach((file) => {
+        // Key must be "images" to match Product Service middleware
+        formData.append("images", file.buffer, file.originalname);
+      });
     }
 
     // 3. Send using axios
@@ -415,8 +418,8 @@ app.post("/api/products", upload.single("image"), async (req, res) => {
   }
 });
 
-// update product
-app.put("/api/products/:id", upload.single("image"), async (req, res) => {
+// update product (Supports Appending Images)
+app.put("/api/products/:id", upload.array("images"), async (req, res) => {
   try {
     // 1. Create FormData
     const formData = new FormData();
@@ -426,9 +429,11 @@ app.put("/api/products/:id", upload.single("image"), async (req, res) => {
       formData.append(key, req.body[key]);
     });
 
-    // 3. Append image if exists
-    if (req.file) {
-      formData.append("image", req.file.buffer, req.file.originalname);
+    // 3. Append images if they exist
+    if (req.files && req.files.length > 0) {
+      req.files.forEach((file) => {
+        formData.append("images", file.buffer, file.originalname);
+      });
     }
 
     // 4. Forward request to Product Service
@@ -452,7 +457,6 @@ app.put("/api/products/:id", upload.single("image"), async (req, res) => {
     });
   }
 });
-
 // delete product
 app.delete("/api/products/:id", async (req, res) => {
   try {

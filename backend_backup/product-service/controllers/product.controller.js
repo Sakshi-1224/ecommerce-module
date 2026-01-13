@@ -98,7 +98,6 @@ export const getAllCategories = async (req, res) => {
   }
 };
 
-// Used for Vendor's "My Products" page
 export const getVendorProducts = async (req, res) => {
   try {
     const products = await Product.findAll({
@@ -113,33 +112,61 @@ export const getVendorProducts = async (req, res) => {
 
 export const createProduct = async (req, res) => {
   try {
-    const { name, price, description, stock, categoryId } = req.body; // 'stock' maps to 'totalStock'
+    const { name, price, description, stock, categoryId } = req.body;
 
     if (!name || !price || !categoryId)
       return res.status(400).json({ message: "Missing required fields" });
     if (stock < 0)
       return res.status(400).json({ message: "Stock cannot be negative" });
+// 🛑 NEGATIVE CHECKS FOR FILES
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        
+        // Check 1: Empty File (0 Bytes)
+        if (file.size === 0) {
+          return res.status(400).json({ 
+            message: `File '${file.originalname}' is empty (0 bytes). Please upload a valid image.` 
+          });
+        }
 
-    let imageUrl = null;
-    if (req.file) {
+        // Check 2: Explicit Size Limit (e.g., 5MB)
+        // Note: Useful if your global Multer limit is 50MB but you want 5MB for products
+        const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+        if (file.size > MAX_SIZE) {
+          return res.status(400).json({ 
+            message: `File '${file.originalname}' exceeds the 5MB limit.` 
+          });
+        }
+
+        // Check 3: Strict File Type Check
+        const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/jpg"];
+        if (!allowedTypes.includes(file.mimetype)) {
+          return res.status(400).json({ 
+            message: `File '${file.originalname}' is not a supported image type (JPEG, PNG, WEBP only).` 
+          });
+        }
+      }
+    }
+let imageUrls = [];
+    if (req.files && req.files.length > 0) {
       try {
-        imageUrl = await uploadImageToMinio(req.file);
+        imageUrls = await Promise.all(
+          req.files.map((file) => uploadImageToMinio(file))
+        );
       } catch (err) {
-        return res
-          .status(500)
-          .json({ message: "Image upload failed", error: err.message });
+        return res.status(500).json({ message: "Image upload failed", error: err.message });
       }
     }
 
-    const product = await Product.create({
+  const product = await Product.create({
       name,
       price,
       description,
-      imageUrl,
+      images: imageUrls,
       CategoryId: categoryId,
       vendorId: req.user.role === "vendor" ? req.user.id : null,
-      totalStock: stock, // Map input 'stock' to Total
-      availableStock: stock, // Initially available = total
+      totalStock: stock,
+      availableStock: stock,
       reservedStock: 0,
       warehouseStock: 0,
     });
@@ -162,6 +189,20 @@ export const updateProduct = async (req, res) => {
     if (name) product.name = name;
     if (description) product.description = description;
     if (price) product.price = price;
+
+// 🟢 Handle New Images (Append to existing)
+    if (req.files && req.files.length > 0) {
+      try {
+        const newUrls = await Promise.all(
+          req.files.map((file) => uploadImageToMinio(file))
+        );
+        // Combine old images + new images
+        const currentImages = product.images || [];
+        product.images = [...currentImages, ...newUrls];
+      } catch (err) {
+        return res.status(500).json({ message: "Image upload failed" });
+      }
+    }
 
     // Smart Stock Update: Preserve reservations
     if (stock !== undefined && stock >= 0) {

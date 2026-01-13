@@ -2,28 +2,50 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import minioClient, { initBucket } from "../config/minioClient.js";
+import redis from "../config/redis.js"; // 🟢 1. IMPORT REDIS
 
 const BUCKET_NAME = "user-profiles";
 
-// Initialize bucket on server start (or handled elsewhere)
+// Initialize bucket on server start
 initBucket(BUCKET_NAME);
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const register = async (req, res) => {
   try {
-    const { name, email, phone, password } = req.body;
+    const { name, email, phone, password, bankName, accountNumber, ifscCode } = req.body;
+
+    // 1. Basic Validation
     if (!name || !email || !phone || !password) {
       return res.status(400).json({
         message: "All fields are required",
       });
     }
-      const hasBankDetails = bankName || accountNumber || ifscCode;
+
+    // 2. Bank Details Validation (Negative Checks)
+    const hasBankDetails = bankName || accountNumber || ifscCode;
     if (hasBankDetails) {
-        if (!bankName || !accountNumber || !ifscCode) {
-            return res.status(400).json({ 
-                message: "Please provide all bank details (Name, Account No, IFSC)" 
-            });
+      if (!bankName || !accountNumber || !ifscCode) {
+        return res.status(400).json({
+          message: "Please provide all bank details (Name, Account No, IFSC)",
+        });
       }
+      
+      const accountRegex = /^\d{9,18}$/;
+      if (!accountRegex.test(accountNumber)) {
+        return res.status(400).json({
+          message: "Invalid Account Number. It must contain only digits (9-18 chars).",
+        });
+      }
+
+      const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+      if (!ifscRegex.test(ifscCode)) {
+        return res.status(400).json({
+          message: "Invalid IFSC Code. Format example: SBIN0001234",
+        });
+      }
+    }
+
+    // 3. Standard Validations (Phone, Email, Password)
     if (!phone || !/^\d{10}$/.test(phone)) {
       return res.status(400).json({
         message: "Phone number must be exactly 10 digits",
@@ -36,22 +58,6 @@ export const register = async (req, res) => {
       });
     }
 
-    const accountRegex = /^\d{9,18}$/;
-        if (!accountRegex.test(accountNumber)) {
-            return res.status(400).json({ 
-                message: "Invalid Account Number. It must contain only digits (9-18 chars)." 
-            });
-        }
-
-
-        const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
-        if (!ifscRegex.test(ifscCode)) {
-            return res.status(400).json({ 
-                message: "Invalid IFSC Code. Format example: SBIN0001234" 
-            });
-        }
-    }
-
     if (password.length < 6) {
       return res.status(400).json({
         message: "Password must be at least 6 characters long",
@@ -60,13 +66,11 @@ export const register = async (req, res) => {
 
     if (!/(?=.*[A-Z])(?=.*\d)/.test(password)) {
       return res.status(400).json({
-        message:
-          "Password must contain at least one number and one uppercase letter",
+        message: "Password must contain at least one number and one uppercase letter",
       });
     }
 
-   
-
+    // 4. Check Existence & Create
     const existingUser = await User.findOne({ where: { phone } });
     if (existingUser) {
       return res.status(400).json({ message: "User already exists" });
@@ -80,9 +84,9 @@ export const register = async (req, res) => {
       phone,
       password: hashedPassword,
       role: "user",
-      bankName: bankName,        
-      accountNumber: accountNumber, 
-      ifscCode: ifscCode
+      bankName: bankName || null,
+      accountNumber: accountNumber || null,
+      ifscCode: ifscCode || null
     });
 
     const token = jwt.sign(
@@ -110,7 +114,6 @@ export const register = async (req, res) => {
       },
     });
 
-    res.status(201).json({ message: "User registered successfully" });
   } catch (err) {
     console.error(err);
     res.status(500).json({
@@ -167,8 +170,20 @@ export const login = async (req, res) => {
   }
 };
 
+/* ======================================================
+   🟢 2. LOGOUT FUNCTION (Redis Blacklist)
+====================================================== */
 export const logout = async (req, res) => {
   try {
+    const token = req.headers.authorization?.split(" ")[1];
+
+    if (token) {
+      // Add token to Redis Blacklist for 7 days (604800 seconds)
+      const key = `blacklist:${token}`;
+      await redis.set(key, "true", "EX", 604800);
+      console.log(`🚫 Token blacklisted: ${token.substring(0, 10)}...`);
+    }
+
     res.json({ message: "Logout successful" });
   } catch (err) {
     console.error(err);
@@ -181,7 +196,7 @@ export const logout = async (req, res) => {
 export const me = async (req, res) => {
   try {
     const user = await User.findByPk(req.user.id, {
-      attributes: { exclude: ["password"] }, // Return everything except password
+      attributes: { exclude: ["password"] },
     });
 
     if (!user) {
@@ -229,11 +244,11 @@ export const changePassword = async (req, res) => {
   }
 };
 
-//admin
+// admin
 export const getAllUsers = async (req, res) => {
   try {
     const users = await User.findAll({
-      attributes: { exclude: ["password"] }, // 🔐 hide password
+      attributes: { exclude: ["password"] },
       order: [["createdAt", "DESC"]],
     });
 
@@ -245,7 +260,6 @@ export const getAllUsers = async (req, res) => {
 
 export const updateProfile = async (req, res) => {
   try {
-    // Note: When using Multer, text fields are in req.body, file is in req.file
     const { name, email } = req.body;
     const userId = req.user.id;
 
@@ -265,25 +279,20 @@ export const updateProfile = async (req, res) => {
     if (req.file) {
       const file = req.file;
 
-      // Create a unique filename: timestamp-originalName
       const fileName = `${Date.now()}-${file.originalname.replace(
         /\s+/g,
         "-"
       )}`;
 
-      // Upload buffer to MinIO
       await minioClient.putObject(
         BUCKET_NAME,
         fileName,
         file.buffer,
         file.size,
-        { "Content-Type": file.mimetype } // Important for browser to display it as image
+        { "Content-Type": file.mimetype }
       );
 
-      // Construct the Public URL
-      // Format: http://localhost:9000/bucket-name/filename
       const imageUrl = `http://localhost:9000/${BUCKET_NAME}/${fileName}`;
-
       user.profilePic = imageUrl;
     }
 
