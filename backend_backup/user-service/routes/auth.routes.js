@@ -6,6 +6,9 @@ import {
   me,
   changePassword,
   updateProfile,
+  updateBankDetails,
+  getMyBankDetails,
+  getUserBankDetailsAdmin
 } from "../controllers/auth.controller.js";
 import authMiddleware from "../middleware/auth.middleware.js";
 import { admin } from "../middleware/admin.middleware.js";
@@ -23,9 +26,14 @@ router.put(
   upload.single("profilePic"), // Must match frontend FormData key
   updateProfile
 );
+router.put("/bank-details", authMiddleware, updateBankDetails);
+router.get("/bank-details", authMiddleware, getMyBankDetails);
+
+
 router.post("/change-password", authMiddleware, changePassword);
 
 //admin routes
 router.get("/users", authMiddleware, admin, getAllUsers);
-
+// Admin Route
+router.get("/admin/:id/bank-details", authMiddleware, admin, getUserBankDetailsAdmin);
 export default router;

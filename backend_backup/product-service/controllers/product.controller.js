@@ -3,32 +3,49 @@ import Category from "../models/Category.js";
 import { uploadImageToMinio } from "../utils/uploadToMinio.js";
 import { Op } from "sequelize";
 import sequelize from "../config/db.js";
+import redis from "../config/redis.js"; // 🟢 Import Redis
+
+/* ======================================================
+   HELPER: CACHE INVALIDATION
+   Clears cache when a product is modified
+====================================================== */
+const invalidateProductCache = async (productId, vendorId) => {
+  const keys = [
+    `product:${productId}`, // Single Product Details
+    `products:vendor:${vendorId}`, // Vendor's Product List
+    `inventory:vendor:${vendorId}`, // Vendor's Inventory Dashboard
+    `inventory:admin`, // Admin's Warehouse Dashboard
+  ];
+  await redis.del(keys);
+};
+
 /* ======================================================
    PUBLIC & VENDOR CRUD OPERATIONS
 ====================================================== */
 
-// ✅ ADD THIS FUNCTION
 export const getProductsBatch = async (req, res) => {
   try {
     const { ids } = req.query;
     if (!ids) return res.json([]);
 
-    // 1. Safety Filter (Prevents crashes if list has bad values)
-    const idArray = ids
-      .split(",")
-      .map((id) => parseInt(id))
-      .filter((id) => !isNaN(id));
+    // 🟢 Redis Cache: 60 Seconds
+    const cacheKey = `products:batch:${ids}`;
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) return res.json(JSON.parse(cachedData));
+
+    const idArray = ids.split(",").map((id) => parseInt(id));
 
     if (idArray.length === 0) return res.json([]);
-
     const products = await Product.findAll({
       where: {
         id: { [Op.in]: idArray },
       },
-      // 🔴 CRITICAL FIX: Changed 'imageUrl' to 'images'
-      attributes: ["id", "name", "price", "images"],
+      attributes: ["id", "name", "price", "images", "availableStock", "vendorId"], // Changed imageUrl -> images to match new schema
       include: { model: Category, attributes: ["name"] },
     });
+
+    // Save to Redis
+    await redis.set(cacheKey, JSON.stringify(products), "EX", 60);
 
     res.json(products);
   } catch (err) {
@@ -39,11 +56,17 @@ export const getProductsBatch = async (req, res) => {
 
 export const getProducts = async (req, res) => {
   try {
+    // 🟢 Redis Cache: 60 Seconds (Short TTL for search results)
+    // We key by the entire query string to cache exact filters
+    const cacheKey = `products:search:${JSON.stringify(req.query)}`;
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) return res.json(JSON.parse(cachedData));
+
     const { category, sort, search, minPrice, maxPrice } = req.query;
 
     let whereCondition = {};
 
-    // 🔍 SEARCH (MySQL-safe)
+    // 🔍 SEARCH
     if (search) {
       whereCondition[Op.or] = [
         { name: { [Op.like]: `%${search}%` } },
@@ -77,6 +100,9 @@ export const getProducts = async (req, res) => {
       order: orderCondition,
     });
 
+    // Save to Redis
+    await redis.set(cacheKey, JSON.stringify(products), "EX", 60);
+
     res.json(products);
   } catch (err) {
     console.error(err);
@@ -86,10 +112,21 @@ export const getProducts = async (req, res) => {
 
 export const getSingleProduct = async (req, res) => {
   try {
-    const product = await Product.findByPk(req.params.id, {
+    const { id } = req.params;
+    const cacheKey = `product:${id}`;
+
+    // 🟢 Redis Cache: 1 Hour
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) return res.json(JSON.parse(cachedData));
+
+    const product = await Product.findByPk(id, {
       include: { model: Category },
     });
     if (!product) return res.status(404).json({ message: "Product not found" });
+
+    // Save to Redis
+    await redis.set(cacheKey, JSON.stringify(product), "EX", 3600);
+
     res.json(product);
   } catch (error) {
     res.status(500).json({ message: "Failed to fetch product" });
@@ -98,7 +135,15 @@ export const getSingleProduct = async (req, res) => {
 
 export const getAllCategories = async (req, res) => {
   try {
+    const cacheKey = "categories:all";
+
+    // 🟢 Redis Cache: 24 Hours (Categories change rarely)
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) return res.json(JSON.parse(cachedData));
+
     const categories = await Category.findAll();
+
+    await redis.set(cacheKey, JSON.stringify(categories), "EX", 86400);
     res.json(categories);
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch categories" });
@@ -107,10 +152,18 @@ export const getAllCategories = async (req, res) => {
 
 export const getVendorProducts = async (req, res) => {
   try {
+    const cacheKey = `products:vendor:${req.user.id}`;
+
+    // 🟢 Redis Cache: 5 Minutes
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) return res.json(JSON.parse(cachedData));
+
     const products = await Product.findAll({
       where: { vendorId: req.user.id },
       include: { model: Category },
     });
+
+    await redis.set(cacheKey, JSON.stringify(products), "EX", 300);
     res.json(products);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -125,26 +178,21 @@ export const createProduct = async (req, res) => {
       return res.status(400).json({ message: "Missing required fields" });
     if (stock < 0)
       return res.status(400).json({ message: "Stock cannot be negative" });
+
     // 🛑 NEGATIVE CHECKS FOR FILES
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
-        // Check 1: Empty File (0 Bytes)
         if (file.size === 0) {
           return res.status(400).json({
-            message: `File '${file.originalname}' is empty (0 bytes). Please upload a valid image.`,
+            message: `File '${file.originalname}' is empty. Please upload a valid image.`,
           });
         }
-
-        // Check 2: Explicit Size Limit (e.g., 5MB)
-        // Note: Useful if your global Multer limit is 50MB but you want 5MB for products
         const MAX_SIZE = 5 * 1024 * 1024; // 5MB
         if (file.size > MAX_SIZE) {
           return res.status(400).json({
             message: `File '${file.originalname}' exceeds the 5MB limit.`,
           });
         }
-
-        // Check 3: Strict File Type Check
         const allowedTypes = [
           "image/jpeg",
           "image/png",
@@ -153,7 +201,7 @@ export const createProduct = async (req, res) => {
         ];
         if (!allowedTypes.includes(file.mimetype)) {
           return res.status(400).json({
-            message: `File '${file.originalname}' is not a supported image type (JPEG, PNG, WEBP only).`,
+            message: `File '${file.originalname}' is not a supported image type.`,
           });
         }
       }
@@ -184,6 +232,15 @@ export const createProduct = async (req, res) => {
       warehouseStock: 0,
     });
 
+    // 🟢 INVALIDATE CACHE
+    // Clear the vendor's list so their new product shows up immediately
+    if (product.vendorId) {
+      await redis.del(`products:vendor:${product.vendorId}`);
+      await redis.del(`inventory:vendor:${product.vendorId}`);
+    }
+    // Also clear admin inventory cache
+    await redis.del(`inventory:admin`);
+
     res.status(201).json({ message: "Product created", product });
   } catch (err) {
     res.status(500).json({ message: "Creation failed", error: err.message });
@@ -203,13 +260,12 @@ export const updateProduct = async (req, res) => {
     if (description) product.description = description;
     if (price) product.price = price;
 
-    // 🟢 Handle New Images (Append to existing)
+    // Handle New Images
     if (req.files && req.files.length > 0) {
       try {
         const newUrls = await Promise.all(
           req.files.map((file) => uploadImageToMinio(file))
         );
-        // Combine old images + new images
         const currentImages = product.images || [];
         product.images = [...currentImages, ...newUrls];
       } catch (err) {
@@ -217,17 +273,20 @@ export const updateProduct = async (req, res) => {
       }
     }
 
-    // Smart Stock Update: Preserve reservations
+    // Smart Stock Update
     if (stock !== undefined && stock >= 0) {
       const difference = stock - product.totalStock;
       product.totalStock = stock;
       product.availableStock += difference;
-      // Safety: Available cannot exceed total
       if (product.availableStock > product.totalStock)
         product.availableStock = product.totalStock;
     }
 
     await product.save();
+
+    // 🟢 INVALIDATE CACHE
+    await invalidateProductCache(product.id, product.vendorId);
+
     res.json({ message: "Product updated", product });
   } catch (err) {
     res.status(500).json({ message: "Update failed" });
@@ -240,7 +299,15 @@ export const deleteProduct = async (req, res) => {
     if (!product) return res.status(404).json({ message: "Product not found" });
     if (req.user.role === "vendor" && product.vendorId !== req.user.id)
       return res.status(403).json({ message: "Unauthorized" });
+
+    // Store IDs before delete for cache clearing
+    const { id, vendorId } = product;
+
     await product.destroy();
+
+    // 🟢 INVALIDATE CACHE
+    await invalidateProductCache(id, vendorId);
+
     res.json({ message: "Product deleted" });
   } catch {
     res.status(500).json({ message: "Delete failed" });
@@ -251,9 +318,14 @@ export const deleteProduct = async (req, res) => {
    INVENTORY VIEWING (Dashboard Data)
 ====================================================== */
 
-// Vendor Dashboard Table
 export const getVendorInventory = async (req, res) => {
   try {
+    const cacheKey = `inventory:vendor:${req.user.id}`;
+
+    // 🟢 Redis Cache: 60 Seconds
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) return res.json(JSON.parse(cachedData));
+
     const products = await Product.findAll({
       where: { vendorId: req.user.id },
       attributes: [
@@ -272,21 +344,28 @@ export const getVendorInventory = async (req, res) => {
       productId: p.id,
       name: p.name,
       imageUrl: p.images && p.images.length > 0 ? p.images[0] : null,
+      imageUrl: p.images && p.images[0] ? p.images[0] : null,
       total: p.totalStock,
       reserved: p.reservedStock,
       available: p.availableStock,
       warehouse: p.warehouseStock,
     }));
 
+    await redis.set(cacheKey, JSON.stringify(formatted), "EX", 60);
     res.json(formatted);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
 
-// Admin Warehouse View (All Products)
 export const getAllWarehouseInventory = async (req, res) => {
   try {
+    const cacheKey = `inventory:admin`;
+
+    // 🟢 Redis Cache: 60 Seconds
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) return res.json(JSON.parse(cachedData));
+
     const products = await Product.findAll({
       attributes: [
         "id",
@@ -307,6 +386,7 @@ export const getAllWarehouseInventory = async (req, res) => {
       productId: p.id,
       name: p.name,
       imageUrl: p.images && p.images.length > 0 ? p.images[0] : null,
+      imageUrl: p.images && p.images[0] ? p.images[0] : null,
       price: p.price,
       vendorId: p.vendorId,
       category: p.Category ? p.Category.name : "Uncategorized",
@@ -316,6 +396,7 @@ export const getAllWarehouseInventory = async (req, res) => {
       warehouse: p.warehouseStock,
     }));
 
+    await redis.set(cacheKey, JSON.stringify(formatted), "EX", 60);
     res.json(formatted);
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch admin inventory" });
@@ -326,32 +407,31 @@ export const getAllWarehouseInventory = async (req, res) => {
    ADMIN INVENTORY MANAGEMENT (Transfer)
 ====================================================== */
 
-// Transfer from Vendor Total -> Warehouse Stock
 export const transferToWarehouse = async (req, res) => {
   try {
     const { productId, quantity } = req.body;
-
-    // Admin can access ALL products (No vendorId check)
     const product = await Product.findByPk(productId);
 
     if (!product) return res.status(404).json({ message: "Product not found" });
 
-    // Validate
     if (product.warehouseStock + quantity > product.totalStock) {
       return res.status(400).json({
-        message: `Cannot transfer. Warehouse stock cannot exceed Total stock (${product.totalStock}).`,
+        message: `Cannot transfer. Warehouse stock cannot exceed Total stock.`,
       });
     }
 
     product.warehouseStock += quantity;
     await product.save();
+
+    // 🟢 INVALIDATE CACHE
+    await invalidateProductCache(productId, product.vendorId);
+
     res.json({ message: "Transfer successful", product });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
 
-// Set Exact Warehouse Stock
 export const updateWarehouseStock = async (req, res) => {
   try {
     const { productId, warehouseStock } = req.body;
@@ -365,93 +445,144 @@ export const updateWarehouseStock = async (req, res) => {
 
     product.warehouseStock = warehouseStock;
     await product.save();
+
+    // 🟢 INVALIDATE CACHE
+    await invalidateProductCache(productId, product.vendorId);
+
     res.json({ message: "Warehouse stock updated", product });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
-
 /* ======================================================
    INTERNAL SYNC (Called by Order Service)
+   🛑 NOW WITH TRANSACTIONS
 ====================================================== */
 
-// 1. RESERVE (Checkout)
 export const reserveStock = async (req, res) => {
+  const t = await sequelize.transaction(); // 1. Start Transaction
+  const vendorIdsToClear = new Set();
+
   try {
     const { items } = req.body; // [{ productId, quantity }]
+
     for (const item of items) {
-      const product = await Product.findByPk(item.productId);
-      if (!product) continue;
+      // 2. Pass transaction to findByPk
+      const product = await Product.findByPk(item.productId, {
+        transaction: t,
+      });
+
+      if (!product) throw new Error(`Product ${item.productId} not found`);
 
       if (product.availableStock < item.quantity) {
         throw new Error(`Product ${product.name} is out of stock`);
       }
+
       product.reservedStock += item.quantity;
       product.availableStock = product.totalStock - product.reservedStock;
-      await product.save();
+
+      if (product.vendorId) vendorIdsToClear.add(product.vendorId);
+
+      // 3. Pass transaction to save
+      await product.save({ transaction: t });
     }
+
+    await t.commit(); // 4. Commit only if ALL items succeed
+
+    // 5. Invalidate Cache (After Commit)
+    for (const item of items) {
+      await redis.del(`product:${item.productId}`);
+    }
+    for (const vendorId of vendorIdsToClear) {
+      await redis.del(`inventory:vendor:${vendorId}`);
+      await redis.del(`products:vendor:${vendorId}`);
+    }
+    await redis.del(`inventory:admin`);
+
     res.json({ message: "Stock reserved" });
   } catch (err) {
+    // 6. Rollback if ANY item fails
+    if (!t.finished) await t.rollback();
     res.status(400).json({ message: err.message });
   }
 };
 
-// 2. RELEASE (Cancel)
 export const releaseStock = async (req, res) => {
+  const t = await sequelize.transaction();
+  const vendorIdsToClear = new Set();
+
   try {
     const { items } = req.body;
     for (const item of items) {
-      const product = await Product.findByPk(item.productId);
+      const product = await Product.findByPk(item.productId, {
+        transaction: t,
+      });
+
       if (product) {
         product.reservedStock -= item.quantity;
+        // Safety check
         if (product.reservedStock < 0) product.reservedStock = 0;
+
         product.availableStock = product.totalStock - product.reservedStock;
-        await product.save();
+
+        if (product.vendorId) vendorIdsToClear.add(product.vendorId);
+
+        await product.save({ transaction: t });
       }
     }
+
+    await t.commit();
+
+    // Cache Invalidation
+    for (const item of items) {
+      await redis.del(`product:${item.productId}`);
+    }
+    for (const vendorId of vendorIdsToClear) {
+      await redis.del(`inventory:vendor:${vendorId}`);
+      await redis.del(`products:vendor:${vendorId}`);
+    }
+    await redis.del(`inventory:admin`);
+
     res.json({ message: "Stock released" });
   } catch (err) {
+    if (!t.finished) await t.rollback();
     res.status(500).json({ message: err.message });
   }
 };
 
-// 3. SHIP (Pack/Deliver)
 export const shipStock = async (req, res) => {
+  const t = await sequelize.transaction();
+  const vendorIdsToClear = new Set();
+
   try {
     const { items } = req.body;
 
-    // 🛑 STEP 1: VALIDATION PASS
-    // Check if ALL items have enough stock in the Warehouse BEFORE updating anything.
+    // STEP 1: VALIDATION PASS (Read-only, but usually good to keep inside transaction for consistency)
     for (const item of items) {
-      const product = await Product.findByPk(item.productId);
+      const product = await Product.findByPk(item.productId, {
+        transaction: t,
+      });
+      if (!product) throw new Error(`Product ID ${item.productId} not found`);
 
-      if (!product) {
-        return res
-          .status(404)
-          .json({ message: `Product ID ${item.productId} not found` });
-      }
-
-      // The New Requirement: Must come from Warehouse
       if (product.warehouseStock < item.quantity) {
-        return res.status(400).json({
-          message: `Cannot Ship: Insufficient Warehouse Stock for '${product.name}'. Required: ${item.quantity}, Available in Warehouse: ${product.warehouseStock}`,
-        });
+        throw new Error(
+          `Cannot Ship: Insufficient Warehouse Stock for '${product.name}'`
+        );
       }
     }
 
-    // 🟢 STEP 2: EXECUTION PASS
-    // If we get here, we know it's safe to update everything.
+    // STEP 2: EXECUTION PASS
     for (const item of items) {
-      const product = await Product.findByPk(item.productId);
+      // Re-fetch or reuse instance depending on Sequelize config,
+      // but simpler to just use findByPk again to be safe with the locked row if needed
+      // (Or better: store products from Step 1 in a map to avoid double DB calls)
+      const product = await Product.findByPk(item.productId, {
+        transaction: t,
+      });
 
       if (product) {
-        // 1. Deduct from Warehouse (We know it has enough now)
         product.warehouseStock -= item.quantity;
-
-        // 2. Deduct from Total (Physical item has left the building)
         product.totalStock -= item.quantity;
-
-        // 3. Deduct from Reserved (It's no longer 'reserved' / pending, it's gone)
         product.reservedStock -= item.quantity;
 
         // Safety clamps
@@ -459,30 +590,48 @@ export const shipStock = async (req, res) => {
         if (product.totalStock < 0) product.totalStock = 0;
         if (product.warehouseStock < 0) product.warehouseStock = 0;
 
-        // 4. Recalculate Available
-        // (Note: Since Total and Reserved dropped by the same amount, Available stays consistent)
         product.availableStock = product.totalStock - product.reservedStock;
 
-        await product.save();
+        if (product.vendorId) vendorIdsToClear.add(product.vendorId);
+
+        await product.save({ transaction: t });
       }
     }
 
+    await t.commit();
+
+    // Cache Invalidation
+    for (const item of items) {
+      await redis.del(`product:${item.productId}`);
+    }
+    for (const vendorId of vendorIdsToClear) {
+      await redis.del(`inventory:vendor:${vendorId}`);
+      await redis.del(`products:vendor:${vendorId}`);
+    }
+    await redis.del(`inventory:admin`);
+
     res.json({ message: "Stock shipped successfully" });
   } catch (err) {
+    if (!t.finished) await t.rollback();
     res.status(500).json({ message: err.message });
   }
 };
 
-// ... existing imports
-
-// ✅ ADD THIS FUNCTION
 export const getProductsByVendorId = async (req, res) => {
   try {
     const { vendorId } = req.params;
+    // 🟢 Cache this per vendor ID for 60s
+    const cacheKey = `products:vendor:${vendorId}`;
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) return res.json(JSON.parse(cachedData));
+
     const products = await Product.findAll({
       where: { vendorId: vendorId },
       include: { model: Category },
     });
+
+    await redis.set(cacheKey, JSON.stringify(products), "EX", 60);
+
     res.json(products);
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch vendor products" });
@@ -491,8 +640,10 @@ export const getProductsByVendorId = async (req, res) => {
 
 export const restockInventory = async (req, res) => {
   const t = await sequelize.transaction();
+  const vendorIdsToClear = new Set(); // 🟢 1. Create a Set to store unique Vendor IDs
+
   try {
-    const { items } = req.body; // Expects [{ productId, quantity }]
+    const { items } = req.body;
 
     for (const item of items) {
       const product = await Product.findByPk(item.productId, {
@@ -500,18 +651,36 @@ export const restockInventory = async (req, res) => {
       });
 
       if (product) {
-        // 1. Add back to Warehouse (Physical Location)
         product.warehouseStock += item.quantity;
-
-        // 2. Add back to Total (Global Inventory Count)
         product.totalStock += item.quantity;
 
-        // 3. Save (This triggers your 'beforeUpdate' hook to fix availableStock)
+        // 🟢 2. Capture the Vendor ID (if exists) before saving
+        if (product.vendorId) {
+          vendorIdsToClear.add(product.vendorId);
+        }
+
         await product.save({ transaction: t });
       }
     }
 
     await t.commit();
+
+    // 🟢 3. INVALIDATE CACHE (Comprehensive)
+
+    // A. Clear Admin View
+    await redis.del(`inventory:admin`);
+
+    // B. Clear Individual Products
+    for (const item of items) {
+      await redis.del(`product:${item.productId}`);
+    }
+
+    // C. Clear Vendor Views (Iterate over the Set)
+    for (const vendorId of vendorIdsToClear) {
+      await redis.del(`inventory:vendor:${vendorId}`); // Vendor Dashboard
+      await redis.del(`products:vendor:${vendorId}`); // Vendor Product List
+    }
+
     res.json({ message: "Stock returned to warehouse & counts updated" });
   } catch (err) {
     if (!t.finished) await t.rollback();

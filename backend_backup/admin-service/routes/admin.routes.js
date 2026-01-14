@@ -1,6 +1,6 @@
 import express from "express";
 import authMiddleware from "../middleware/auth.middleware.js";
-import { adminLogin } from "../controllers/adminAuth.controller.js";
+import { adminLogin,adminLogout } from "../controllers/adminAuth.controller.js";
 
 import {
   // getAllOrders,
@@ -21,7 +21,7 @@ const router = express.Router();
 
 
 router.post("/login", adminLogin);
-
+router.post("/logout", authMiddleware, adminLogout);
 router.post("/change-password", authMiddleware, changePassword);
 
 

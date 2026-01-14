@@ -33,6 +33,10 @@ const User = sequelize.define("User", {
     type: DataTypes.ENUM("user"),
     allowNull: false,
   },
+  bankAccountHolderName: { 
+    type: DataTypes.STRING, 
+    allowNull: false
+   },
   bankName: {
     type: DataTypes.STRING,
     allowNull: false,
@@ -44,7 +48,7 @@ const User = sequelize.define("User", {
   ifscCode: {
     type: DataTypes.STRING,
     allowNull: false,
-  }
+  },
 });
 
 export default User;

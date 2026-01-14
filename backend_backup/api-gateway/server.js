@@ -1261,6 +1261,95 @@ app.post("/api/orders/:orderId/items/:itemId/return", async (req, res) => {
   }
 });
 
+app.post("/api/orders/delivery/logout", async (req, res) => {
+  try {
+    // Forward to Order Service
+    const response = await axios.post(
+      `${ORDER_SERVICE_URL}/delivery/logout`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+app.post("/api/vendor/logout", async (req, res) => {
+  try {
+    // Forward to Vendor Service
+    const response = await axios.post(
+      `${VENDOR_SERVICE_URL}/logout`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+
+app.post("/api/admin/logout", async (req, res) => {
+  try {
+    // Forward to Admin Service
+    const response = await axios.post(
+      `${ADMIN_SERVICE_URL}/logout`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+
+app.get("/api/auth/bank-details", async (req, res) => {
+  try {
+    const response = await axios.get(`${USER_SERVICE_URL}/bank-details`, {
+      headers: {
+        Authorization: req.headers.authorization,
+      },
+    });
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+
+app.get("/api/auth/admin/:id/bank-details", async (req, res) => {
+  try {
+    const response = await axios.get(`${USER_SERVICE_URL}/admin/${req.params.id}/bank-details`, {
+      headers: {
+        Authorization: req.headers.authorization,
+      },
+    });
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+app.put(
+  "/api/auth/bank-details",
+  async (req, res) => {
+    try {
+      const response = await axios.put(
+        `${USER_SERVICE_URL}/bank-details`,
+        req.body,
+        { headers: { Authorization: req.headers.authorization } }
+      );
+      res.status(response.status).json(response.data);
+    } catch (err) {
+      res.status(err.response?.status || 500).json(err.response?.data);
+    }
+  }
+);
+
 app.listen(5007, () => {
   console.log("API Gateway running on port 5007");
 });

@@ -1,46 +1,20 @@
 import axios from "axios";
 import Admin from "../models/Admin.js";
 import bcrypt from "bcrypt";
+import redis from "../config/redis.js"; // 🟢 1. Import Redis
+
 const ORDER = process.env.ORDER_SERVICE_URL;
 const USER = process.env.USER_SERVICE_URL;
-
-/*
-
-export const getAllOrders = async (req, res) => {
-  const r = await axios.get(`${ORDER}/admin/all`, {
-    headers: { Authorization: req.headers.authorization }
-  });
-  res.json(r.data);
-};
-
-export const updateOrderStatus = async (req, res) => {
-  const r = await axios.put(
-    `${ORDER}/admin/${req.params.id}/status`,
-    { status: req.body.status },
-    { headers: { Authorization: req.headers.authorization } }
-  );
-  res.json(r.data);
-};
-
-export const getAllUsers = async (req, res) => {
-  const r = await axios.get(`${USER}/users`, {
-    headers: { Authorization: req.headers.authorization }
-  });
-  res.json(r.data);
-};
-
-*/
-
 
 export const changePassword = async (req, res) => {
   try {
     const { oldPassword, newPassword } = req.body;
-      if (!req.admin || !req.admin.id) {
+    
+    if (!req.admin || !req.admin.id) {
       return res.status(401).json({
         message: "Unauthorized access"
       });
     }
-  
 
     if (!oldPassword || !newPassword) {
       return res.status(400).json({
@@ -52,7 +26,8 @@ export const changePassword = async (req, res) => {
         message: "New password must be different from old password"
       });
     }
-  const adminId = req.admin.id;
+
+    const adminId = req.admin.id;
     const admin = await Admin.findByPk(adminId);
 
     if (!admin) {
@@ -78,7 +53,9 @@ export const changePassword = async (req, res) => {
   }
 };
 
-
+/* ======================================================
+   🟢 UPDATED: DASHBOARD WITH REDIS CACHING
+====================================================== */
 export const getDashboardData = async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -89,6 +66,17 @@ export const getDashboardData = async (req, res) => {
       });
     }
 
+    // 🟢 1. Check Redis Cache
+    // We cache dashboard stats for 60 seconds.
+    const cacheKey = "admin:dashboard:stats";
+    const cachedData = await redis.get(cacheKey);
+
+    if (cachedData) {
+      // If found in cache, return it immediately (Skip Axios calls)
+      return res.json(JSON.parse(cachedData));
+    }
+
+    // 🟢 2. Fetch Data (If not in cache)
     const [ordersResult, usersResult] = await Promise.allSettled([
       axios.get(`${ORDER}/admin/all`, {
         headers: { Authorization: authHeader }
@@ -125,14 +113,20 @@ export const getDashboardData = async (req, res) => {
       total: order.amount
     }));
 
-    res.json({
+    const responseData = {
       stats: {
         totalRevenue,
         totalOrders,
         activeUsers
       },
       recentOrders
-    });
+    };
+
+    // 🟢 3. Save to Redis (Expires in 60 seconds)
+    // We use a short time because new orders come in frequently.
+    await redis.set(cacheKey, JSON.stringify(responseData), "EX", 60);
+
+    res.json(responseData);
   } catch (err) {
     console.error(err);
     res.status(500).json({

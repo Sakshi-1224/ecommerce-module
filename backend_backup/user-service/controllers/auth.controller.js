@@ -12,7 +12,7 @@ const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const register = async (req, res) => {
   try {
-    const { name, email, phone, password, bankName, accountNumber, ifscCode } = req.body;
+    const { name, email, phone, password, bankAccountHolderName, bankName, accountNumber, ifscCode } = req.body;
 
     // 1. Basic Validation
     if (!name || !email || !phone || !password) {
@@ -84,6 +84,7 @@ export const register = async (req, res) => {
       phone,
       password: hashedPassword,
       role: "user",
+      bankAccountHolderName: bankAccountHolderName || name,
       bankName: bankName || null,
       accountNumber: accountNumber || null,
       ifscCode: ifscCode || null
@@ -108,6 +109,7 @@ export const register = async (req, res) => {
         email: user.email,
         role: user.role,
         profilePic: user.profilePic,
+        bankAccountHolderName: user.bankAccountHolderName,
         bankName: user.bankName,
         accountNumber: user.accountNumber,
         ifscCode: user.ifscCode
@@ -312,5 +314,134 @@ export const updateProfile = async (req, res) => {
   } catch (error) {
     console.error("Update Profile Error:", error);
     res.status(500).json({ message: "Failed to update profile" });
+  }
+};
+
+
+
+export const updateBankDetails = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { 
+      bankAccountHolderName, 
+      bankAccountNumber, 
+      bankIFSC, 
+      bankName 
+    } = req.body;
+
+    // 1. Validation
+    if (!bankAccountNumber || !bankIFSC) {
+      return res.status(400).json({ message: "Account Number and IFSC are required" });
+    }
+
+    const user = await User.findByPk(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // 2. Update DB
+    user.bankAccountHolderName = bankAccountHolderName;
+    user.bankAccountNumber = bankAccountNumber;
+    user.bankIFSC = bankIFSC;
+    user.bankName = bankName;
+
+    await user.save();
+
+    // 🟢 3. STRICT INVALIDATION
+    // Delete the specific bank detail cache for this user
+    await redis.del(`user:bank:${userId}`);
+    // Also clear the full profile cache if you store bank info there
+    await redis.del(`user:profile:${userId}`);
+
+    res.json({ message: "Bank details updated successfully", bankDetails: {
+      holder: user.bankAccountHolderName,
+      account: user.bankAccountNumber,
+      ifsc: user.bankIFSC,
+      bank: user.bankName
+    }});
+
+  } catch (err) {
+    console.error("Update Bank Error:", err);
+    res.status(500).json({ message: "Failed to update bank details" });
+  }
+};
+
+/* ======================================================
+   USER: GET MY BANK DETAILS
+   (Read Cache -> DB -> Write Cache)
+====================================================== */
+export const getMyBankDetails = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const cacheKey = `user:bank:${userId}`;
+
+    // 🟢 1. Check Redis
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) {
+      return res.json(JSON.parse(cachedData));
+    }
+
+    // 2. Fetch DB
+    const user = await User.findByPk(userId, {
+      attributes: ["bankAccountHolderName", "bankAccountNumber", "bankIFSC", "bankName"]
+    });
+
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // Format response (handle nulls gracefully)
+    const bankDetails = {
+      bankAccountHolderName: user.bankAccountHolderName || "",
+      bankAccountNumber: user.bankAccountNumber || "",
+      bankIFSC: user.bankIFSC || "",
+      bankName: user.bankName || ""
+    };
+
+    // 🟢 3. Set Cache (1 Hour - Bank details change rarely)
+    await redis.set(cacheKey, JSON.stringify(bankDetails), "EX", 3600);
+
+    res.json(bankDetails);
+
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch bank details" });
+  }
+};
+
+/* ======================================================
+   ADMIN: GET USER BANK DETAILS
+   (Uses the SAME cache key as the user to ensure consistency)
+====================================================== */
+export const getUserBankDetailsAdmin = async (req, res) => {
+  try {
+    const userId = req.params.id; // Get ID from URL params
+    const cacheKey = `user:bank:${userId}`;
+
+    // 🟢 1. Check Redis
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) {
+      return res.json(JSON.parse(cachedData));
+    }
+
+    // 2. Fetch DB
+    const user = await User.findByPk(userId, {
+      attributes: ["id", "name", "email", "phone", "bankAccountHolderName", "bankAccountNumber", "bankIFSC", "bankName"]
+    });
+
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const responseData = {
+      userId: user.id,
+      name: user.name, // Admin might need context of WHO this is
+      bankAccountHolderName: user.bankAccountHolderName || "Not Provided",
+      bankAccountNumber: user.bankAccountNumber || "Not Provided",
+      bankIFSC: user.bankIFSC || "Not Provided",
+      bankName: user.bankName || "Not Provided"
+    };
+
+    // 🟢 3. Set Cache
+    await redis.set(cacheKey, JSON.stringify(responseData), "EX", 3600);
+
+    res.json(responseData);
+
+  } catch (err) {
+    console.error("Admin Bank Fetch Error:", err);
+    res.status(500).json({ message: "Failed to fetch user bank details" });
   }
 };

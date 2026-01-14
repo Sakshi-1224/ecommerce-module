@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
+import redis from "../config/redis.js"; // 🟢 Import Redis
 
-const authMiddleware = (req, res, next) => {
+const authMiddleware = async (req, res, next) => {
   const token = req.headers.authorization?.split(" ")[1];
 
   if (!token) {
@@ -8,6 +9,17 @@ const authMiddleware = (req, res, next) => {
   }
 
   try {
+    // 🟢 1. CHECK REDIS BLACKLIST
+    // If the token is found in Redis, it means the admin logged out.
+    const isBlacklisted = await redis.get(`blacklist:${token}`);
+    
+    if (isBlacklisted) {
+      return res.status(401).json({ 
+        message: "Session expired (Logged out). Please login again." 
+      });
+    }
+
+    // 2. Verify Token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     if (decoded.role !== "admin") {
@@ -16,7 +28,7 @@ const authMiddleware = (req, res, next) => {
 
     req.admin = decoded;
     next();
-  } catch {
+  } catch (err) {
     res.status(401).json({ message: "Invalid token" });
   }
 };
