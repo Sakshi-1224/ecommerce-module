@@ -41,11 +41,11 @@ const User = sequelize.define("User", {
     type: DataTypes.STRING,
     allowNull: false,
   },
-  accountNumber: {
+  bankAccountNumber: {
     type: DataTypes.STRING,
     allowNull: false,
   },
-  ifscCode: {
+  bankIFSC: {
     type: DataTypes.STRING,
     allowNull: false,
   },

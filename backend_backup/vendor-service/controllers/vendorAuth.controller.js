@@ -2,9 +2,9 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import Vendor from "../models/Vendor.js";
 import redis from "../config/redis.js"; // 🟢 1. Import Redis
-
-/* ======================================================
-   REGISTER (No Redis needed, standard DB write)
+import  {validateVerhoeff} from "../utils/verhoeff.js"; // 🟢 Import Verhoeff Validator
+/*======================================================
+   REGISTER (With Verhoeff Validation)
 ====================================================== */
 export const register = async (req, res) => {
   try {
@@ -28,7 +28,17 @@ export const register = async (req, res) => {
     /* ---------------- FORMAT VALIDATIONS ---------------- */
     if (!/^\d{10}$/.test(phone)) return res.status(400).json({ message: "Phone number must be 10 digits" });
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "Invalid email format" });
-    if (!/^\d{12}$/.test(aadharNumber)) return res.status(400).json({ message: "Aadhaar number must be 12 digits" });
+    
+    // 1. Basic Aadhaar Length Check
+    if (!/^\d{12}$/.test(aadharNumber)) {
+        return res.status(400).json({ message: "Aadhaar number must be 12 digits" });
+    }
+    
+    // 2. Verhoeff Algorithm Check (The new implementation)
+    if (!validateVerhoeff(aadharNumber)) {
+        return res.status(400).json({ message: "Invalid Aadhaar Number (Checksum failed)" });
+    }
+
     if (!/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(panNumber)) return res.status(400).json({ message: "Invalid PAN number format" });
     if (gstNumber && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(gstNumber)) {
       return res.status(400).json({ message: "Invalid GST number format" });
