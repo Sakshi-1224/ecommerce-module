@@ -160,6 +160,9 @@ export const getMyTasks = async (req, res) => {
    🟢 2. UPDATE STATUS (Strict Invalidation)
    This is where the fix happens!
 ====================================================== */
+/* ======================================================
+   🟢 2. UPDATE STATUS (Fixed & Optimized)
+====================================================== */
 export const updateTaskStatus = async (req, res) => {
   try {
     const { assignmentId } = req.params;
@@ -173,47 +176,56 @@ export const updateTaskStatus = async (req, res) => {
 
     if (!assignment) return res.status(404).json({ message: "Task not found" });
 
-    // 2. Update Assignment
+    // 2. Update Assignment Status
     assignment.status = status;
     await assignment.save();
 
-    // Variable to hold Order User ID for cache clearing later
+    // 3. Sync with Order Table & Collect IDs for Cache Clearing
     let orderUserId = null;
-let vendorIdsToClear = new Set(); // 🟢 To store Vendor IDs
-    // CASE 1: RETURN PICKUP
-    if (assignment.reason === "RETURN_PICKUP") {
-      if (status === "DELIVERED") {
-        console.log(`📦 Return #${assignment.orderId} is back at Warehouse.`);
-        // Just fetch the order to get the userId for cache clearing
-        const order = await Order.findByPk(assignment.orderId);
-        if(order) orderUserId = order.userId;
+    let vendorIdsToClear = new Set(); 
+
+    // Fetch Order ONE time with Items to get all necessary IDs
+    const order = await Order.findByPk(assignment.orderId, {
+      include: [{ model: OrderItem, attributes: ['id', 'status', 'vendorId'] }]
+    });
+
+    if (order) {
+      orderUserId = order.userId;
+      
+      // Collect Vendor IDs
+      if (order.OrderItems) {
+        order.OrderItems.forEach(item => {
+            if (item.vendorId) vendorIdsToClear.add(item.vendorId);
+        });
       }
-    }
-    // CASE 2: NORMAL DELIVERY
-    else {
-      const order = await Order.findByPk(assignment.orderId, {
-        include: OrderItem,
-      });
 
-      if (order) {
-        orderUserId = order.userId; // 🟢 Capture ID for Redis clearing
-
+      // --- LOGIC: RETURN PICKUP ---
+      if (assignment.reason === "RETURN_PICKUP") {
+        if (status === "DELIVERED") {
+           console.log(`📦 Return #${assignment.orderId} collected.`);
+           // Add specific return logic here if needed
+        }
+      } 
+      // --- LOGIC: NORMAL DELIVERY ---
+      else {
         if (status === "PICKED") {
           order.status = "OUT_FOR_DELIVERY";
+          // Update items to match
           for (const item of order.OrderItems) {
-            if (item.status !== "CANCELLED" && item.status !== "DELIVERED") {
-              item.status = "OUT_FOR_DELIVERY";
-              await item.save();
-            }
+             if(item.status !== "CANCELLED") {
+                 item.status = "OUT_FOR_DELIVERY";
+                 await item.save();
+             }
           }
         } else if (status === "DELIVERED") {
           order.status = "DELIVERED";
           order.payment = true; // Mark Paid
+          // Update items to match
           for (const item of order.OrderItems) {
-            if (item.status !== "CANCELLED") {
-              item.status = "DELIVERED";
-              await item.save();
-            }
+             if(item.status !== "CANCELLED") {
+                 item.status = "DELIVERED";
+                 await item.save();
+             }
           }
         }
         await order.save();
@@ -222,33 +234,47 @@ let vendorIdsToClear = new Set(); // 🟢 To store Vendor IDs
 
     /* ==================================================
        🟢 CRITICAL FIX: STRICT CACHE INVALIDATION
-       We must wipe the specific caches used by Admin/User
     ================================================== */
     
-    // 1. Clear this Delivery Boy's Task List
-    await redis.del(`tasks:delivery:${boyId}`);
+    // 1. Clear Delivery Task Lists (Fixes "Active Assignments" delay)
+    await redis.del(`tasks:delivery:${boyId}`); // Specific Boy
+    await clearKeyPattern("tasks:delivery:*"); // ⚠️ Nuclear: Clears all boys to ensure Admin view updates
 
-    // 2. Clear the Specific Order Details (Used by Admin & User Details)
+    // 2. Clear Specific Order Details
     await redis.del(`order:${assignment.orderId}`);
     await redis.del(`order:admin:${assignment.orderId}`);
 
-    // 3. Clear the Admin Order List (So the table updates instantly)
+    // 3. Clear Admin Lists
     await redis.del(`orders:admin:all`);
+    await redis.del(`delivery:boys:all`); // Update load counts
+    
+    // 4. Clear Vendor Lists (Fixes "Vendor Order Page")
+    // We iterate specific IDs because wildcards can be slow if not careful
+    for (const vId of vendorIdsToClear) {
+        await redis.del(`orders:vendor:${vId}`);
+        // If Delivered, clear reports too
+        if (status === "DELIVERED") {
+            await clearKeyPattern(`reports:vendor:${vId}:*`);
+        }
+    }
+    // Safety net: Clear any general vendor cache if you have it
+    await clearKeyPattern("orders:vendor:*"); 
 
-    // 4. Clear the User's Order List (So "My Orders" updates instantly)
-    // We use clearKeyPattern because the user key includes pagination (:page:1...)
+    // 5. Clear User's Order List
     if (orderUserId) {
       await clearKeyPattern(`orders:user:${orderUserId}:*`);
     }
 
-    // 5. If Delivered, Clear Financial Reports
+    // 6. Clear Financial Reports
     if (status === "DELIVERED") {
       await redis.del(`reports:admin:total_sales`);
       await redis.del(`reports:cod:reconciliation`);
+      await redis.del(`reports:admin:vendors:sales`);
     }
 
     res.json({ message: `Task & Items updated to ${status}` });
   } catch (err) {
+    console.error("Update Status Error:", err);
     res.status(500).json({ message: err.message });
   }
 };
