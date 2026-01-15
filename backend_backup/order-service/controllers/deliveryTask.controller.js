@@ -1,27 +1,16 @@
+import { Op } from "sequelize";
 import DeliveryAssignment from "../models/DeliveryAssignment.js";
 import Order from "../models/Order.js";
-import { Op } from "sequelize";
 import OrderItem from "../models/OrderItem.js";
-import axios from "axios";
-import redis from "../config/redis.js";
+import axios from "axios"; 
 
-/* ======================================================
-   🟢 1. GET MY TASKS (For Delivery App)
-   Key changed to 'driver:tasks:...' to avoid conflict
-====================================================== */
+// 🟢 1. GET MY TASKS (Strict Filtering & Deduplication)
 export const getMyTasks = async (req, res) => {
   try {
-    const boyId = req.user.id;
-
-    // 🟢 Distinct Cache Key for Driver App
-    const cacheKey = `driver:tasks:${boyId}`;
-    const cachedData = await redis.get(cacheKey);
-
-    if (cachedData) {
-      return res.json(JSON.parse(cachedData));
-    }
+    const boyId = req.user.id; 
 
     // 1. Fetch Assignments
+    // Sort by createdAt ASC so oldest tasks get items first
     const allTasks = await DeliveryAssignment.findAll({
       where: {
         deliveryBoyId: boyId,
@@ -30,93 +19,84 @@ export const getMyTasks = async (req, res) => {
       include: [
         {
           model: Order,
-          attributes: [
-            "id",
-            "amount",
-            "address",
-            "status",
-            "paymentMethod",
-            "payment",
-            "createdAt",
-            "updatedAt",
-            "userId",
-          ],
+          attributes: ["id", "amount", "address", "status", "paymentMethod", "payment", "createdAt", "updatedAt"],
           include: [
             {
               model: OrderItem,
-              attributes: [
-                "id",
-                "productId",
-                "quantity",
-                "price",
-                "returnStatus",
-                "returnReason",
-              ],
+              attributes: ["id", "productId", "quantity", "price", "status", "returnStatus", "returnReason"],
             },
           ],
         },
       ],
-      order: [["updatedAt", "DESC"]],
-    });
+      order: [
+          ["status", "ASC"], 
+          ["createdAt", "ASC"] 
+      ],
+    }); 
 
-    // 2. Collect All Product IDs
+    // 2. Fetch Product Details (Optimization)
     const productIds = new Set();
     allTasks.forEach((task) => {
       task.Order?.OrderItems?.forEach((item) => {
         if (item.productId) productIds.add(item.productId);
       });
-    });
+    }); 
 
-    // 3. Fetch Product Details
     let productMap = {};
     if (productIds.size > 0) {
       try {
-        const idsStr = Array.from(productIds).join(",");
-        const response = await axios.get(
-          `${process.env.PRODUCT_SERVICE_URL}/batch`, // Ensure correct URL
-          { params: { ids: idsStr } } // Better to use params for Axios
-        );
-        response.data.forEach((p) => {
-          productMap[p.id] = p;
-        });
-      } catch (err) {
-        console.error("⚠️ Failed to fetch product details:", err.message);
-      }
-    }
+        const idsStr = Array.from(productIds).join(","); 
+        const response = await axios.get(`${process.env.PRODUCT_SERVICE_URL}/batch?ids=${idsStr}`); 
+        response.data.forEach((p) => { productMap[p.id] = p; });
+      } catch (err) { console.error("Product fetch error:", err.message); }
+    } 
 
-    // 4. Format Data
+    // 3. Process Tasks with DEDUPLICATION
     const active = [];
     const history = [];
+    const seenActiveItemIds = new Set(); // Tracks items already assigned to a card
     const activeStatuses = ["ASSIGNED", "PICKED", "OUT_FOR_DELIVERY"];
 
     allTasks.forEach((task) => {
       const isReturn = task.reason === "RETURN_PICKUP";
-      const type = isReturn ? "RETURN_PICKUP" : "DELIVERY";
+      const type = isReturn ? "RETURN_PICKUP" : "DELIVERY"; 
+      const isActiveTask = activeStatuses.includes(task.status);
+      let rawItems = task.Order.OrderItems || [];
 
-      let rawItems = task.Order.OrderItems;
       if (isReturn) {
-        rawItems = task.Order.OrderItems.filter((item) =>
-          ["APPROVED", "PICKUP_SCHEDULED", "COMPLETED", "RETURNED"].includes(
-            item.returnStatus
-          )
-        );
+         if (isActiveTask) {
+           // 🟢 STRICT STATUS FILTERING
+           if (task.status === "ASSIGNED") {
+              // Only show items waiting for pickup
+              rawItems = rawItems.filter(item => item.returnStatus === "APPROVED");
+           } else {
+              // PICKED / OUT_FOR_DELIVERY: Show items currently in hand
+              rawItems = rawItems.filter(item => ["APPROVED", "PICKUP_SCHEDULED"].includes(item.returnStatus));
+           }
+
+           // 🟢 DEDUPLICATION: Remove items already shown in a previous task
+           rawItems = rawItems.filter(item => !seenActiveItemIds.has(item.id));
+
+           // Mark these items as "Seen"
+           rawItems.forEach(item => seenActiveItemIds.add(item.id));
+         } else {
+           // History: Show completed returns
+           rawItems = rawItems.filter(item => ["RETURNED", "REFUNDED", "COMPLETED"].includes(item.returnStatus));
+         }
+      } 
+      else {
+         // Normal Delivery
+         rawItems = rawItems.filter(item => item.status !== "CANCELLED");
       }
 
+      // If no items remain after filtering, HIDE THE CARD
+      if (rawItems.length === 0) return;
+
       const displayItems = rawItems.map((item) => {
-        const productData = productMap[item.productId] || {
-          name: "Unknown Item",
-          imageUrl: "",
-        };
-        return {
-          ...item.toJSON(),
-          Product: productData,
-        };
+        return { ...item.toJSON(), Product: productMap[item.productId] || { name: "Unknown", imageUrl: "" } };
       });
 
-      const amountToCollect =
-        !isReturn && task.Order.paymentMethod === "COD" && !task.Order.payment
-          ? task.Order.amount
-          : 0;
+      const amountToCollect = (!isReturn && task.Order.paymentMethod === "COD" && !task.Order.payment) ? task.Order.amount : 0;
 
       const formattedTask = {
         assignmentId: task.id,
@@ -134,76 +114,77 @@ export const getMyTasks = async (req, res) => {
         items: displayItems,
       };
 
-      if (activeStatuses.includes(task.status)) {
-        active.push(formattedTask);
-      } else {
-        history.push(formattedTask);
-      }
+      if (isActiveTask) active.push(formattedTask);
+      else history.push(formattedTask);
     });
 
-    const responseData = { active, history };
-
-    // 🟢 Save to Redis (Expire in 2 minutes)
-    await redis.set(cacheKey, JSON.stringify(responseData), "EX", 120);
-
-    res.json(responseData);
+    res.json({ active, history });
   } catch (err) {
-    console.error("Delivery Task Error:", err);
     res.status(500).json({ message: err.message });
   }
 };
 
-/* ======================================================
-   🟢 2. UPDATE STATUS (Fixed: No Blocking Keys)
-====================================================== */
+
+// 🟢 2. UPDATE TASK STATUS (Auto Item Transitions)
 export const updateTaskStatus = async (req, res) => {
   try {
     const { assignmentId } = req.params;
-    const { status } = req.body;
-    const boyId = req.user.id;
+    const { status } = req.body; 
+    const boyId = req.user.id; 
 
-    // 1. Find the Assignment
     const assignment = await DeliveryAssignment.findOne({
       where: { id: assignmentId, deliveryBoyId: boyId },
     });
 
-    if (!assignment) return res.status(404).json({ message: "Task not found" });
+    if (!assignment) return res.status(404).json({ message: "Task not found" }); 
 
-    // 2. Update Assignment Status
     assignment.status = status;
-    await assignment.save();
+    await assignment.save(); 
 
-    // 3. Sync with Order Table
-    let orderUserId = null;
-    let vendorIdsToClear = new Set();
+    // 🟢 CASE 1: RETURN PICKUP
+    if (assignment.reason === "RETURN_PICKUP") {
+      const orderItems = await OrderItem.findAll({ where: { orderId: assignment.orderId } });
 
-    const order = await Order.findByPk(assignment.orderId, {
-      include: [{ model: OrderItem, attributes: ["id", "status", "vendorId"] }],
-    });
-
-    if (order) {
-      orderUserId = order.userId;
-      if (order.OrderItems) {
-        order.OrderItems.forEach((item) => {
-          if (item.vendorId) vendorIdsToClear.add(item.vendorId);
-        });
+      if (status === "PICKED") {
+         // Mark approved items as "In Transit"
+         
+         for(const item of orderItems) {
+             if (item.returnStatus === "APPROVED") {
+                 item.returnStatus = "PICKUP_SCHEDULED";
+                 await item.save();
+             }
+         }
       }
-
-      // Logic: Update Order/Items status based on delivery
-      if (assignment.reason !== "RETURN_PICKUP") {
+      else if (status === "DELIVERED") {
+         // Mark items as physically returned.
+         // This removes them from the "Active" view logic above permanently.
+         console.log(`📦 Return #${assignment.orderId} received at Warehouse.`); 
+         for(const item of orderItems) {
+             if (item.returnStatus === "PICKUP_SCHEDULED") {
+                 item.returnStatus = "RETURNED"; 
+                 await item.save();
+             }
+         }
+      }
+    } 
+    // 🟢 CASE 2: NORMAL DELIVERY
+    else {
+      const order = await Order.findByPk(assignment.orderId, { include: OrderItem });
+      if (order) {
         if (status === "PICKED") {
-          order.status = "OUT_FOR_DELIVERY";
+          order.status = "OUT_FOR_DELIVERY"; 
           for (const item of order.OrderItems) {
-            if (item.status !== "CANCELLED") {
+            if (item.status !== "CANCELLED" && item.status !== "DELIVERED" && item.returnStatus === "NONE") {
               item.status = "OUT_FOR_DELIVERY";
               await item.save();
             }
           }
-        } else if (status === "DELIVERED") {
+        } 
+        else if (status === "DELIVERED") {
           order.status = "DELIVERED";
-          order.payment = true;
+          order.payment = true; 
           for (const item of order.OrderItems) {
-            if (item.status !== "CANCELLED") {
+            if (item.status !== "CANCELLED" && item.returnStatus === "NONE") {
               item.status = "DELIVERED";
               await item.save();
             }
@@ -213,42 +194,8 @@ export const updateTaskStatus = async (req, res) => {
       }
     }
 
-    /* ==================================================
-       🟢 FIX: SPECIFIC INVALIDATION ONLY (No Wildcards)
-    ================================================== */
-
-    // 1. Clear THIS Delivery Boy's cache (Driver App & Admin View)
-    // Note: We use the NEW key names here
-    await redis.del(`driver:tasks:${boyId}`);
-    await redis.del(`admin:tasks:${boyId}`); // Assuming you renamed the admin key too
-
-    // 2. Clear Order Details
-    await redis.del(`order:${assignment.orderId}`);
-
-    // 3. Clear Vendor Lists (Specific IDs only)
-    const pipeline = redis.pipeline(); // Use pipeline for speed
-    for (const vId of vendorIdsToClear) {
-      pipeline.del(`orders:vendor:${vId}`);
-      // Only clear reports if actually delivered
-      if (status === "DELIVERED") {
-        pipeline.del(`reports:vendor:${vId}:summary`);
-      }
-    }
-
-    // 4. Clear User List (Page 1 only - strict fix)
-    if (orderUserId) {
-      pipeline.del(`orders:user:${orderUserId}:page:1:limit:10`);
-    }
-
-    // 5. Execute all deletes at once
-    await pipeline.exec();
-
-    // NOTE: We do NOT clear "orders:admin:all" or "tasks:delivery:*"
-    // because that freezes the server. Let them expire naturally (TTL).
-
     res.json({ message: `Task & Items updated to ${status}` });
   } catch (err) {
-    console.error("Update Status Error:", err);
     res.status(500).json({ message: err.message });
   }
 };
