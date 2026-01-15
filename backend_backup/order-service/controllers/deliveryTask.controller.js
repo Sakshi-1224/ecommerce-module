@@ -3,33 +3,18 @@ import Order from "../models/Order.js";
 import { Op } from "sequelize";
 import OrderItem from "../models/OrderItem.js";
 import axios from "axios";
-import redis from "../config/redis.js"; // 🟢 Import Redis
+import redis from "../config/redis.js";
 
 /* ======================================================
-   🟢 REDIS HELPER: STRICT INVALIDATION
-   (Copy this helper here too so we can clear User lists)
-====================================================== */
-const clearKeyPattern = async (pattern) => {
-  try {
-    const keys = await redis.keys(pattern);
-    if (keys.length > 0) {
-      await redis.del(keys);
-    }
-  } catch (err) {
-    console.error("Redis Clear Pattern Error:", err);
-  }
-};
-
-/* ======================================================
-   🟢 1. GET MY TASKS (Active & History)
-   (Cached with Redis)
+   🟢 1. GET MY TASKS (For Delivery App)
+   Key changed to 'driver:tasks:...' to avoid conflict
 ====================================================== */
 export const getMyTasks = async (req, res) => {
   try {
     const boyId = req.user.id;
 
-    // 🟢 Check Redis Cache
-    const cacheKey = `tasks:delivery:${boyId}`;
+    // 🟢 Distinct Cache Key for Driver App
+    const cacheKey = `driver:tasks:${boyId}`;
     const cachedData = await redis.get(cacheKey);
 
     if (cachedData) {
@@ -46,15 +31,26 @@ export const getMyTasks = async (req, res) => {
         {
           model: Order,
           attributes: [
-            "id", "amount", "address", "status", "paymentMethod",
-            "payment", "createdAt", "updatedAt", "userId" // 🟢 Added userId to help with future clearing
+            "id",
+            "amount",
+            "address",
+            "status",
+            "paymentMethod",
+            "payment",
+            "createdAt",
+            "updatedAt",
+            "userId",
           ],
           include: [
             {
               model: OrderItem,
               attributes: [
-                "id", "productId", "quantity", "price",
-                "returnStatus", "returnReason",
+                "id",
+                "productId",
+                "quantity",
+                "price",
+                "returnStatus",
+                "returnReason",
               ],
             },
           ],
@@ -77,7 +73,8 @@ export const getMyTasks = async (req, res) => {
       try {
         const idsStr = Array.from(productIds).join(",");
         const response = await axios.get(
-          `${process.env.PRODUCT_SERVICE_URL}/batch?ids=${idsStr}`
+          `${process.env.PRODUCT_SERVICE_URL}/batch`, // Ensure correct URL
+          { params: { ids: idsStr } } // Better to use params for Axios
         );
         response.data.forEach((p) => {
           productMap[p.id] = p;
@@ -157,11 +154,7 @@ export const getMyTasks = async (req, res) => {
 };
 
 /* ======================================================
-   🟢 2. UPDATE STATUS (Strict Invalidation)
-   This is where the fix happens!
-====================================================== */
-/* ======================================================
-   🟢 2. UPDATE STATUS (Fixed & Optimized)
+   🟢 2. UPDATE STATUS (Fixed: No Blocking Keys)
 ====================================================== */
 export const updateTaskStatus = async (req, res) => {
   try {
@@ -180,52 +173,40 @@ export const updateTaskStatus = async (req, res) => {
     assignment.status = status;
     await assignment.save();
 
-    // 3. Sync with Order Table & Collect IDs for Cache Clearing
+    // 3. Sync with Order Table
     let orderUserId = null;
-    let vendorIdsToClear = new Set(); 
+    let vendorIdsToClear = new Set();
 
-    // Fetch Order ONE time with Items to get all necessary IDs
     const order = await Order.findByPk(assignment.orderId, {
-      include: [{ model: OrderItem, attributes: ['id', 'status', 'vendorId'] }]
+      include: [{ model: OrderItem, attributes: ["id", "status", "vendorId"] }],
     });
 
     if (order) {
       orderUserId = order.userId;
-      
-      // Collect Vendor IDs
       if (order.OrderItems) {
-        order.OrderItems.forEach(item => {
-            if (item.vendorId) vendorIdsToClear.add(item.vendorId);
+        order.OrderItems.forEach((item) => {
+          if (item.vendorId) vendorIdsToClear.add(item.vendorId);
         });
       }
 
-      // --- LOGIC: RETURN PICKUP ---
-      if (assignment.reason === "RETURN_PICKUP") {
-        if (status === "DELIVERED") {
-           console.log(`📦 Return #${assignment.orderId} collected.`);
-           // Add specific return logic here if needed
-        }
-      } 
-      // --- LOGIC: NORMAL DELIVERY ---
-      else {
+      // Logic: Update Order/Items status based on delivery
+      if (assignment.reason !== "RETURN_PICKUP") {
         if (status === "PICKED") {
           order.status = "OUT_FOR_DELIVERY";
-          // Update items to match
           for (const item of order.OrderItems) {
-             if(item.status !== "CANCELLED") {
-                 item.status = "OUT_FOR_DELIVERY";
-                 await item.save();
-             }
+            if (item.status !== "CANCELLED") {
+              item.status = "OUT_FOR_DELIVERY";
+              await item.save();
+            }
           }
         } else if (status === "DELIVERED") {
           order.status = "DELIVERED";
-          order.payment = true; // Mark Paid
-          // Update items to match
+          order.payment = true;
           for (const item of order.OrderItems) {
-             if(item.status !== "CANCELLED") {
-                 item.status = "DELIVERED";
-                 await item.save();
-             }
+            if (item.status !== "CANCELLED") {
+              item.status = "DELIVERED";
+              await item.save();
+            }
           }
         }
         await order.save();
@@ -233,44 +214,37 @@ export const updateTaskStatus = async (req, res) => {
     }
 
     /* ==================================================
-       🟢 CRITICAL FIX: STRICT CACHE INVALIDATION
+       🟢 FIX: SPECIFIC INVALIDATION ONLY (No Wildcards)
     ================================================== */
-    
-    // 1. Clear Delivery Task Lists (Fixes "Active Assignments" delay)
-    await redis.del(`tasks:delivery:${boyId}`); // Specific Boy
-    await clearKeyPattern("tasks:delivery:*"); // ⚠️ Nuclear: Clears all boys to ensure Admin view updates
 
-    // 2. Clear Specific Order Details
+    // 1. Clear THIS Delivery Boy's cache (Driver App & Admin View)
+    // Note: We use the NEW key names here
+    await redis.del(`driver:tasks:${boyId}`);
+    await redis.del(`admin:tasks:${boyId}`); // Assuming you renamed the admin key too
+
+    // 2. Clear Order Details
     await redis.del(`order:${assignment.orderId}`);
-    await redis.del(`order:admin:${assignment.orderId}`);
 
-    // 3. Clear Admin Lists
-    await redis.del(`orders:admin:all`);
-    await redis.del(`delivery:boys:all`); // Update load counts
-    
-    // 4. Clear Vendor Lists (Fixes "Vendor Order Page")
-    // We iterate specific IDs because wildcards can be slow if not careful
+    // 3. Clear Vendor Lists (Specific IDs only)
+    const pipeline = redis.pipeline(); // Use pipeline for speed
     for (const vId of vendorIdsToClear) {
-        await redis.del(`orders:vendor:${vId}`);
-        // If Delivered, clear reports too
-        if (status === "DELIVERED") {
-            await clearKeyPattern(`reports:vendor:${vId}:*`);
-        }
+      pipeline.del(`orders:vendor:${vId}`);
+      // Only clear reports if actually delivered
+      if (status === "DELIVERED") {
+        pipeline.del(`reports:vendor:${vId}:summary`);
+      }
     }
-    // Safety net: Clear any general vendor cache if you have it
-    await clearKeyPattern("orders:vendor:*"); 
 
-    // 5. Clear User's Order List
+    // 4. Clear User List (Page 1 only - strict fix)
     if (orderUserId) {
-      await clearKeyPattern(`orders:user:${orderUserId}:*`);
+      pipeline.del(`orders:user:${orderUserId}:page:1:limit:10`);
     }
 
-    // 6. Clear Financial Reports
-    if (status === "DELIVERED") {
-      await redis.del(`reports:admin:total_sales`);
-      await redis.del(`reports:cod:reconciliation`);
-      await redis.del(`reports:admin:vendors:sales`);
-    }
+    // 5. Execute all deletes at once
+    await pipeline.exec();
+
+    // NOTE: We do NOT clear "orders:admin:all" or "tasks:delivery:*"
+    // because that freezes the server. Let them expire naturally (TTL).
 
     res.json({ message: `Task & Items updated to ${status}` });
   } catch (err) {

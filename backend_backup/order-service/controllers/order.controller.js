@@ -80,15 +80,15 @@ export const checkout = async (req, res) => {
     // 🟢 STRICT CACHE INVALIDATION
     // 1. User
     await clearKeyPattern(`orders:user:${req.user.id}:*`);
-    
+
     // 2. Admin
     await redis.del(`orders:admin:all`);
-    await redis.del(`reports:admin:total_sales`); 
-    
+    await redis.del(`reports:admin:total_sales`);
+
     // 3. Vendors
     for (const vId of vendorIdsToClear) {
       await redis.del(`orders:vendor:${vId}`);
-      await clearKeyPattern(`reports:vendor:${vId}:*`); 
+      await clearKeyPattern(`reports:vendor:${vId}:*`);
     }
 
     res.status(201).json({ message: "Order placed", orderId: order.id });
@@ -155,17 +155,20 @@ export const cancelOrderItem = async (req, res) => {
     }
 
     // 🟢 STRICT CACHE INVALIDATION
-    await redis.del(`order:${orderId}`); 
-    await redis.del(`order:admin:${orderId}`); 
-    await clearKeyPattern(`orders:user:${order.userId}:*`); 
-    await redis.del(`orders:admin:all`); 
+    await redis.del(`order:${orderId}`);
+    await redis.del(`order:admin:${orderId}`);
+    await clearKeyPattern(`orders:user:${order.userId}:*`);
+    await redis.del(`orders:admin:all`);
     await redis.del(`orders:vendor:${item.vendorId}`);
-    
-    // Find assigned boy to clear their list (Fixes History Screen)
-    const assignment = await DeliveryAssignment.findOne({ where: { orderId: orderId, status: { [Op.ne]: "FAILED" }}});
-    if (assignment) await redis.del(`tasks:delivery:${assignment.deliveryBoyId}`);
 
-    await redis.del(`reports:admin:total_sales`); 
+    // Find assigned boy to clear their list (Fixes History Screen)
+    const assignment = await DeliveryAssignment.findOne({
+      where: { orderId: orderId, status: { [Op.ne]: "FAILED" } },
+    });
+    if (assignment)
+      await redis.del(`tasks:delivery:${assignment.deliveryBoyId}`);
+
+    await redis.del(`reports:admin:total_sales`);
     await clearKeyPattern(`reports:vendor:${item.vendorId}:*`);
 
     res.json({ message: "Item cancelled", orderStatus: order.status });
@@ -235,10 +238,13 @@ export const cancelFullOrder = async (req, res) => {
     await redis.del(`order:admin:${orderId}`);
     await clearKeyPattern(`orders:user:${order.userId}:*`);
     await redis.del(`orders:admin:all`);
-    
+
     // Clear Delivery Boy Cache
-    const assignment = await DeliveryAssignment.findOne({ where: { orderId: orderId, status: { [Op.ne]: "FAILED" }}});
-    if (assignment) await redis.del(`tasks:delivery:${assignment.deliveryBoyId}`);
+    const assignment = await DeliveryAssignment.findOne({
+      where: { orderId: orderId, status: { [Op.ne]: "FAILED" } },
+    });
+    if (assignment)
+      await redis.del(`tasks:delivery:${assignment.deliveryBoyId}`);
 
     await redis.del(`reports:admin:total_sales`);
     for (const vId of vendorIdsToClear) {
@@ -326,8 +332,8 @@ export const updateOrderStatusAdmin = async (req, res) => {
       await redis.del(`order:admin:${order.id}`);
       await redis.del(`orders:admin:all`);
       await clearKeyPattern(`orders:user:${order.userId}:*`);
-      
-      const vendorIds = [...new Set(order.OrderItems.map(i => i.vendorId))];
+
+      const vendorIds = [...new Set(order.OrderItems.map((i) => i.vendorId))];
       for (const vid of vendorIds) await redis.del(`orders:vendor:${vid}`);
 
       return res.json({ message: responseMsg });
@@ -382,24 +388,24 @@ export const updateOrderStatusAdmin = async (req, res) => {
         // 🟢 Invalidate Boy's Tasks
         await redis.del(`tasks:delivery:${assignment.deliveryBoyId}`);
       }
-      
+
       // Clear Financial Reports
       await redis.del(`reports:admin:total_sales`);
       await redis.del(`reports:admin:vendors:sales`);
-    } 
+    }
     // Default Update
     else {
-        order.status = status;
-        await order.save();
+      order.status = status;
+      await order.save();
     }
 
     // 🟢 FINAL STRICT INVALIDATION (Fixes History Screen Delay)
     // 1. Find assigned boy and clear their list cache
     const activeAssignment = await DeliveryAssignment.findOne({
-        where: { orderId: order.id, status: { [Op.ne]: "FAILED" } }
+      where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
     });
     if (activeAssignment) {
-        await redis.del(`tasks:delivery:${activeAssignment.deliveryBoyId}`);
+      await redis.del(`tasks:delivery:${activeAssignment.deliveryBoyId}`);
     }
 
     // 2. Clear Standard Views
@@ -409,10 +415,11 @@ export const updateOrderStatusAdmin = async (req, res) => {
     await clearKeyPattern(`orders:user:${order.userId}:*`);
 
     // 3. Clear Vendors
-    const vendorIds = [...new Set(order.OrderItems.map(i => i.vendorId))];
+    const vendorIds = [...new Set(order.OrderItems.map((i) => i.vendorId))];
     for (const vid of vendorIds) {
-        await redis.del(`orders:vendor:${vid}`);
-        if(status === "DELIVERED") await clearKeyPattern(`reports:vendor:${vid}:*`);
+      await redis.del(`orders:vendor:${vid}`);
+      if (status === "DELIVERED")
+        await clearKeyPattern(`reports:vendor:${vid}:*`);
     }
 
     res.json({ message: `Status updated to ${status}` });
@@ -432,7 +439,10 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
 
     if (!item) return res.status(404).json({ message: "Item not found" });
 
-    if (status === "PACKED" && (item.status === "PENDING" || item.status === "PROCESSING")) {
+    if (
+      status === "PACKED" &&
+      (item.status === "PENDING" || item.status === "PROCESSING")
+    ) {
       try {
         await axios.post(
           `${process.env.PRODUCT_SERVICE_URL}/inventory/ship`,
@@ -494,10 +504,10 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
     // 🟢 STRICT INVALIDATION (Fixes History Screen Delay)
     // 1. Find assigned boy and clear cache
     const activeAssignment = await DeliveryAssignment.findOne({
-        where: { orderId: orderId, status: { [Op.ne]: "FAILED" } }
+      where: { orderId: orderId, status: { [Op.ne]: "FAILED" } },
     });
     if (activeAssignment) {
-        await redis.del(`tasks:delivery:${activeAssignment.deliveryBoyId}`);
+      await redis.del(`tasks:delivery:${activeAssignment.deliveryBoyId}`);
     }
 
     // 2. Standard Clearing
@@ -506,10 +516,10 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
     await redis.del(`orders:admin:all`);
     await clearKeyPattern(`orders:user:${orderUserId}:*`);
     await redis.del(`orders:vendor:${item.vendorId}`);
-    
-    if(status === "DELIVERED") {
-        await redis.del(`reports:admin:total_sales`);
-        await clearKeyPattern(`reports:vendor:${item.vendorId}:*`);
+
+    if (status === "DELIVERED") {
+      await redis.del(`reports:admin:total_sales`);
+      await clearKeyPattern(`reports:vendor:${item.vendorId}:*`);
     }
 
     res.json({ message: `Item updated to ${status}` });
@@ -527,12 +537,15 @@ export const vendorSalesReport = async (req, res) => {
     const { type } = req.query;
     const cacheKey = `reports:vendor:${req.user.id}:${type}`;
     const cachedData = await redis.get(cacheKey);
-    if(cachedData) return res.json(JSON.parse(cachedData));
+    if (cachedData) return res.json(JSON.parse(cachedData));
 
     let startDate;
-    if (type === "weekly") startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    else if (type === "monthly") startDate = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-    else if (type === "yearly") startDate = new Date(new Date().getFullYear(), 0, 1);
+    if (type === "weekly")
+      startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    else if (type === "monthly")
+      startDate = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    else if (type === "yearly")
+      startDate = new Date(new Date().getFullYear(), 0, 1);
 
     const sales = await OrderItem.sum("price", {
       where: {
@@ -556,12 +569,19 @@ export const adminVendorSalesReport = async (req, res) => {
     const { type } = req.query;
     const cacheKey = `reports:vendor:${vendorId}:${type}`;
     const cachedData = await redis.get(cacheKey);
-    if(cachedData) return res.json(JSON.parse(cachedData));
+    if (cachedData) return res.json(JSON.parse(cachedData));
 
     let dateCondition = {};
-    if (type === "weekly") dateCondition = { [Op.gte]: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) };
-    else if (type === "monthly") dateCondition = { [Op.gte]: new Date(new Date().getFullYear(), new Date().getMonth(), 1) };
-    else if (type === "yearly") dateCondition = { [Op.gte]: new Date(new Date().getFullYear(), 0, 1) };
+    if (type === "weekly")
+      dateCondition = {
+        [Op.gte]: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+      };
+    else if (type === "monthly")
+      dateCondition = {
+        [Op.gte]: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+      };
+    else if (type === "yearly")
+      dateCondition = { [Op.gte]: new Date(new Date().getFullYear(), 0, 1) };
     else if (type === "all") dateCondition = {};
 
     const totalSales = await OrderItem.sum("price", {
@@ -584,9 +604,11 @@ export const adminTotalSales = async (req, res) => {
   try {
     const cacheKey = `reports:admin:total_sales`;
     const cachedData = await redis.get(cacheKey);
-    if(cachedData) return res.json(JSON.parse(cachedData));
+    if (cachedData) return res.json(JSON.parse(cachedData));
 
-    const total = await OrderItem.sum("price", { where: { status: "DELIVERED" } });
+    const total = await OrderItem.sum("price", {
+      where: { status: "DELIVERED" },
+    });
     const result = { totalSales: total || 0 };
     await redis.set(cacheKey, JSON.stringify(result), "EX", 300);
     res.json(result);
@@ -599,7 +621,7 @@ export const adminAllVendorsSalesReport = async (req, res) => {
   try {
     const cacheKey = `reports:admin:vendors:sales`;
     const cachedData = await redis.get(cacheKey);
-    if(cachedData) return res.json(JSON.parse(cachedData));
+    if (cachedData) return res.json(JSON.parse(cachedData));
 
     const sales = await OrderItem.findAll({
       attributes: [
@@ -609,7 +631,7 @@ export const adminAllVendorsSalesReport = async (req, res) => {
       where: { status: "DELIVERED" },
       group: ["vendorId"],
     });
-    
+
     const result = { vendors: sales };
     await redis.set(cacheKey, JSON.stringify(result), "EX", 300);
     res.json(result);
@@ -625,10 +647,10 @@ export const getUserOrders = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
-    
+
     const cacheKey = `orders:user:${req.user.id}:page:${page}:limit:${limit}`;
     const cachedData = await redis.get(cacheKey);
-    if(cachedData) return res.json(JSON.parse(cachedData));
+    if (cachedData) return res.json(JSON.parse(cachedData));
 
     const offset = (page - 1) * limit;
 
@@ -646,7 +668,7 @@ export const getUserOrders = async (req, res) => {
       totalPages: Math.ceil(count / limit),
       currentPage: page,
     };
-    
+
     await redis.set(cacheKey, JSON.stringify(result), "EX", 120);
     res.json(result);
   } catch (err) {
@@ -658,14 +680,14 @@ export const getOrderById = async (req, res) => {
   try {
     const cacheKey = `order:${req.params.id}`;
     const cachedData = await redis.get(cacheKey);
-    if(cachedData) return res.json(JSON.parse(cachedData));
+    if (cachedData) return res.json(JSON.parse(cachedData));
 
     const order = await Order.findOne({
       where: { id: req.params.id, userId: req.user.id },
       include: OrderItem,
     });
-    
-    if(order) await redis.set(cacheKey, JSON.stringify(order), "EX", 120);
+
+    if (order) await redis.set(cacheKey, JSON.stringify(order), "EX", 120);
     res.json(order);
   } catch {
     res.status(500).json({ message: "Failed" });
@@ -676,13 +698,13 @@ export const trackOrder = async (req, res) => {
   try {
     const cacheKey = `order:track:${req.params.id}`;
     const cachedData = await redis.get(cacheKey);
-    if(cachedData) return res.json(JSON.parse(cachedData));
+    if (cachedData) return res.json(JSON.parse(cachedData));
 
     const order = await Order.findOne({
       where: { id: req.params.id },
       include: OrderItem,
     });
-    
+
     await redis.set(cacheKey, JSON.stringify(order), "EX", 30);
     res.json(order);
   } catch {
@@ -694,13 +716,13 @@ export const getAllOrdersAdmin = async (req, res) => {
   try {
     const cacheKey = `orders:admin:all`;
     const cachedData = await redis.get(cacheKey);
-    if(cachedData) return res.json(JSON.parse(cachedData));
+    if (cachedData) return res.json(JSON.parse(cachedData));
 
     const orders = await Order.findAll({
       include: OrderItem,
       order: [["createdAt", "DESC"]],
     });
-    
+
     await redis.set(cacheKey, JSON.stringify(orders), "EX", 60);
     res.json(orders);
   } catch {
@@ -712,7 +734,7 @@ export const getOrderByIdAdmin = async (req, res) => {
   try {
     const cacheKey = `order:admin:${req.params.id}`;
     const cachedData = await redis.get(cacheKey);
-    if(cachedData) return res.json(JSON.parse(cachedData));
+    if (cachedData) return res.json(JSON.parse(cachedData));
 
     const order = await Order.findByPk(req.params.id, {
       include: [
@@ -723,8 +745,8 @@ export const getOrderByIdAdmin = async (req, res) => {
         },
       ],
     });
-    
-    if(order) await redis.set(cacheKey, JSON.stringify(order), "EX", 60);
+
+    if (order) await redis.set(cacheKey, JSON.stringify(order), "EX", 60);
     res.json(order);
   } catch {
     res.status(500).json({ message: "Failed" });
@@ -735,7 +757,7 @@ export const getVendorOrders = async (req, res) => {
   try {
     const cacheKey = `orders:vendor:${req.user.id}`;
     const cachedData = await redis.get(cacheKey);
-    if(cachedData) return res.json(JSON.parse(cachedData));
+    if (cachedData) return res.json(JSON.parse(cachedData));
 
     const items = await OrderItem.findAll({
       where: { vendorId: req.user.id },
@@ -788,7 +810,7 @@ export const getAllDeliveryBoys = async (req, res) => {
   try {
     const cacheKey = `delivery:boys:all`;
     const cachedData = await redis.get(cacheKey);
-    if(cachedData) return res.json(JSON.parse(cachedData));
+    if (cachedData) return res.json(JSON.parse(cachedData));
     const boys = await DeliveryBoy.findAll();
     await redis.set(cacheKey, JSON.stringify(boys), "EX", 300);
     res.json(boys);
@@ -803,21 +825,23 @@ export const createDeliveryBoy = async (req, res) => {
       ...req.body,
       active: true,
     });
-    
+
     // 🟢 STRICT INVALIDATION
     await redis.del(`delivery:boys:all`);
     await redis.del(`locations:tree`);
 
     res.status(201).json(newBoy);
   } catch (err) {
-    res.status(500).json({ message: "Failed to create delivery boy", error: err.message });
+    res
+      .status(500)
+      .json({ message: "Failed to create delivery boy", error: err.message });
   }
 };
 
 export const deleteDeliveryBoy = async (req, res) => {
   try {
     await DeliveryBoy.destroy({ where: { id: req.params.id } });
-    
+
     // 🟢 STRICT INVALIDATION
     await redis.del(`delivery:boys:all`);
     await redis.del(`locations:tree`);
@@ -831,7 +855,7 @@ export const deleteDeliveryBoy = async (req, res) => {
 export const updateDeliveryBoy = async (req, res) => {
   try {
     await DeliveryBoy.update(req.body, { where: { id: req.params.id } });
-    
+
     // 🟢 STRICT INVALIDATION
     await redis.del(`delivery:boys:all`);
     await redis.del(`locations:tree`);
@@ -941,8 +965,14 @@ export const reassignDeliveryBoy = async (req, res) => {
     const orderId = parseInt(rawId, 10);
     const { newDeliveryBoyId } = req.body;
 
-    if (isNaN(orderId)) { await t.rollback(); return res.status(400).json({ message: "Invalid Order ID" }); }
-    if (!newDeliveryBoyId) { await t.rollback(); return res.status(400).json({ message: "Missing New Delivery Boy ID" }); }
+    if (isNaN(orderId)) {
+      await t.rollback();
+      return res.status(400).json({ message: "Invalid Order ID" });
+    }
+    if (!newDeliveryBoyId) {
+      await t.rollback();
+      return res.status(400).json({ message: "Missing New Delivery Boy ID" });
+    }
 
     const currentAssignment = await DeliveryAssignment.findOne({
       where: { orderId: orderId, status: { [Op.or]: ["ASSIGNED", "PICKED"] } },
@@ -986,7 +1016,7 @@ export const getCODReconciliation = async (req, res) => {
   try {
     const cacheKey = `reports:cod:reconciliation`;
     const cachedData = await redis.get(cacheKey);
-    if(cachedData) return res.json(JSON.parse(cachedData));
+    if (cachedData) return res.json(JSON.parse(cachedData));
 
     const pendingAssignments = await DeliveryAssignment.findAll({
       where: {
@@ -1124,7 +1154,7 @@ export const settleCOD = async (req, res) => {
       return res
         .status(404)
         .json({ message: "No matching unsettled orders found." });
-    
+
     // 🟢 STRICT INVALIDATION
     await redis.del(`reports:cod:reconciliation`);
     await redis.del(`tasks:delivery:${deliveryBoyId}`);
@@ -1139,7 +1169,7 @@ export const getDeliveryLocations = async (req, res) => {
   try {
     const cacheKey = `locations:tree`;
     const cachedData = await redis.get(cacheKey);
-    if(cachedData) return res.json(JSON.parse(cachedData));
+    if (cachedData) return res.json(JSON.parse(cachedData));
 
     const boys = await DeliveryBoy.findAll({
       where: { active: true },
@@ -1234,28 +1264,39 @@ export const getReassignmentOptions = async (req, res) => {
   }
 };
 
+/* ======================================================
+   GET DELIVERY BOY ORDERS (Fully Aggregated)
+   Fixes: "Partial Loading" and "Slow Data"
+====================================================== */
 export const getDeliveryBoyOrders = async (req, res) => {
   try {
     const deliveryBoyId = req.params.id || req.user.id;
-    
-    // 🟢 Cache specific to this boy
-    const cacheKey = `tasks:delivery:${deliveryBoyId}`;
+    const cacheKey = `admin:tasks:${deliveryBoyId}`;
+    // 1. Check Cache
     const cachedData = await redis.get(cacheKey);
-    if(cachedData) return res.json(JSON.parse(cachedData));
+    if (cachedData) {
+      return res.json(JSON.parse(cachedData));
+    }
 
-    const assignments = await DeliveryAssignment.findAll({
-      where: {
-        deliveryBoyId: deliveryBoyId,
-        status: { [Op.ne]: "FAILED" },
-      },
+    // 2. Fetch Active & History (Limit History to 50)
+    // We only fetch the IDs and basic data here
+    const fetchOptions = {
+      where: { deliveryBoyId: deliveryBoyId },
       include: [
         {
           model: Order,
           required: true,
           attributes: [
-            "id", "amount", "address", "status", "paymentMethod",
-            "payment", "date", "assignedArea",
-          ],
+            "id",
+            "amount",
+            "address",
+            "status",
+            "paymentMethod",
+            "payment",
+            "date",
+            "assignedArea",
+            "userId",
+          ], // Added userId
           include: [
             {
               model: OrderItem,
@@ -1264,24 +1305,60 @@ export const getDeliveryBoyOrders = async (req, res) => {
           ],
         },
       ],
-      order: [
-        ["status", "ASC"],
-        ["createdAt", "DESC"],
-      ],
-    });
-
-    const response = {
-      active: [],
-      history: [],
+      order: [["createdAt", "DESC"]],
     };
 
-    assignments.forEach((a) => {
+    const activeAssignments = await DeliveryAssignment.findAll({
+      ...fetchOptions,
+      where: {
+        ...fetchOptions.where,
+        status: { [Op.or]: ["ASSIGNED", "PICKED", "OUT_FOR_DELIVERY"] },
+      },
+    });
+
+    const historyAssignments = await DeliveryAssignment.findAll({
+      ...fetchOptions,
+      where: {
+        ...fetchOptions.where,
+        status: {
+          [Op.notIn]: ["ASSIGNED", "PICKED", "OUT_FOR_DELIVERY", "FAILED"],
+        },
+      },
+      limit: 50, // Keep the limit!
+    });
+
+    // 3. AGGREGATION: Collect all unique Product IDs and User IDs
+    const allAssignments = [...activeAssignments, ...historyAssignments];
+    const productIds = new Set();
+    const userIds = new Set();
+
+    allAssignments.forEach((a) => {
+      if (a.Order.userId) userIds.add(a.Order.userId);
+      a.Order.OrderItems.forEach((item) => productIds.add(item.productId));
+    });
+
+    // 4. BATCH FETCH: Get details from other Microservices
+    // NOTE: This assumes you have access to these services via HTTP or direct DB (Microservice pattern usually requires HTTP)
+    // If you don't have endpoints for this, the Frontend must handle it, but it's slower.
+    // Assuming 'address' field in Order ALREADY contains the snapshot, we might not need User Service.
+    // But if 'address' is missing, that's your issue.
+
+    // For now, we will format what we have. If Address is inside the Order object, it should show instantly.
+
+    const formatOrder = (a) => {
       const isCodUnsettled =
         a.Order.paymentMethod === "COD" &&
         !a.cashDeposited &&
         a.Order.status !== "CANCELLED";
 
-      const orderData = {
+      // Parse address if it is stored as a stringified JSON
+      let parsedAddress = a.Order.address;
+      try {
+        if (typeof parsedAddress === "string")
+          parsedAddress = JSON.parse(parsedAddress);
+      } catch (e) {}
+
+      return {
         assignmentId: a.id,
         assignmentStatus: a.status,
         cashToCollect: isCodUnsettled ? a.Order.amount : 0,
@@ -1291,22 +1368,26 @@ export const getDeliveryBoyOrders = async (req, res) => {
         payment: a.Order.payment,
         status: a.Order.status,
         date: a.Order.date,
-        address: a.Order.address,
-        assignedArea: a.Order.assignedArea,
+        // Ensure these fields are explicitly passed
+        address: parsedAddress,
+        assignedArea: a.Order.assignedArea || parsedAddress?.area || "N/A", // Fallback if missing
         OrderItems: a.Order.OrderItems,
       };
+    };
 
-      if (["ASSIGNED", "PICKED", "OUT_FOR_DELIVERY"].includes(a.status)) {
-        response.active.push(orderData);
-      } else {
-        response.history.push(orderData);
-      }
-    });
+    const response = {
+      active: activeAssignments.map(formatOrder),
+      history: historyAssignments.map(formatOrder),
+    };
 
-    await redis.set(cacheKey, JSON.stringify(response), "EX", 30);
+    // 5. Cache and Send
+    await redis.set(cacheKey, JSON.stringify(response), "EX", 30); // 30 seconds cache
     res.json(response);
   } catch (err) {
-    res.status(500).json({ message: "Failed to fetch orders", error: err.message });
+    console.error("Delivery Orders Error:", err);
+    res
+      .status(500)
+      .json({ message: "Failed to fetch orders", error: err.message });
   }
 };
 
@@ -1447,7 +1528,9 @@ export const updateReturnStatusAdmin = async (req, res) => {
       item.returnStatus = "REFUNDED";
     } else {
       await t.rollback();
-      return res.status(400).json({ message: `Invalid Status Sent: ${status}` });
+      return res
+        .status(400)
+        .json({ message: `Invalid Status Sent: ${status}` });
     }
 
     await item.save({ transaction: t });
@@ -1459,7 +1542,7 @@ export const updateReturnStatusAdmin = async (req, res) => {
     await redis.del(`order:admin:${orderId}`);
     await clearKeyPattern(`orders:user:${item.Order.userId}:*`);
     await redis.del(`reports:admin:total_sales`);
-    
+
     // Clear involved Vendor
     await redis.del(`orders:vendor:${item.vendorId}`);
     await clearKeyPattern(`reports:vendor:${item.vendorId}:*`);
@@ -1533,6 +1616,8 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
     res.json(formattedReturns);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Failed to fetch returns", error: err.message });
+    res
+      .status(500)
+      .json({ message: "Failed to fetch returns", error: err.message });
   }
 };
