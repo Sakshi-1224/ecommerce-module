@@ -2,7 +2,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import minioClient, { initBucket } from "../config/minioClient.js";
-import redis from "../config/redis.js"; // 🟢 1. IMPORT REDIS
+import redis from "../config/redis.js";
 
 const BUCKET_NAME = "user-profiles";
 
@@ -12,7 +12,16 @@ const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const register = async (req, res) => {
   try {
-    const { name, email, phone, password, bankAccountHolderName, bankName, accountNumber, ifscCode } = req.body;
+    const {
+      name,
+      email,
+      phone,
+      password,
+      bankAccountHolderName,
+      bankName,
+      accountNumber, // 🟢 Frontend sends 'accountNumber'
+      ifscCode, // 🟢 Frontend sends 'ifscCode'
+    } = req.body;
 
     // 1. Basic Validation
     if (!name || !email || !phone || !password) {
@@ -21,7 +30,7 @@ export const register = async (req, res) => {
       });
     }
 
-    // 2. Bank Details Validation (Negative Checks)
+    // 2. Bank Details Validation
     const hasBankDetails = bankName || accountNumber || ifscCode;
     if (hasBankDetails) {
       if (!bankName || !accountNumber || !ifscCode) {
@@ -29,11 +38,12 @@ export const register = async (req, res) => {
           message: "Please provide all bank details (Name, Account No, IFSC)",
         });
       }
-      
+
       const accountRegex = /^\d{9,18}$/;
       if (!accountRegex.test(accountNumber)) {
         return res.status(400).json({
-          message: "Invalid Account Number. It must contain only digits (9-18 chars).",
+          message:
+            "Invalid Account Number. It must contain only digits (9-18 chars).",
         });
       }
 
@@ -45,7 +55,7 @@ export const register = async (req, res) => {
       }
     }
 
-    // 3. Standard Validations (Phone, Email, Password)
+    // 3. Standard Validations
     if (!phone || !/^\d{10}$/.test(phone)) {
       return res.status(400).json({
         message: "Phone number must be exactly 10 digits",
@@ -66,7 +76,8 @@ export const register = async (req, res) => {
 
     if (!/(?=.*[A-Z])(?=.*\d)/.test(password)) {
       return res.status(400).json({
-        message: "Password must contain at least one number and one uppercase letter",
+        message:
+          "Password must contain at least one number and one uppercase letter",
       });
     }
 
@@ -86,8 +97,10 @@ export const register = async (req, res) => {
       role: "user",
       bankAccountHolderName: bankAccountHolderName || name,
       bankName: bankName || null,
-      accountNumber: accountNumber || null,
-      ifscCode: ifscCode || null
+
+      // 🟢 CRITICAL FIX: Map Frontend names to DB Columns
+      bankAccountNumber: accountNumber || null,
+      bankIFSC: ifscCode || null,
     });
 
     const token = jwt.sign(
@@ -111,11 +124,11 @@ export const register = async (req, res) => {
         profilePic: user.profilePic,
         bankAccountHolderName: user.bankAccountHolderName,
         bankName: user.bankName,
-        accountNumber: user.accountNumber,
-        ifscCode: user.ifscCode
+        // 🟢 Return as Frontend expects
+        accountNumber: user.bankAccountNumber,
+        ifscCode: user.bankIFSC,
       },
     });
-
   } catch (err) {
     console.error(err);
     res.status(500).json({
@@ -160,8 +173,9 @@ export const login = async (req, res) => {
         profilePic: user.profilePic,
         role: user.role,
         bankName: user.bankName,
-        accountNumber: user.accountNumber,
-        ifscCode: user.ifscCode
+        // 🟢 Map DB columns to Frontend keys
+        accountNumber: user.bankAccountNumber,
+        ifscCode: user.bankIFSC,
       },
     });
   } catch (err) {
@@ -172,20 +186,14 @@ export const login = async (req, res) => {
   }
 };
 
-/* ======================================================
-   🟢 2. LOGOUT FUNCTION (Redis Blacklist)
-====================================================== */
 export const logout = async (req, res) => {
   try {
     const token = req.headers.authorization?.split(" ")[1];
-
     if (token) {
-      // Add token to Redis Blacklist for 7 days (604800 seconds)
       const key = `blacklist:${token}`;
       await redis.set(key, "true", "EX", 604800);
       console.log(`🚫 Token blacklisted: ${token.substring(0, 10)}...`);
     }
-
     res.json({ message: "Logout successful" });
   } catch (err) {
     console.error(err);
@@ -195,6 +203,10 @@ export const logout = async (req, res) => {
   }
 };
 
+/* ======================================================
+   🟢 ME FUNCTION (CRITICAL FIX FOR PROFILE PAGE)
+   Maps DB columns to Frontend keys (accountNumber, ifscCode)
+====================================================== */
 export const me = async (req, res) => {
   try {
     const user = await User.findByPk(req.user.id, {
@@ -204,7 +216,20 @@ export const me = async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
-    res.json(user);
+
+    // 🟢 Manually construct the response to ensure keys match Frontend
+    res.json({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      profilePic: user.profilePic,
+      bankName: user.bankName,
+      bankAccountHolderName: user.bankAccountHolderName,
+      accountNumber: user.bankAccountNumber, // 🟢 MAP: bankAccountNumber -> accountNumber
+      ifscCode: user.bankIFSC, // 🟢 MAP: bankIFSC -> ifscCode
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Internal server error" });
@@ -217,25 +242,18 @@ export const changePassword = async (req, res) => {
     const userId = req.user.id;
 
     if (!oldPassword || !newPassword) {
-      return res.status(400).json({
-        message: "Old password and new password are required",
-      });
+      return res
+        .status(400)
+        .json({ message: "Old password and new password are required" });
     }
-
     const user = await User.findByPk(userId);
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
+    if (!user) return res.status(404).json({ message: "User not found" });
 
     const isMatch = await bcrypt.compare(oldPassword, user.password);
-
-    if (!isMatch) {
+    if (!isMatch)
       return res.status(400).json({ message: "Old password is incorrect" });
-    }
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-
     user.password = hashedPassword;
     await user.save();
 
@@ -246,14 +264,12 @@ export const changePassword = async (req, res) => {
   }
 };
 
-// admin
 export const getAllUsers = async (req, res) => {
   try {
     const users = await User.findAll({
       attributes: { exclude: ["password"] },
       order: [["createdAt", "DESC"]],
     });
-
     res.json(users);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -264,11 +280,9 @@ export const updateProfile = async (req, res) => {
   try {
     const { name, email } = req.body;
     const userId = req.user.id;
-
     const user = await User.findByPk(userId);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    // 1. Handle Text Updates
     if (name) user.name = name;
     if (email && email !== user.email) {
       const exists = await User.findOne({ where: { email } });
@@ -277,15 +291,12 @@ export const updateProfile = async (req, res) => {
       user.email = email;
     }
 
-    // 2. Handle File Upload to MinIO
     if (req.file) {
       const file = req.file;
-
       const fileName = `${Date.now()}-${file.originalname.replace(
         /\s+/g,
         "-"
       )}`;
-
       await minioClient.putObject(
         BUCKET_NAME,
         fileName,
@@ -293,9 +304,7 @@ export const updateProfile = async (req, res) => {
         file.size,
         { "Content-Type": file.mimetype }
       );
-
-      const imageUrl = `http://localhost:9000/${BUCKET_NAME}/${fileName}`;
-      user.profilePic = imageUrl;
+      user.profilePic = `http://localhost:9000/${BUCKET_NAME}/${fileName}`;
     }
 
     await user.save();
@@ -309,6 +318,10 @@ export const updateProfile = async (req, res) => {
         phone: user.phone,
         profilePic: user.profilePic,
         role: user.role,
+        // 🟢 Ensure we return bank details here too
+        bankName: user.bankName,
+        accountNumber: user.bankAccountNumber,
+        ifscCode: user.bankIFSC,
       },
     });
   } catch (error) {
@@ -317,21 +330,28 @@ export const updateProfile = async (req, res) => {
   }
 };
 
-
-
 export const updateBankDetails = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { 
-      bankAccountHolderName, 
-      bankAccountNumber, 
-      bankIFSC, 
-      bankName 
+    const {
+      bankAccountHolderName,
+      bankName,
+      accountNumber, // 🟢 Frontend alias
+      ifscCode, // 🟢 Frontend alias
+      // Fallbacks in case you send DB names
+      bankAccountNumber,
+      bankIFSC,
     } = req.body;
 
+    // 🟢 Smart assignment: use whatever the frontend sent
+    const finalAccNum = accountNumber || bankAccountNumber;
+    const finalIFSC = ifscCode || bankIFSC;
+
     // 1. Validation
-    if (!bankAccountNumber || !bankIFSC) {
-      return res.status(400).json({ message: "Account Number and IFSC are required" });
+    if (!finalAccNum || !finalIFSC) {
+      return res
+        .status(400)
+        .json({ message: "Account Number and IFSC are required" });
     }
 
     const user = await User.findByPk(userId);
@@ -339,41 +359,38 @@ export const updateBankDetails = async (req, res) => {
 
     // 2. Update DB
     user.bankAccountHolderName = bankAccountHolderName;
-    user.bankAccountNumber = bankAccountNumber;
-    user.bankIFSC = bankIFSC;
+    user.bankAccountNumber = finalAccNum;
+    user.bankIFSC = finalIFSC;
     user.bankName = bankName;
 
     await user.save();
 
-    // 🟢 3. STRICT INVALIDATION
-    // Delete the specific bank detail cache for this user
+    // 3. Strict Invalidation
     await redis.del(`user:bank:${userId}`);
-    // Also clear the full profile cache if you store bank info there
     await redis.del(`user:profile:${userId}`);
 
-    res.json({ message: "Bank details updated successfully", bankDetails: {
-      holder: user.bankAccountHolderName,
-      account: user.bankAccountNumber,
-      ifsc: user.bankIFSC,
-      bank: user.bankName
-    }});
-
+    res.json({
+      message: "Bank details updated successfully",
+      // 🟢 Return MAPPED keys for Frontend
+      bankDetails: {
+        holder: user.bankAccountHolderName,
+        bank: user.bankName,
+        accountNumber: user.bankAccountNumber,
+        ifscCode: user.bankIFSC,
+      },
+    });
   } catch (err) {
     console.error("Update Bank Error:", err);
     res.status(500).json({ message: "Failed to update bank details" });
   }
 };
 
-/* ======================================================
-   USER: GET MY BANK DETAILS
-   (Read Cache -> DB -> Write Cache)
-====================================================== */
 export const getMyBankDetails = async (req, res) => {
   try {
     const userId = req.user.id;
     const cacheKey = `user:bank:${userId}`;
 
-    // 🟢 1. Check Redis
+    // 1. Check Redis
     const cachedData = await redis.get(cacheKey);
     if (cachedData) {
       return res.json(JSON.parse(cachedData));
@@ -381,33 +398,33 @@ export const getMyBankDetails = async (req, res) => {
 
     // 2. Fetch DB
     const user = await User.findByPk(userId, {
-      attributes: ["bankAccountHolderName", "bankAccountNumber", "bankIFSC", "bankName"]
+      attributes: [
+        "bankAccountHolderName",
+        "bankAccountNumber",
+        "bankIFSC",
+        "bankName",
+      ],
     });
 
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    // Format response (handle nulls gracefully)
+    // 🟢 3. Format Response (Use Frontend Keys: accountNumber, ifscCode)
     const bankDetails = {
       bankAccountHolderName: user.bankAccountHolderName || "",
-      bankAccountNumber: user.bankAccountNumber || "",
-      bankIFSC: user.bankIFSC || "",
-      bankName: user.bankName || ""
+      bankName: user.bankName || "",
+      accountNumber: user.bankAccountNumber || "", // 🟢 Mapped
+      ifscCode: user.bankIFSC || "", // 🟢 Mapped
     };
 
-    // 🟢 3. Set Cache (1 Hour - Bank details change rarely)
+    // 4. Set Cache
     await redis.set(cacheKey, JSON.stringify(bankDetails), "EX", 3600);
 
     res.json(bankDetails);
-
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch bank details" });
   }
 };
 
-/* ======================================================
-   ADMIN: GET USER BANK DETAILS
-   (Uses the SAME cache key as the user to ensure consistency)
-====================================================== */
 export const getUserBankDetailsAdmin = async (req, res) => {
   try {
     const userId = req.params.id; // Get ID from URL params
@@ -421,7 +438,16 @@ export const getUserBankDetailsAdmin = async (req, res) => {
 
     // 2. Fetch DB
     const user = await User.findByPk(userId, {
-      attributes: ["id", "name", "email", "phone", "bankAccountHolderName", "bankAccountNumber", "bankIFSC", "bankName"]
+      attributes: [
+        "id",
+        "name",
+        "email",
+        "phone",
+        "bankAccountHolderName",
+        "bankAccountNumber",
+        "bankIFSC",
+        "bankName",
+      ],
     });
 
     if (!user) return res.status(404).json({ message: "User not found" });
@@ -432,14 +458,13 @@ export const getUserBankDetailsAdmin = async (req, res) => {
       bankAccountHolderName: user.bankAccountHolderName || "Not Provided",
       bankAccountNumber: user.bankAccountNumber || "Not Provided",
       bankIFSC: user.bankIFSC || "Not Provided",
-      bankName: user.bankName || "Not Provided"
+      bankName: user.bankName || "Not Provided",
     };
 
     // 🟢 3. Set Cache
     await redis.set(cacheKey, JSON.stringify(responseData), "EX", 3600);
 
     res.json(responseData);
-
   } catch (err) {
     console.error("Admin Bank Fetch Error:", err);
     res.status(500).json({ message: "Failed to fetch user bank details" });
