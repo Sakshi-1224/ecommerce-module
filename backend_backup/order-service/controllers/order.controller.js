@@ -7,7 +7,7 @@ import sequelize from "../config/db.js";
 import axios from "axios";
 
 const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL;
-
+const USER_SERVICE_URL = process.env.USER_SERVICE_URL;
 /* ======================================================
    USER: CHECKOUT
 ====================================================== */
@@ -1373,6 +1373,7 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
         acc.push({
           itemId: item.id,
           orderId: item.Order.id,
+          userId: item.Order.userId,
           productId: item.productId,
           productName: productData.name, 
           productImage: productData.imageUrl, 
@@ -1392,6 +1393,36 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
       }
       return acc;
     }, []);
+// 👇 INSERT THIS BLOCK HERE 👇
+    // ---------------------------------------------------------
+    if (formattedReturns.length > 0) {
+      const uniqueUserIds = [...new Set(formattedReturns.map((r) => r.userId))];
+      const userBankDetailsMap = {};
+
+      await Promise.all(
+        uniqueUserIds.map(async (uid) => {
+          try {
+            const { data } = await axios.get(
+              `${USER_SERVICE_URL}/admin/${uid}/bank-details`,
+              { headers: { Authorization: req.headers.authorization } }
+            );
+            userBankDetailsMap[uid] = data;
+          } catch (e) {
+            console.error(`Failed to fetch bank details for user ${uid}`);
+          }
+        })
+      );
+
+      formattedReturns.forEach((r) => {
+        const bankData = userBankDetailsMap[r.userId];
+        if (bankData) {
+          r.bankName = bankData.bankName;
+          r.accountNumber = bankData.bankAccountNumber;
+          r.ifscCode = bankData.bankIFSC;
+        }
+      });
+    }
+    // ---------------------------------------------------------
 
     res.json(formattedReturns);
   } catch (err) {
