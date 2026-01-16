@@ -1113,6 +1113,9 @@ export const getDeliveryBoyOrders = async (req, res) => {
       return {
         assignmentId: a.id,
         assignmentStatus: a.status,
+        // 🟢 3. Send the Type to Frontend
+        type: isReturnTask ? "RETURN" : "DELIVERY",
+        // 🟢 4. Force Cash to 0 if Return
         cashToCollect: isCodUnsettled ? a.Order.amount : 0,
         id: a.Order.id,
         amount: a.Order.amount,
