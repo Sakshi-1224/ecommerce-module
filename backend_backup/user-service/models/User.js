@@ -35,19 +35,23 @@ const User = sequelize.define("User", {
   },
   bankAccountHolderName: { 
     type: DataTypes.STRING, 
-    allowNull: false
+    allowNull: true,
+    defaultValue: null,
    },
   bankName: {
     type: DataTypes.STRING,
-    allowNull: false,
+    allowNull: true,
+    defaultValue: null,
   },
   bankAccountNumber: {
     type: DataTypes.STRING,
-    allowNull: false,
+    allowNull: true,
+    defaultValue: null,
   },
   bankIFSC: {
     type: DataTypes.STRING,
-    allowNull: false,
+    allowNull: true,
+    defaultValue: null,
   },
 });
 

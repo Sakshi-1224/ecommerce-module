@@ -1182,32 +1182,115 @@ export const getDeliveryBoyOrders = async (req, res) => {
 ====================================================== */
 
 export const requestReturn = async (req, res) => {
+  const t = await sequelize.transaction();
   try {
     const { orderId, itemId } = req.params;
-    const { reason } = req.body;
+    const { reason, refundMethod, bankDetails } = req.body; 
+    // bankDetails = { bankAccountHolderName, bankAccountNumber, bankIFSC, bankName }
+
     const userId = req.user.id;
 
+    // 1. Fetch Item & Order
     const item = await OrderItem.findOne({
       where: { id: itemId, orderId },
       include: [{ model: Order, where: { userId } }],
+      transaction: t,
     });
 
-    if (!item) return res.status(404).json({ message: "Item not found" });
-    if (item.status !== "DELIVERED")
+    if (!item) {
+      await t.rollback();
+      return res.status(404).json({ message: "Item not found" });
+    }
+    if (item.status !== "DELIVERED") {
+      await t.rollback();
       return res.status(400).json({ message: "Item must be delivered first." });
-    if (item.returnStatus !== "NONE")
+    }
+    if (item.returnStatus !== "NONE") {
+      await t.rollback();
       return res.status(400).json({ message: "Return already active." });
+    }
 
+    // 🟢 2. CHECK IF BANK DETAILS ARE REQUIRED
+    const orderPaymentMethod = item.Order.paymentMethod; // 'COD' or 'RAZORPAY'
+    let requiresBankCheck = false;
+
+    if (orderPaymentMethod === "RAZORPAY") {
+        requiresBankCheck = true; // Online orders always refund to bank
+    } else if (orderPaymentMethod === "COD" && refundMethod === "BANK") {
+        requiresBankCheck = true; // COD orders only if user chooses Bank Transfer
+    }
+
+    // 🟢 3. VERIFY OR SAVE BANK DETAILS
+    if (requiresBankCheck) {
+        
+        // CASE A: User sent new details (Frontend asked for them) -> SAVE & PROCEED
+        if (bankDetails) {
+            try {
+                // 1. Automatically call User Service to Save/Update Profile
+                await axios.put(
+                    `${USER_SERVICE_URL}/profile/bank-details`,
+                    bankDetails,
+                    { headers: { Authorization: req.headers.authorization } }
+                );
+                // 2. Success! Details saved. Proceed to create return.
+            } catch (userErr) {
+                await t.rollback();
+                console.error("Bank Save Failed:", userErr.message);
+                return res.status(400).json({ 
+                    message: "Failed to save Bank Details. Please check your inputs." 
+                });
+            }
+        } 
+        
+        // CASE B: User sent NO details -> CHECK EXISTING PROFILE
+        else {
+            try {
+                const { data: userProfile } = await axios.get(
+                    `${USER_SERVICE_URL}/profile`,
+                    { headers: { Authorization: req.headers.authorization } }
+                );
+
+                // If profile is missing the account number, we STOP here.
+                if (!userProfile.bankAccountNumber) {
+                    await t.rollback();
+                    return res.status(400).json({ 
+                        // 🔴 IMPORTANT: This code tells Frontend to show the "Add Bank Details" form
+                        error_code: "REQUIRE_BANK_DETAILS", 
+                        message: "Bank details missing. Please add bank details to proceed." 
+                    });
+                }
+                // If present, we proceed using the existing profile data.
+            } catch (fetchErr) {
+                await t.rollback();
+                console.error("Profile Fetch Failed:", fetchErr.message);
+                return res.status(500).json({ message: "Failed to verify user profile." });
+            }
+        }
+    }
+
+    // 4. Save Return Request
     item.returnStatus = "REQUESTED";
     item.returnReason = reason;
-    await item.save();
+    await item.save({ transaction: t });
 
-    res.json({ message: "Return requested. Waiting for approval." });
+    // 5. Update Parent Order Status if needed
+    const allItems = await OrderItem.findAll({ where: { orderId }, transaction: t });
+    const hasRequests = allItems.some(i => ["REQUESTED", "APPROVED"].includes(i.returnStatus));
+    
+    const parentOrder = await Order.findByPk(orderId, { transaction: t });
+    if (hasRequests && parentOrder.status === "DELIVERED") {
+        parentOrder.status = "RETURN_REQUESTED";
+        await parentOrder.save({ transaction: t });
+    }
+
+    await t.commit();
+    res.json({ message: "Return requested successfully." });
+
   } catch (err) {
+    if (!t.finished) await t.rollback();
     res.status(500).json({ message: err.message });
   }
 };
-
 export const updateReturnStatusAdmin = async (req, res) => {
   const t = await sequelize.transaction();
   try {
@@ -1286,6 +1369,7 @@ export const updateReturnStatusAdmin = async (req, res) => {
       }
       item.returnStatus = "RETURNED";
       item.status = "RETURNED";
+    
     }
     // 🟢 CHANGE 2: Add "COMPLETED" to handle Verification & Restock
     else if (status === "COMPLETED") {
@@ -1485,5 +1569,77 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
     res
       .status(500)
       .json({ message: "Failed to fetch returns", error: err.message });
+  }
+};
+
+
+/* ======================================================
+   ADMIN: CREATE ORDER ON BEHALF OF USER
+====================================================== */
+export const adminCreateOrder = async (req, res) => {
+  const t = await sequelize.transaction();
+
+  try {
+    // 1. Extract userId explicitly from body
+    const { userId, items, amount, address, paymentMethod } = req.body;
+
+    if (!userId) {
+      throw new Error("User ID is required for Admin-created orders.");
+    }
+
+    const selectedArea = address.area || "General";
+
+    // 2. CREATE ORDER (Linked to the specific User)
+    const order = await Order.create(
+      {
+        userId: userId, // <--- Key: Using the ID provided by Admin
+        amount,
+        address,
+        assignedArea: selectedArea,
+        paymentMethod: paymentMethod || "COD",
+        payment: false,
+        status: "PROCESSING",
+      },
+      { transaction: t }
+    );
+
+    // 3. Create Order Items
+    for (const item of items) {
+      await OrderItem.create(
+        {
+          orderId: order.id,
+          productId: item.productId,
+          vendorId: item.vendorId,
+          quantity: item.quantity,
+          price: item.price,
+        },
+        { transaction: t }
+      );
+    }
+
+    // 4. SYNC: Reserve Stock (Call Product Service)
+    try {
+      await axios.post(
+        `${process.env.PRODUCT_SERVICE_URL}/inventory/reserve`,
+        { items },
+        { headers: { Authorization: req.headers.authorization } }
+      );
+    } catch (apiErr) {
+      throw new Error(
+        apiErr.response?.data?.message || "Stock reservation failed"
+      );
+    }
+
+    await t.commit();
+
+    res.status(201).json({ 
+      message: "Order created successfully on behalf of user", 
+      orderId: order.id 
+    });
+
+  } catch (err) {
+    if (!t.finished) await t.rollback();
+    console.error("Admin Create Order Error:", err.message);
+    res.status(400).json({ message: err.message });
   }
 };

@@ -1350,6 +1350,63 @@ app.put(
   }
 );
 
+/* ======================================================
+   ADMIN CONCIERGE ROUTES (Register, Address, Order)
+====================================================== */
+
+// 1. Register a User (On behalf of them)
+app.post("/api/admin/users/register", async (req, res) => {
+  try {
+    // Admin sends: { name, email, phone, password }
+    // We forward this to the User Service's public register route
+    const response = await axios.post(`${USER_SERVICE_URL}/register`, req.body);
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Registration failed",
+    });
+  }
+});
+
+// 2. Add Address for User
+app.post("/api/admin/users/address", async (req, res) => {
+  try {
+    // Admin sends: { userId, addressLine1, city, ... }
+    const response = await axios.post(
+      `${USER_SERVICE_URL}/addresses/admin/add`, 
+      req.body,
+      {
+        headers: { Authorization: req.headers.authorization }, // Pass Admin Token
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Failed to add address",
+    });
+  }
+});
+
+// 3. Place Order for User
+app.post("/api/orders/admin/create", async (req, res) => {
+  try {
+    // Admin sends: { userId, items, amount, address ... }
+    const response = await axios.post(
+      `${ORDER_SERVICE_URL}/admin/create`, 
+      req.body,
+      {
+        headers: { Authorization: req.headers.authorization },
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Failed to create order",
+    });
+  }
+});
+
+
 app.listen(5007, () => {
   console.log("API Gateway running on port 5007");
 });

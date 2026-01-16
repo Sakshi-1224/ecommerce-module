@@ -103,3 +103,53 @@ export const deleteAddress = async (req, res) => {
     res.status(500).json({ message: "Failed to delete address" });
   }
 };
+
+
+
+/* ======================================================
+   🟢 4. ADMIN: ADD ADDRESS FOR USER
+   Expects: { userId, addressLine1, state, city, area, zipCode, isDefault }
+====================================================== */
+export const adminAddAddress = async (req, res) => {
+  try {
+    const { userId, addressLine1, state, city, area, zipCode, isDefault } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ message: "User ID is required" });
+    }
+
+    // Check if this is the user's first address
+    const addressCount = await Address.count({ where: { userId } });
+    const shouldBeDefault = addressCount === 0 ? true : (isDefault || false);
+
+    // If setting as default, unset previous default for THIS user
+    if (shouldBeDefault) {
+      await Address.update(
+        { isDefault: false },
+        { where: { userId } }
+      );
+    }
+
+    const newAddress = await Address.create({
+      userId, 
+      addressLine1,
+      state,
+      city,
+      area,
+      zipCode,
+      isDefault: shouldBeDefault
+    });
+
+    // 🟢 REDIS: Invalidate User's Address Cache
+    await redis.del(`addresses:${userId}`);
+
+    res.status(201).json({ 
+        message: "Address added to user profile", 
+        address: newAddress 
+    });
+
+  } catch (error) {
+    console.error("Admin Add Address Error:", error);
+    res.status(500).json({ message: "Failed to save address", error: error.message });
+  }
+};

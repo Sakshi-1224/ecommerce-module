@@ -30,7 +30,8 @@ import {
   getDeliveryLocations,
   getDeliveryBoyOrders,
   requestReturn, updateReturnStatusAdmin,
-  getAllReturnOrdersAdmin
+  getAllReturnOrdersAdmin,
+  adminCreateOrder
 } from "../controllers/order.controller.js";
 
 const router = express.Router();
@@ -38,6 +39,12 @@ const router = express.Router();
 router.get("/admin/delivery-boys", auth, admin, getAllDeliveryBoys);
 /* ================= USER ================= */
 router.post("/checkout", auth, checkout);
+router.post(
+  "/admin/create", 
+  auth, 
+  admin, 
+  adminCreateOrder
+);
 router.get("/", auth, getUserOrders);
 router.get("/locations", auth, getDeliveryLocations);
 // 🟢 ADMIN: View All Returns
