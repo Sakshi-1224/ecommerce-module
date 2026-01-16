@@ -751,7 +751,7 @@ const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
 };
 
 /* ======================================================
-   REASSIGN DELIVERY BOY
+   REASSIGN DELIVERY BOY (Use this exact function)
 ====================================================== */
 export const reassignDeliveryBoy = async (req, res) => {
   const t = await sequelize.transaction();
@@ -769,25 +769,59 @@ export const reassignDeliveryBoy = async (req, res) => {
       return res.status(400).json({ message: "Missing New Delivery Boy ID" });
     }
 
+    // 1. Find Current Active Assignment
     const currentAssignment = await DeliveryAssignment.findOne({
       where: { orderId: orderId, status: { [Op.or]: ["ASSIGNED", "PICKED"] } },
       transaction: t,
     });
 
+    let previousReason = null;
+
     if (currentAssignment) {
+      previousReason = currentAssignment.reason;
+
+      // 🛡️ SELF-HEALING LOGIC:
+      // If the old task lost its reason (is NULL), we check the ITEMS to see if it SHOULD be a return.
+      if (!previousReason) {
+        const activeReturnItems = await OrderItem.count({
+          where: {
+            orderId: orderId,
+            returnStatus: { [Op.or]: ["APPROVED", "PICKUP_SCHEDULED"] },
+          },
+          transaction: t,
+        });
+
+        // If items are waiting for return, FORCE the reason tag
+        if (activeReturnItems > 0) {
+          console.log(
+            `⚠️ Detected missing tag for Order ${orderId}. Auto-correcting to RETURN_PICKUP.`
+          );
+          previousReason = "RETURN_PICKUP";
+        }
+      }
+
+      // Mark old assignment as failed
       currentAssignment.status = "FAILED";
       currentAssignment.reason = "Manual Reassignment by Admin";
       await currentAssignment.save({ transaction: t });
     }
 
+    // 2. Create New Assignment
     await DeliveryAssignment.create(
-      { orderId: orderId, deliveryBoyId: newDeliveryBoyId, status: "ASSIGNED" },
+      {
+        orderId: orderId,
+        deliveryBoyId: newDeliveryBoyId,
+        status: "ASSIGNED",
+        reason: previousReason, // This will now correctly be "RETURN_PICKUP"
+      },
       { transaction: t }
     );
 
     await t.commit();
 
-    console.log(`✅ Reassigned Order ${orderId} to Boy ${newDeliveryBoyId}`);
+    console.log(
+      `✅ Reassigned Order ${orderId} to Boy ${newDeliveryBoyId} with reason: ${previousReason}`
+    );
     res.json({ message: "Reassignment Successful" });
   } catch (err) {
     if (!t.finished) await t.rollback();
@@ -1308,7 +1342,6 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
             {
               model: DeliveryAssignment,
               required: false,
-              where: { reason: "RETURN_PICKUP" }, // Only look for return tasks
               include: [{ model: DeliveryBoy, attributes: ["name", "phone"] }],
             },
           ],
