@@ -1093,7 +1093,12 @@ export const getDeliveryBoyOrders = async (req, res) => {
     });
 
     const formatOrder = (a) => {
+      // 🟢 1. Check if this is a Return Pickup
+      const isReturnTask = a.reason === "RETURN_PICKUP";
+
+      // 🟢 2. Update Logic: Only collect cash if it's NOT a return task
       const isCodUnsettled =
+        !isReturnTask && // <--- ADD THIS CHECK
         a.Order.paymentMethod === "COD" &&
         !a.cashDeposited &&
         a.Order.status !== "CANCELLED";
@@ -1227,18 +1232,9 @@ export const updateReturnStatusAdmin = async (req, res) => {
       }
     } else if (status === "REJECTED") {
       item.returnStatus = "REJECTED";
-    } else if (status === "RETURNED") {
-      try {
-        await axios.post(
-          `${process.env.PRODUCT_SERVICE_URL}/admin/inventory/restock`,
-          { items: [{ productId: item.productId, quantity: item.quantity }] },
-          { headers: { Authorization: req.headers.authorization } }
-        );
-      //  res.json({ message: "✅ Stock Restocked for Return" });
-      } catch (apiErr) {
-        console.error("Stock Update Failed", apiErr.message);
-      }
-
+    } // 🟢 CHANGE 1: "RETURNED" just marks it as dropped at warehouse (No Restock yet)
+    else if (status === "RETURNED") {
+      // Just update status, do NOT restock here
       const pickupTask = await DeliveryAssignment.findOne({
         where: {
           orderId: item.Order.id,
@@ -1251,10 +1247,25 @@ export const updateReturnStatusAdmin = async (req, res) => {
         pickupTask.status = "DELIVERED";
         await pickupTask.save({ transaction: t });
       }
-
       item.returnStatus = "RETURNED";
       item.status = "RETURNED";
-    } else if (status === "REFUNDED") {
+    }
+    // 🟢 CHANGE 2: Add "COMPLETED" to handle Verification & Restock
+    else if (status === "COMPLETED") {
+      try {
+        // Call Product Service to Restock Inventory
+        await axios.post(
+          `${process.env.PRODUCT_SERVICE_URL}/admin/inventory/restock`,
+          { items: [{ productId: item.productId, quantity: item.quantity }] },
+          { headers: { Authorization: req.headers.authorization } }
+        );
+      } catch (apiErr) {
+        console.error("Stock Update Failed", apiErr.message);
+      }
+      item.returnStatus = "COMPLETED";
+    }
+    // 🟢 CHANGE 3: REFUNDED (Keep existing logic)
+    else if (status === "REFUNDED") {
       const order = await Order.findByPk(item.orderId, { transaction: t });
       if (order) {
         const deduction = item.price * item.quantity;
@@ -1269,7 +1280,6 @@ export const updateReturnStatusAdmin = async (req, res) => {
         .status(400)
         .json({ message: `Invalid Status Sent: ${status}` });
     }
-
     await item.save({ transaction: t });
     await t.commit();
 
@@ -1279,7 +1289,6 @@ export const updateReturnStatusAdmin = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
-
 
 export const getAllReturnOrdersAdmin = async (req, res) => {
   try {
@@ -1335,30 +1344,37 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
         seenItemIds.add(item.id);
 
         // Get all assignments for this Order
-        const assignments = item.Order.DeliveryAssignments || 
-                           (item.Order.DeliveryAssignment ? [item.Order.DeliveryAssignment] : []) || 
-                           [];
+        const assignments =
+          item.Order.DeliveryAssignments ||
+          (item.Order.DeliveryAssignment
+            ? [item.Order.DeliveryAssignment]
+            : []) ||
+          [];
 
         // 🟢 FIX: Sort assignments by latest first to ensure we check the newest data
-        assignments.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        assignments.sort(
+          (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+        );
 
         let pickupTask = null;
 
         // 🟢 LOGIC: Match Assignment based on Item Status
         if (["APPROVED", "PICKUP_SCHEDULED"].includes(item.returnStatus)) {
           // Case A: Item is ACTIVE. Look for an ACTIVE assignment (Assigned/Picked/Out)
-          pickupTask = assignments.find(task => 
+          pickupTask = assignments.find((task) =>
             ["ASSIGNED", "PICKED", "OUT_FOR_DELIVERY"].includes(task.status)
           );
           // Fallback: If no active task found, use the latest one (might be just created)
-          if (!pickupTask && assignments.length > 0) pickupTask = assignments[0];
-        
-        } else if (["RETURNED", "REFUNDED", "COMPLETED"].includes(item.returnStatus)) {
+          if (!pickupTask && assignments.length > 0)
+            pickupTask = assignments[0];
+        } else if (
+          ["RETURNED", "REFUNDED", "COMPLETED"].includes(item.returnStatus)
+        ) {
           // Case B: Item is COMPLETED. Look for a DELIVERED assignment.
-          pickupTask = assignments.find(task => task.status === "DELIVERED");
+          pickupTask = assignments.find((task) => task.status === "DELIVERED");
           // Fallback: If no delivered task found, use the latest one
-          if (!pickupTask && assignments.length > 0) pickupTask = assignments[0];
-        
+          if (!pickupTask && assignments.length > 0)
+            pickupTask = assignments[0];
         } else {
           // Case C: REQUESTED or REJECTED (Usually no assignment exists yet)
           pickupTask = null;
@@ -1375,8 +1391,8 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
           orderId: item.Order.id,
           userId: item.Order.userId,
           productId: item.productId,
-          productName: productData.name, 
-          productImage: productData.imageUrl, 
+          productName: productData.name,
+          productImage: productData.imageUrl,
           quantity: item.quantity,
           amountToRefund: item.price,
           status: item.returnStatus, // Item's specific status (e.g., APPROVED vs RETURNED)
@@ -1389,11 +1405,14 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
           pickupBoy: pickupTask?.DeliveryBoy?.name || "Pending Assignment",
           pickupBoyPhone: pickupTask?.DeliveryBoy?.phone || "N/A",
           pickupStatus: pickupTask?.status || "N/A",
+          bankName: null,
+          accountNumber: null,
+          ifscCode: null,
         });
       }
       return acc;
     }, []);
-// 👇 INSERT THIS BLOCK HERE 👇
+    // 👇 INSERT THIS BLOCK HERE 👇
     // ---------------------------------------------------------
     if (formattedReturns.length > 0) {
       const uniqueUserIds = [...new Set(formattedReturns.map((r) => r.userId))];
