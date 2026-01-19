@@ -1180,13 +1180,12 @@ export const getDeliveryBoyOrders = async (req, res) => {
 /* ======================================================
    RETURN
 ====================================================== */
-
 export const requestReturn = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { orderId, itemId } = req.params;
     const { reason, refundMethod, bankDetails } = req.body; 
-    // bankDetails = { bankAccountHolderName, bankAccountNumber, bankIFSC, bankName }
+    // bankDetails = { bankAccountHolderName, bankAccountNumber, ifscCode, bankName }
 
     const userId = req.user.id;
 
@@ -1210,29 +1209,28 @@ export const requestReturn = async (req, res) => {
       return res.status(400).json({ message: "Return already active." });
     }
 
-    // 🟢 2. CHECK IF BANK DETAILS ARE REQUIRED
+    // 2. CHECK IF BANK DETAILS ARE REQUIRED
     const orderPaymentMethod = item.Order.paymentMethod; // 'COD' or 'RAZORPAY'
     let requiresBankCheck = false;
 
     if (orderPaymentMethod === "RAZORPAY") {
-        requiresBankCheck = true; // Online orders always refund to bank
+        requiresBankCheck = true; 
     } else if (orderPaymentMethod === "COD" && refundMethod === "BANK") {
-        requiresBankCheck = true; // COD orders only if user chooses Bank Transfer
+        requiresBankCheck = true; 
     }
 
-    // 🟢 3. VERIFY OR SAVE BANK DETAILS
+    // 🟢 3. VERIFY OR SAVE BANK DETAILS (URL FIXES HERE)
     if (requiresBankCheck) {
         
-        // CASE A: User sent new details (Frontend asked for them) -> SAVE & PROCEED
+        // CASE A: User sent new details -> SAVE
         if (bankDetails) {
             try {
-                // 1. Automatically call User Service to Save/Update Profile
+                // 🟢 FIXED URL: Removed '/profile' prefix to match auth.routes.js
                 await axios.put(
-                    `${USER_SERVICE_URL}/profile/bank-details`,
+                    `${USER_SERVICE_URL}/bank-details`, 
                     bankDetails,
                     { headers: { Authorization: req.headers.authorization } }
                 );
-                // 2. Success! Details saved. Proceed to create return.
             } catch (userErr) {
                 await t.rollback();
                 console.error("Bank Save Failed:", userErr.message);
@@ -1242,24 +1240,24 @@ export const requestReturn = async (req, res) => {
             }
         } 
         
-        // CASE B: User sent NO details -> CHECK EXISTING PROFILE
+        // CASE B: User sent NO details -> CHECK EXISTING
         else {
             try {
+                // 🟢 FIXED URL: Use '/me' to get profile (as defined in auth.routes.js)
                 const { data: userProfile } = await axios.get(
-                    `${USER_SERVICE_URL}/profile`,
+                    `${USER_SERVICE_URL}/me`,
                     { headers: { Authorization: req.headers.authorization } }
                 );
 
-                // If profile is missing the account number, we STOP here.
-                if (!userProfile.bankAccountNumber) {
+                // Check the mapped key 'accountNumber' (from your User Service 'me' response)
+                if (!userProfile.accountNumber && !userProfile.bankAccountNumber) {
                     await t.rollback();
                     return res.status(400).json({ 
-                        // 🔴 IMPORTANT: This code tells Frontend to show the "Add Bank Details" form
+                        // 🟢 Tells Frontend to show the form
                         error_code: "REQUIRE_BANK_DETAILS", 
                         message: "Bank details missing. Please add bank details to proceed." 
                     });
                 }
-                // If present, we proceed using the existing profile data.
             } catch (fetchErr) {
                 await t.rollback();
                 console.error("Profile Fetch Failed:", fetchErr.message);
@@ -1273,7 +1271,7 @@ export const requestReturn = async (req, res) => {
     item.returnReason = reason;
     await item.save({ transaction: t });
 
-    // 5. Update Parent Order Status if needed
+    // 5. Update Parent Order Status
     const allItems = await OrderItem.findAll({ where: { orderId }, transaction: t });
     const hasRequests = allItems.some(i => ["REQUESTED", "APPROVED"].includes(i.returnStatus));
     
