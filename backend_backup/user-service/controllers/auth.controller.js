@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import minioClient, { initBucket } from "../config/minioClient.js";
 import redis from "../config/redis.js";
+import Address from "../models/Address.js";
 
 const BUCKET_NAME = "user-profiles";
 
@@ -283,3 +284,31 @@ export const updateProfile = async (req, res) => {
   }
 };
 
+export const getUserByPhoneAdmin = async (req, res) => {
+  try {
+    const { phone } = req.query;
+    if (!phone)
+      return res.status(400).json({ message: "Phone number is required" });
+
+    const user = await User.findOne({
+      where: { phone },
+      attributes: { exclude: ["password"] },
+      // 🟢 FIX: Use the 'as' alias defined in associations.js
+      include: [
+        {
+          model: Address,
+          as: "addresses", // <--- CRITICAL FIX
+        },
+      ],
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.json(user);
+  } catch (err) {
+    console.error("Search Error:", err); // Check your terminal, you will see the alias error there
+    res.status(500).json({ message: "Internal server error" });
+  }
+};

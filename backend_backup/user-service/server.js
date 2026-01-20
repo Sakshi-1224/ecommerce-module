@@ -2,7 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
 import sequelize from "./config/db.js";
-import defineAssociations from "./models/Associations.js";
+import defineAssociations from "./models/associations.js";
 import authRoutes from "./routes/auth.routes.js";
 import walletRoutes from "./routes/wallet.routes.js";
 import addressRoutes from "./routes/address.routes.js";
