@@ -28,7 +28,7 @@ const OrderItem = sequelize.define("OrderItem", {
       "REJECTED",
       "PICKUP_SCHEDULED",
       "RETURNED",
-      "REFUNDED",
+      "CREDITED",
       "COMPLETED"
     ),
     defaultValue: "NONE",

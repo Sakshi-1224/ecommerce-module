@@ -5,9 +5,11 @@ import DeliveryBoy from "../models/DeliveryBoy.js";
 import DeliveryAssignment from "../models/DeliveryAssignment.js";
 import sequelize from "../config/db.js";
 import axios from "axios";
+import redis from "../config/redis.js"; 
 
 const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL;
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL;
+
 /* ======================================================
    USER: CHECKOUT
 ====================================================== */
@@ -18,15 +20,42 @@ export const checkout = async (req, res) => {
     const { items, amount, address, paymentMethod } = req.body;
     const selectedArea = address.area || "General";
 
-    // 2. CREATE ORDER
+    // 1. FETCH USER WALLET BALANCE
+    let walletBalance = 0;
+    try {
+        const walletRes = await axios.get(`${USER_SERVICE_URL}/wallet`, {
+            headers: { Authorization: req.headers.authorization }
+        });
+        walletBalance = parseFloat(walletRes.data.balance) || 0;
+    } catch (err) {
+        console.warn("⚠️ Could not fetch wallet. Proceeding with 0 credit.");
+    }
+
+    // 2. CALCULATE DEDUCTION
+    let creditApplied = 0;
+    let finalPayableAmount = parseFloat(amount);
+
+    if (walletBalance > 0) {
+        if (walletBalance >= finalPayableAmount) {
+            creditApplied = finalPayableAmount;
+            finalPayableAmount = 0;
+        } else {
+            creditApplied = walletBalance;
+            finalPayableAmount = finalPayableAmount - walletBalance;
+        }
+    }
+
+    // 3. CREATE ORDER
     const order = await Order.create(
       {
         userId: req.user.id,
-        amount,
+        amount: finalPayableAmount,
+        creditApplied: creditApplied,
         address,
         assignedArea: selectedArea,
-        paymentMethod,
-        payment: false,
+        // If wallet pays 100%, method is WALLET, else whatever user chose (COD/RAZORPAY)
+        paymentMethod: finalPayableAmount === 0 ? "WALLET" : paymentMethod,
+        payment: finalPayableAmount === 0,
         status: "PROCESSING",
       },
       { transaction: t }
@@ -45,6 +74,7 @@ export const checkout = async (req, res) => {
       );
     }
 
+    // 4. RESERVE STOCK
     try {
       await axios.post(
         `${PRODUCT_SERVICE_URL}/inventory/reserve`,
@@ -52,20 +82,38 @@ export const checkout = async (req, res) => {
         { headers: { Authorization: req.headers.authorization } }
       );
     } catch (apiErr) {
-      throw new Error(
-        apiErr.response?.data?.message || "Stock reservation failed"
-      );
+      throw new Error(apiErr.response?.data?.message || "Stock reservation failed");
+    }
+
+    // 5. DEDUCT FROM WALLET
+    if (creditApplied > 0) {
+        try {
+            await axios.post(
+                `${USER_SERVICE_URL}/wallet/deduct`,
+                { amount: creditApplied },
+                { headers: { Authorization: req.headers.authorization } }
+            );
+        } catch (walletErr) {
+            throw new Error("Failed to deduct wallet. Order cancelled.");
+        }
     }
 
     await t.commit();
+await redis.del(`user:orders:${req.user.id}`);
+    await redis.del("admin:orders");
+    res.status(201).json({ 
+        message: "Order placed successfully", 
+        orderId: order.id,
+        creditApplied: creditApplied,
+        payableAmount: finalPayableAmount 
+    });
 
-    res.status(201).json({ message: "Order placed", orderId: order.id });
   } catch (err) {
     if (!t.finished) await t.rollback();
     res.status(400).json({ message: err.message });
   }
 };
-
+    
 /* ======================================================
    CANCEL LOGIC
 ====================================================== */
@@ -121,6 +169,11 @@ export const cancelOrderItem = async (req, res) => {
     } catch (apiErr) {
       console.error("Product service sync failed", apiErr.message);
     }
+
+    // 🟢 REDIS INVALIDATION
+    await redis.del(`order:${orderId}`);
+    await redis.del(`user:orders:${req.user.id}`);
+    await redis.del("admin:orders");
 
     res.json({ message: "Item cancelled", orderStatus: order.status });
   } catch (err) {
@@ -182,6 +235,11 @@ export const cancelFullOrder = async (req, res) => {
       console.error("Product service sync failed", apiErr.message);
     }
 
+    // 🟢 REDIS INVALIDATION
+    await redis.del(`order:${orderId}`);
+    await redis.del(`user:orders:${req.user.id}`);
+    await redis.del("admin:orders");
+
     res.json({ message: "Order cancelled successfully" });
   } catch (err) {
     if (!t.finished) await t.rollback();
@@ -199,6 +257,8 @@ export const updateOrderStatusAdmin = async (req, res) => {
     const order = await Order.findByPk(req.params.id, { include: OrderItem });
 
     if (!order) return res.status(404).json({ message: "Order not found" });
+
+    let autoAssignedBoyId = null;
 
     // 1. PACKED
     if (status === "PACKED") {
@@ -251,9 +311,16 @@ export const updateOrderStatusAdmin = async (req, res) => {
           );
           if (result && result.success) {
             responseMsg += ` & Auto-Assigned to ${result.boy.name}`;
+            autoAssignedBoyId = result.boy.id;
           }
         }
       }
+      
+      // 🟢 INVALIDATE CACHE
+      await redis.del(`order:${order.id}`);
+      await redis.del("admin:orders");
+      await redis.del(`user:orders:${order.userId}`);
+      if(autoAssignedBoyId) await redis.del(`tasks:boy:${autoAssignedBoyId}`);
 
       return res.json({ message: responseMsg });
     }
@@ -304,6 +371,8 @@ export const updateOrderStatusAdmin = async (req, res) => {
       if (assignment) {
         assignment.status = "DELIVERED";
         await assignment.save();
+        // Invalidate Boy's task list
+        await redis.del(`tasks:boy:${assignment.deliveryBoyId}`);
       }
     }
     // Default Update
@@ -311,6 +380,11 @@ export const updateOrderStatusAdmin = async (req, res) => {
       order.status = status;
       await order.save();
     }
+
+    // 🟢 INVALIDATE CACHE
+    await redis.del(`order:${order.id}`);
+    await redis.del("admin:orders");
+    await redis.del(`user:orders:${order.userId}`);
 
     res.json({ message: `Status updated to ${status}` });
   } catch (err) {
@@ -365,9 +439,11 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
             where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
           });
           if (!hasBoy) {
-            return res.json({
-              message: `Item updated to ${status}, but Parent Order not updated (No Delivery Boy assigned).`,
-            });
+             // 🟢 Invalidate Item even if parent doesn't update
+             await redis.del(`order:${orderId}`);
+             return res.json({
+                message: `Item updated to ${status}, but Parent Order not updated (No Delivery Boy assigned).`,
+             });
           }
         }
 
@@ -382,11 +458,17 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
           if (assignment) {
             assignment.status = "DELIVERED";
             await assignment.save();
+            await redis.del(`tasks:boy:${assignment.deliveryBoyId}`);
           }
         }
         await order.save();
       }
     }
+
+    // 🟢 INVALIDATE CACHE
+    await redis.del(`order:${orderId}`);
+    await redis.del("admin:orders");
+    if(order.userId) await redis.del(`user:orders:${order.userId}`);
 
     res.json({ message: `Item updated to ${status}` });
   } catch (err) {
@@ -460,10 +542,19 @@ export const adminVendorSalesReport = async (req, res) => {
 
 export const adminTotalSales = async (req, res) => {
   try {
+    // 🟢 REDIS CACHE CHECK
+    const cacheKey = "report:admin:totalSales";
+    const cached = await redis.get(cacheKey);
+    if(cached) return res.json(JSON.parse(cached));
+
     const total = await OrderItem.sum("price", {
       where: { status: "DELIVERED" },
     });
     const result = { totalSales: total || 0 };
+
+    // 🟢 SET REDIS CACHE (5 mins TTL)
+    await redis.set(cacheKey, JSON.stringify(result), "EX", 300);
+
     res.json(result);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -495,11 +586,19 @@ export const getUserOrders = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
+    const userId = req.user.id;
+
+    // 🟢 REDIS CACHE (Only cache Page 1 for responsiveness)
+    const cacheKey = page === 1 ? `user:orders:${userId}` : null;
+    if (cacheKey) {
+        const cached = await redis.get(cacheKey);
+        if (cached) return res.json(JSON.parse(cached));
+    }
 
     const offset = (page - 1) * limit;
 
     const { count, rows } = await Order.findAndCountAll({
-      where: { userId: req.user.id },
+      where: { userId: userId },
       include: OrderItem,
       limit: limit,
       offset: offset,
@@ -513,6 +612,11 @@ export const getUserOrders = async (req, res) => {
       currentPage: page,
     };
 
+    // 🟢 SET REDIS CACHE (5 mins TTL)
+    if (cacheKey) {
+        await redis.set(cacheKey, JSON.stringify(result), "EX", 300);
+    }
+
     res.json(result);
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch orders" });
@@ -521,10 +625,22 @@ export const getUserOrders = async (req, res) => {
 
 export const getOrderById = async (req, res) => {
   try {
+    const orderId = req.params.id;
+    // 🟢 REDIS CACHE CHECK
+    const cacheKey = `order:${orderId}`;
+    const cached = await redis.get(cacheKey);
+    if(cached) return res.json(JSON.parse(cached));
+
     const order = await Order.findOne({
-      where: { id: req.params.id, userId: req.user.id },
+      where: { id: orderId, userId: req.user.id },
       include: OrderItem,
     });
+
+    // 🟢 SET REDIS CACHE (10 mins TTL)
+    if(order) {
+        await redis.set(cacheKey, JSON.stringify(order), "EX", 600);
+    }
+
     res.json(order);
   } catch {
     res.status(500).json({ message: "Failed" });
@@ -533,6 +649,7 @@ export const getOrderById = async (req, res) => {
 
 export const trackOrder = async (req, res) => {
   try {
+    // Re-use redis logic similar to getOrderById or keep direct for simplicity
     const order = await Order.findOne({
       where: { id: req.params.id },
       include: OrderItem,
@@ -545,10 +662,19 @@ export const trackOrder = async (req, res) => {
 
 export const getAllOrdersAdmin = async (req, res) => {
   try {
+    // 🟢 REDIS CACHE CHECK
+    const cacheKey = "admin:orders";
+    const cached = await redis.get(cacheKey);
+    if(cached) return res.json(JSON.parse(cached));
+
     const orders = await Order.findAll({
       include: OrderItem,
       order: [["createdAt", "DESC"]],
     });
+
+    // 🟢 SET REDIS CACHE (5 mins TTL)
+    await redis.set(cacheKey, JSON.stringify(orders), "EX", 300);
+
     res.json(orders);
   } catch {
     res.status(500).json({ message: "Failed" });
@@ -557,7 +683,18 @@ export const getAllOrdersAdmin = async (req, res) => {
 
 export const getOrderByIdAdmin = async (req, res) => {
   try {
-    const order = await Order.findByPk(req.params.id, {
+    const orderId = req.params.id;
+    // We can share the cache key with user view or use a different one if admin sees more data.
+    // For simplicity, sharing the key:
+    const cacheKey = `order:${orderId}`;
+    const cached = await redis.get(cacheKey);
+    if(cached) {
+         // Note: Admin might need delivery info which user view might not have cached. 
+         // If cached data is sufficient, use it. Otherwise, force fetch.
+         // Here, we force fetch because Admin needs DeliveryAssignment data.
+    }
+
+    const order = await Order.findByPk(orderId, {
       include: [
         OrderItem,
         {
@@ -566,6 +703,10 @@ export const getOrderByIdAdmin = async (req, res) => {
         },
       ],
     });
+    
+    // We update the cache with this fuller object
+    await redis.set(cacheKey, JSON.stringify(order), "EX", 600);
+
     res.json(order);
   } catch {
     res.status(500).json({ message: "Failed" });
@@ -622,7 +763,16 @@ export const getVendorOrders = async (req, res) => {
 
 export const getAllDeliveryBoys = async (req, res) => {
   try {
+    // 🟢 REDIS CACHE
+    const cacheKey = "delivery_boys:all";
+    const cached = await redis.get(cacheKey);
+    if(cached) return res.json(JSON.parse(cached));
+
     const boys = await DeliveryBoy.findAll();
+    
+    // 🟢 SET REDIS CACHE (1 hour TTL)
+    await redis.set(cacheKey, JSON.stringify(boys), "EX", 3600);
+
     res.json(boys);
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch delivery boys" });
@@ -635,6 +785,10 @@ export const createDeliveryBoy = async (req, res) => {
       ...req.body,
       active: true,
     });
+
+    // 🟢 INVALIDATE CACHE
+    await redis.del("delivery_boys:all");
+
     res.status(201).json(newBoy);
   } catch (err) {
     res
@@ -646,6 +800,11 @@ export const createDeliveryBoy = async (req, res) => {
 export const deleteDeliveryBoy = async (req, res) => {
   try {
     await DeliveryBoy.destroy({ where: { id: req.params.id } });
+    
+    // 🟢 INVALIDATE CACHE
+    await redis.del("delivery_boys:all");
+    await redis.del(`tasks:boy:${req.params.id}`);
+
     res.json({ message: "Deleted" });
   } catch (err) {
     res.status(500).json({ message: "Failed to delete" });
@@ -655,6 +814,10 @@ export const deleteDeliveryBoy = async (req, res) => {
 export const updateDeliveryBoy = async (req, res) => {
   try {
     await DeliveryBoy.update(req.body, { where: { id: req.params.id } });
+    
+    // 🟢 INVALIDATE CACHE
+    await redis.del("delivery_boys:all");
+
     res.json({ message: "Updated" });
   } catch (err) {
     res.status(500).json({ message: "Failed" });
@@ -776,12 +939,13 @@ export const reassignDeliveryBoy = async (req, res) => {
     });
 
     let previousReason = null;
+    let oldBoyId = null;
 
     if (currentAssignment) {
+      oldBoyId = currentAssignment.deliveryBoyId;
       previousReason = currentAssignment.reason;
 
-      // 🛡️ SELF-HEALING LOGIC:
-      // If the old task lost its reason (is NULL), we check the ITEMS to see if it SHOULD be a return.
+      // 🛡️ SELF-HEALING LOGIC
       if (!previousReason) {
         const activeReturnItems = await OrderItem.count({
           where: {
@@ -791,7 +955,6 @@ export const reassignDeliveryBoy = async (req, res) => {
           transaction: t,
         });
 
-        // If items are waiting for return, FORCE the reason tag
         if (activeReturnItems > 0) {
           console.log(
             `⚠️ Detected missing tag for Order ${orderId}. Auto-correcting to RETURN_PICKUP.`
@@ -812,12 +975,17 @@ export const reassignDeliveryBoy = async (req, res) => {
         orderId: orderId,
         deliveryBoyId: newDeliveryBoyId,
         status: "ASSIGNED",
-        reason: previousReason, // This will now correctly be "RETURN_PICKUP"
+        reason: previousReason, 
       },
       { transaction: t }
     );
 
     await t.commit();
+
+    // 🟢 REDIS INVALIDATION
+    if(oldBoyId) await redis.del(`tasks:boy:${oldBoyId}`);
+    await redis.del(`tasks:boy:${newDeliveryBoyId}`);
+    await redis.del(`order:${orderId}`);
 
     console.log(
       `✅ Reassigned Order ${orderId} to Boy ${newDeliveryBoyId} with reason: ${previousReason}`
@@ -1132,7 +1300,7 @@ export const getDeliveryBoyOrders = async (req, res) => {
 
       // 🟢 2. Update Logic: Only collect cash if it's NOT a return task
       const isCodUnsettled =
-        !isReturnTask && // <--- ADD THIS CHECK
+        !isReturnTask && 
         a.Order.paymentMethod === "COD" &&
         !a.cashDeposited &&
         a.Order.status !== "CANCELLED";
@@ -1147,9 +1315,7 @@ export const getDeliveryBoyOrders = async (req, res) => {
       return {
         assignmentId: a.id,
         assignmentStatus: a.status,
-        // 🟢 3. Send the Type to Frontend
         type: isReturnTask ? "RETURN" : "DELIVERY",
-        // 🟢 4. Force Cash to 0 if Return
         cashToCollect: isCodUnsettled ? a.Order.amount : 0,
         id: a.Order.id,
         amount: a.Order.amount,
@@ -1177,19 +1343,15 @@ export const getDeliveryBoyOrders = async (req, res) => {
   }
 };
 
-/* ======================================================
-   RETURN
-====================================================== */
+
 export const requestReturn = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { orderId, itemId } = req.params;
-    const { reason, refundMethod, bankDetails } = req.body; 
-    // bankDetails = { bankAccountHolderName, bankAccountNumber, ifscCode, bankName }
-
+    const { reason } = req.body; 
     const userId = req.user.id;
 
-    // 1. Fetch Item & Order
+    // 1. Fetch Item
     const item = await OrderItem.findOne({
       where: { id: itemId, orderId },
       include: [{ model: Order, where: { userId } }],
@@ -1209,69 +1371,12 @@ export const requestReturn = async (req, res) => {
       return res.status(400).json({ message: "Return already active." });
     }
 
-    // 2. CHECK IF BANK DETAILS ARE REQUIRED
-    const orderPaymentMethod = item.Order.paymentMethod; // 'COD' or 'RAZORPAY'
-    let requiresBankCheck = false;
-
-    if (orderPaymentMethod === "RAZORPAY") {
-        requiresBankCheck = true; 
-    } else if (orderPaymentMethod === "COD" && refundMethod === "BANK") {
-        requiresBankCheck = true; 
-    }
-
-    // 🟢 3. VERIFY OR SAVE BANK DETAILS (URL FIXES HERE)
-    if (requiresBankCheck) {
-        
-        // CASE A: User sent new details -> SAVE
-        if (bankDetails) {
-            try {
-                // 🟢 FIXED URL: Removed '/profile' prefix to match auth.routes.js
-                await axios.put(
-                    `${USER_SERVICE_URL}/bank-details`, 
-                    bankDetails,
-                    { headers: { Authorization: req.headers.authorization } }
-                );
-            } catch (userErr) {
-                await t.rollback();
-                console.error("Bank Save Failed:", userErr.message);
-                return res.status(400).json({ 
-                    message: "Failed to save Bank Details. Please check your inputs." 
-                });
-            }
-        } 
-        
-        // CASE B: User sent NO details -> CHECK EXISTING
-        else {
-            try {
-                // 🟢 FIXED URL: Use '/me' to get profile (as defined in auth.routes.js)
-                const { data: userProfile } = await axios.get(
-                    `${USER_SERVICE_URL}/me`,
-                    { headers: { Authorization: req.headers.authorization } }
-                );
-
-                // Check the mapped key 'accountNumber' (from your User Service 'me' response)
-                if (!userProfile.accountNumber && !userProfile.bankAccountNumber) {
-                    await t.rollback();
-                    return res.status(400).json({ 
-                        // 🟢 Tells Frontend to show the form
-                        error_code: "REQUIRE_BANK_DETAILS", 
-                        message: "Bank details missing. Please add bank details to proceed." 
-                    });
-                }
-            } catch (fetchErr) {
-                await t.rollback();
-                console.error("Profile Fetch Failed:", fetchErr.message);
-                return res.status(500).json({ message: "Failed to verify user profile." });
-            }
-        }
-    }
-
-    // 4. Save Return Request
+    // 2. Update Status (No Bank Checks needed)
     item.returnStatus = "REQUESTED";
     item.returnReason = reason;
     await item.save({ transaction: t });
 
-    // 5. Update Parent Order Status
+    // 3. Update Order Status
     const allItems = await OrderItem.findAll({ where: { orderId }, transaction: t });
     const hasRequests = allItems.some(i => ["REQUESTED", "APPROVED"].includes(i.returnStatus));
     
@@ -1282,14 +1387,19 @@ export const requestReturn = async (req, res) => {
     }
 
     await t.commit();
-    res.json({ message: "Return requested successfully." });
+    // 🟢 REDIS INVALIDATION
+    await redis.del(`order:${orderId}`);
+    await redis.del("admin:returns"); 
+    await redis.del(`user:orders:${userId}`);
+    res.json({ message: "Return requested. Refund will be credited to wallet upon approval." });
 
   } catch (err) {
     if (!t.finished) await t.rollback();
     res.status(500).json({ message: err.message });
   }
 };
-export const updateReturnStatusAdmin = async (req, res) => {
+
+ export const updateReturnStatusAdmin = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { orderId, itemId } = req.params;
@@ -1306,6 +1416,7 @@ export const updateReturnStatusAdmin = async (req, res) => {
       return res.status(404).json({ message: "Item not found" });
     }
 
+    // 1. APPROVED -> Assign Delivery Boy
     if (status === "APPROVED") {
       item.returnStatus = "APPROVED";
       const area = item.Order.assignedArea;
@@ -1348,11 +1459,9 @@ export const updateReturnStatusAdmin = async (req, res) => {
           { transaction: t }
         );
       }
-    } else if (status === "REJECTED") {
-      item.returnStatus = "REJECTED";
-    } // 🟢 CHANGE 1: "RETURNED" just marks it as dropped at warehouse (No Restock yet)
+    } 
+    // 2. RETURNED -> Mark Item Returned (Reached Warehouse)
     else if (status === "RETURNED") {
-      // Just update status, do NOT restock here
       const pickupTask = await DeliveryAssignment.findOne({
         where: {
           orderId: item.Order.id,
@@ -1367,14 +1476,12 @@ export const updateReturnStatusAdmin = async (req, res) => {
       }
       item.returnStatus = "RETURNED";
       item.status = "RETURNED";
-    
     }
-    // 🟢 CHANGE 2: Add "COMPLETED" to handle Verification & Restock
+    // 3. COMPLETED -> Restock
     else if (status === "COMPLETED") {
       try {
-        // Call Product Service to Restock Inventory
         await axios.post(
-          `${process.env.PRODUCT_SERVICE_URL}/admin/inventory/restock`,
+          `${PRODUCT_SERVICE_URL}/admin/inventory/restock`,
           { items: [{ productId: item.productId, quantity: item.quantity }] },
           { headers: { Authorization: req.headers.authorization } }
         );
@@ -1383,34 +1490,63 @@ export const updateReturnStatusAdmin = async (req, res) => {
       }
       item.returnStatus = "COMPLETED";
     }
-    // 🟢 CHANGE 3: REFUNDED (Keep existing logic)
-    else if (status === "REFUNDED") {
+    // 🟢 4. CREDITED -> Send Money to Wallet
+    else if (status === "CREDITED") {
       const order = await Order.findByPk(item.orderId, { transaction: t });
-      if (order) {
-        const deduction = item.price * item.quantity;
-        const newAmount = Math.max(0, order.amount - deduction);
-        order.amount = newAmount;
-        await order.save({ transaction: t });
+      
+      if (order && order.userId) {
+        const creditAmount = parseFloat(item.price) * parseInt(item.quantity);
+        
+        try {
+            await axios.post(
+                `${USER_SERVICE_URL}/wallet/add`,
+                { 
+                    userId: order.userId, 
+                    amount: creditAmount,
+                    description: `Credit Note for Order #${order.id}`
+                },
+                { headers: { Authorization: req.headers.authorization } }
+            );
+            console.log(`💰 Credit of ₹${creditAmount} sent to User Wallet`);
+        } catch (walletErr) {
+            console.error("❌ Wallet Credit Failed:", walletErr.message);
+            throw new Error("Failed to credit User Wallet.");
+        }
       }
-      item.returnStatus = "REFUNDED";
-    } else {
-      await t.rollback();
-      return res
-        .status(400)
-        .json({ message: `Invalid Status Sent: ${status}` });
+      item.returnStatus = "CREDITED";
+    } 
+    else if (status === "REJECTED") {
+      item.returnStatus = "REJECTED";
     }
+    else {
+      await t.rollback();
+      return res.status(400).json({ message: `Invalid Status: ${status}` });
+    }
+
     await item.save({ transaction: t });
     await t.commit();
+      // 🟢 INVALIDATE CACHE
+    await redis.del(`order:${orderId}`);
+    await redis.del("admin:returns");
+    if(item.Order && item.Order.userId) await redis.del(`user:orders:${item.Order.userId}`);
+    if(assignedBoyId) await redis.del(`tasks:boy:${assignedBoyId}`);
 
     res.json({ message: `Return status updated to ${status}` });
+
   } catch (err) {
     if (!t.finished) await t.rollback();
     res.status(500).json({ message: err.message });
   }
 };
 
+
 export const getAllReturnOrdersAdmin = async (req, res) => {
   try {
+    // 🟢 REDIS CACHE
+    const cacheKey = "admin:returns";
+    const cached = await redis.get(cacheKey);
+    if(cached) return res.json(JSON.parse(cached));
+
     // 1. Fetch all items marked for return
     const returns = await OrderItem.findAll({
       where: {
@@ -1457,11 +1593,9 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
     // 4. Format Data with Smart Assignment Matching
     const seenItemIds = new Set();
     const formattedReturns = returns.reduce((acc, item) => {
-      // Basic deduplication to prevent duplicates if joins cause cartesian product
       if (!seenItemIds.has(item.id)) {
         seenItemIds.add(item.id);
 
-        // Get all assignments for this Order
         const assignments =
           item.Order.DeliveryAssignments ||
           (item.Order.DeliveryAssignment
@@ -1469,36 +1603,30 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
             : []) ||
           [];
 
-        // 🟢 FIX: Sort assignments by latest first to ensure we check the newest data
         assignments.sort(
           (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
         );
 
         let pickupTask = null;
 
-        // 🟢 LOGIC: Match Assignment based on Item Status
         if (["APPROVED", "PICKUP_SCHEDULED"].includes(item.returnStatus)) {
-          // Case A: Item is ACTIVE. Look for an ACTIVE assignment (Assigned/Picked/Out)
           pickupTask = assignments.find((task) =>
             ["ASSIGNED", "PICKED", "OUT_FOR_DELIVERY"].includes(task.status)
           );
-          // Fallback: If no active task found, use the latest one (might be just created)
           if (!pickupTask && assignments.length > 0)
             pickupTask = assignments[0];
-        } else if (
-          ["RETURNED", "REFUNDED", "COMPLETED"].includes(item.returnStatus)
+        } 
+        // 🟢 UPDATE HERE: Changed "REFUNDED" to "CREDITED"
+        else if (
+          ["RETURNED", "CREDITED", "COMPLETED"].includes(item.returnStatus)
         ) {
-          // Case B: Item is COMPLETED. Look for a DELIVERED assignment.
           pickupTask = assignments.find((task) => task.status === "DELIVERED");
-          // Fallback: If no delivered task found, use the latest one
           if (!pickupTask && assignments.length > 0)
             pickupTask = assignments[0];
         } else {
-          // Case C: REQUESTED or REJECTED (Usually no assignment exists yet)
           pickupTask = null;
         }
 
-        // Enrich with Product Data
         const productData = productMap[item.productId] || {
           name: "Unknown Item",
           imageUrl: "",
@@ -1513,60 +1641,27 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
           productImage: productData.imageUrl,
           quantity: item.quantity,
           amountToRefund: item.price,
-          status: item.returnStatus, // Item's specific status (e.g., APPROVED vs RETURNED)
+          status: item.returnStatus,
           reason: item.returnReason,
           lastUpdated: item.updatedAt,
           customerName: item.Order.address?.fullName || "Guest",
           customerPhone: item.Order.address?.phone || "N/A",
           pickupAddress: item.Order.address,
-          // Assignment Details (mapped correctly to the specific item state)
           pickupBoy: pickupTask?.DeliveryBoy?.name || "Pending Assignment",
           pickupBoyPhone: pickupTask?.DeliveryBoy?.phone || "N/A",
-          pickupStatus: pickupTask?.status || "N/A",
-          bankName: null,
-          accountNumber: null,
-          ifscCode: null,
+          pickupStatus: pickupTask?.status || "N/A"
         });
       }
       return acc;
     }, []);
-    // 👇 INSERT THIS BLOCK HERE 👇
-    // ---------------------------------------------------------
-    if (formattedReturns.length > 0) {
-      const uniqueUserIds = [...new Set(formattedReturns.map((r) => r.userId))];
-      const userBankDetailsMap = {};
 
-      await Promise.all(
-        uniqueUserIds.map(async (uid) => {
-          try {
-            const { data } = await axios.get(
-              `${USER_SERVICE_URL}/admin/${uid}/bank-details`,
-              { headers: { Authorization: req.headers.authorization } }
-            );
-            userBankDetailsMap[uid] = data;
-          } catch (e) {
-            console.error(`Failed to fetch bank details for user ${uid}`);
-          }
-        })
-      );
-
-      formattedReturns.forEach((r) => {
-        const bankData = userBankDetailsMap[r.userId];
-        if (bankData) {
-          r.bankName = bankData.bankName;
-          r.accountNumber = bankData.bankAccountNumber;
-          r.ifscCode = bankData.bankIFSC;
-        }
-      });
-    }
-    // ---------------------------------------------------------
+    // 🟢 SET REDIS CACHE (5 mins TTL)
+    await redis.set(cacheKey, JSON.stringify(formattedReturns), "EX", 300);
 
     res.json(formattedReturns);
   } catch (err) {
     console.error(err);
-    res
-      .status(500)
-      .json({ message: "Failed to fetch returns", error: err.message });
+    res.status(500).json({ message: "Failed to fetch returns", error: err.message });
   }
 };
 
@@ -1590,7 +1685,7 @@ export const adminCreateOrder = async (req, res) => {
     // 2. CREATE ORDER (Linked to the specific User)
     const order = await Order.create(
       {
-        userId: userId, // <--- Key: Using the ID provided by Admin
+        userId: userId, 
         amount,
         address,
         assignedArea: selectedArea,
@@ -1618,7 +1713,7 @@ export const adminCreateOrder = async (req, res) => {
     // 4. SYNC: Reserve Stock (Call Product Service)
     try {
       await axios.post(
-        `${process.env.PRODUCT_SERVICE_URL}/inventory/reserve`,
+        `${PRODUCT_SERVICE_URL}/inventory/reserve`,
         { items },
         { headers: { Authorization: req.headers.authorization } }
       );
@@ -1629,6 +1724,10 @@ export const adminCreateOrder = async (req, res) => {
     }
 
     await t.commit();
+
+    // 🟢 REDIS INVALIDATION
+    await redis.del(`user:orders:${userId}`);
+    await redis.del("admin:orders");
 
     res.status(201).json({ 
       message: "Order created successfully on behalf of user", 
