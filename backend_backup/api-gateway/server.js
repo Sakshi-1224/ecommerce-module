@@ -1416,6 +1416,22 @@ app.post("/api/orders/admin/create", async (req, res) => {
   }
 });
 
+
+app.get("/api/auth/wallet", async (req, res) => {
+  try {
+    const response = await axios.get(`${USER_SERVICE_URL}/wallet`, {
+      headers: {
+        Authorization: req.headers.authorization,
+      },
+    });
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+
 app.listen(5007, () => {
   console.log("API Gateway running on port 5007");
 });
