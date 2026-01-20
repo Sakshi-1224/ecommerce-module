@@ -1,6 +1,7 @@
 import razorpay from "../config/razorpay.js";
 import crypto from "crypto";
 import Order from "../models/Order.js";
+import redis from "../config/redis.js"; // 🟢 1. Import Redis
 
 /* ======================
    CREATE PAYMENT ORDER
@@ -18,7 +19,7 @@ export const createPaymentOrder = async (req, res) => {
       return res.status(400).json({ message: "Order ID is required" });
     }
 
-    // 2️ Check order exists
+    // 2️ Check order exists (Direct DB check - No Cache for Payments)
     const order = await Order.findByPk(orderId);
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
@@ -101,12 +102,23 @@ export const verifyPayment = async (req, res) => {
     }
 
     // 5 Update order
-    // ✅ FIX: Use 'PROCESSING' (a valid ENUM value) instead of 'PAID'
     order.payment = true;
     order.paymentMethod = "RAZORPAY";
-    order.status = "PROCESSING"; // Changed from 'PAID' to 'PROCESSING'
+    order.status = "PROCESSING"; 
 
     await order.save();
+
+    // 🟢 6. REDIS INVALIDATION (Critical for Consistency)
+    // Clear the specific order detail cache
+    await redis.del(`order:${orderId}`);
+    
+    // Clear the user's order list cache so they see the status update immediately
+    if (order.userId) {
+        await redis.del(`user:orders:${order.userId}`);
+    }
+    
+    // Clear the Admin dashboard cache
+    await redis.del("admin:orders");
 
     res.json({
       success: true,

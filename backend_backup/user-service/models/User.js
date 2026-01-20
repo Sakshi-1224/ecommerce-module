@@ -33,26 +33,11 @@ const User = sequelize.define("User", {
     type: DataTypes.ENUM("user"),
     allowNull: false,
   },
-  bankAccountHolderName: { 
-    type: DataTypes.STRING, 
-    allowNull: true,
-    defaultValue: null,
-   },
-  bankName: {
-    type: DataTypes.STRING,
-    allowNull: true,
-    defaultValue: null,
-  },
-  bankAccountNumber: {
-    type: DataTypes.STRING,
-    allowNull: true,
-    defaultValue: null,
-  },
-  bankIFSC: {
-    type: DataTypes.STRING,
-    allowNull: true,
-    defaultValue: null,
-  },
+  walletBalance: {
+    type: DataTypes.FLOAT,
+    defaultValue: 0.0,
+    allowNull: false
+  }
 });
 
 export default User;

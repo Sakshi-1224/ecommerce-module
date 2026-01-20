@@ -7,6 +7,12 @@ const Order = sequelize.define(
     id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
     userId: { type: DataTypes.STRING, allowNull: false },
     amount: { type: DataTypes.FLOAT, allowNull: false },
+    // 👇 NEW FIELD: Credit Note amount used
+    creditApplied: { 
+        type: DataTypes.FLOAT, 
+        defaultValue: 0.0, 
+        allowNull: false 
+    },
     address: { type: DataTypes.JSON, allowNull: false },
     assignedArea: {
       type: DataTypes.STRING,

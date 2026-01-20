@@ -17,11 +17,7 @@ export const register = async (req, res) => {
       name,
       email,
       phone,
-      password,
-      bankAccountHolderName,
-      bankName,
-      accountNumber, // 🟢 Frontend sends 'accountNumber'
-      ifscCode, // 🟢 Frontend sends 'ifscCode'
+      password
     } = req.body;
 
     // 1. Basic Validation
@@ -31,30 +27,6 @@ export const register = async (req, res) => {
       });
     }
 
-    // 2. Bank Details Validation
-    const hasBankDetails = bankName || accountNumber || ifscCode;
-    if (hasBankDetails) {
-      if (!bankName || !accountNumber || !ifscCode) {
-        return res.status(400).json({
-          message: "Please provide all bank details (Name, Account No, IFSC)",
-        });
-      }
-
-      const accountRegex = /^\d{9,18}$/;
-      if (!accountRegex.test(accountNumber)) {
-        return res.status(400).json({
-          message:
-            "Invalid Account Number. It must contain only digits (9-18 chars).",
-        });
-      }
-
-      const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
-      if (!ifscRegex.test(ifscCode)) {
-        return res.status(400).json({
-          message: "Invalid IFSC Code. Format example: SBIN0001234",
-        });
-      }
-    }
 
     // 3. Standard Validations
     if (!phone || !/^\d{10}$/.test(phone)) {
@@ -96,12 +68,7 @@ export const register = async (req, res) => {
       phone,
       password: hashedPassword,
       role: "user",
-      bankAccountHolderName: bankAccountHolderName || name,
-      bankName: bankName || null,
-
-      // 🟢 CRITICAL FIX: Map Frontend names to DB Columns
-      bankAccountNumber: accountNumber || null,
-      bankIFSC: ifscCode || null,
+      walletBalance: 0.0
     });
 
     const token = jwt.sign(
@@ -122,12 +89,8 @@ export const register = async (req, res) => {
         phone: user.phone,
         email: user.email,
         role: user.role,
+        walletBalance: user.walletBalance,
         profilePic: user.profilePic,
-        bankAccountHolderName: user.bankAccountHolderName,
-        bankName: user.bankName,
-        // 🟢 Return as Frontend expects
-        accountNumber: user.bankAccountNumber,
-        ifscCode: user.bankIFSC,
       },
     });
   } catch (err) {
@@ -158,7 +121,7 @@ export const login = async (req, res) => {
         name: user.name,
         phone: user.phone,
         email: user.email,
-        role: user.role,
+        role: user.role
       },
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
@@ -171,12 +134,9 @@ export const login = async (req, res) => {
         name: user.name,
         phone: user.phone,
         email: user.email,
+        walletBalance: user.walletBalance,
         profilePic: user.profilePic,
-        role: user.role,
-        bankName: user.bankName,
-        // 🟢 Map DB columns to Frontend keys
-        accountNumber: user.bankAccountNumber,
-        ifscCode: user.bankIFSC,
+        role: user.role
       },
     });
   } catch (err) {
@@ -225,11 +185,8 @@ export const me = async (req, res) => {
       email: user.email,
       phone: user.phone,
       role: user.role,
-      profilePic: user.profilePic,
-      bankName: user.bankName,
-      bankAccountHolderName: user.bankAccountHolderName,
-      accountNumber: user.bankAccountNumber, // 🟢 MAP: bankAccountNumber -> accountNumber
-      ifscCode: user.bankIFSC, // 🟢 MAP: bankIFSC -> ifscCode
+      walletBalance: user.walletBalance,
+      profilePic: user.profilePic
     });
   } catch (err) {
     console.error(err);
@@ -318,11 +275,7 @@ export const updateProfile = async (req, res) => {
         email: user.email,
         phone: user.phone,
         profilePic: user.profilePic,
-        role: user.role,
-        // 🟢 Ensure we return bank details here too
-        bankName: user.bankName,
-        accountNumber: user.bankAccountNumber,
-        ifscCode: user.bankIFSC,
+        role: user.role
       },
     });
   } catch (error) {
@@ -331,150 +284,6 @@ export const updateProfile = async (req, res) => {
   }
 };
 
-export const updateBankDetails = async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const {
-      bankAccountHolderName,
-      bankName,
-      accountNumber, // 🟢 Frontend alias
-      ifscCode, // 🟢 Frontend alias
-      // Fallbacks in case you send DB names
-      bankAccountNumber,
-      bankIFSC,
-    } = req.body;
-
-    // 🟢 Smart assignment: use whatever the frontend sent
-    const finalAccNum = accountNumber || bankAccountNumber;
-    const finalIFSC = ifscCode || bankIFSC;
-
-    // 1. Validation
-    if (!finalAccNum || !finalIFSC) {
-      return res
-        .status(400)
-        .json({ message: "Account Number and IFSC are required" });
-    }
-
-    const user = await User.findByPk(userId);
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    // 2. Update DB
-    user.bankAccountHolderName = bankAccountHolderName;
-    user.bankAccountNumber = finalAccNum;
-    user.bankIFSC = finalIFSC;
-    user.bankName = bankName;
-
-    await user.save();
-
-    // 3. Strict Invalidation
-    await redis.del(`user:bank:${userId}`);
-    await redis.del(`user:profile:${userId}`);
-
-    res.json({
-      message: "Bank details updated successfully",
-      // 🟢 Return MAPPED keys for Frontend
-      bankDetails: {
-        holder: user.bankAccountHolderName,
-        bank: user.bankName,
-        accountNumber: user.bankAccountNumber,
-        ifscCode: user.bankIFSC,
-      },
-    });
-  } catch (err) {
-    console.error("Update Bank Error:", err);
-    res.status(500).json({ message: "Failed to update bank details" });
-  }
-};
-
-export const getMyBankDetails = async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const cacheKey = `user:bank:${userId}`;
-
-    // 1. Check Redis
-    const cachedData = await redis.get(cacheKey);
-    if (cachedData) {
-      return res.json(JSON.parse(cachedData));
-    }
-
-    // 2. Fetch DB
-    const user = await User.findByPk(userId, {
-      attributes: [
-        "bankAccountHolderName",
-        "bankAccountNumber",
-        "bankIFSC",
-        "bankName",
-      ],
-    });
-
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    // 🟢 3. Format Response (Use Frontend Keys: accountNumber, ifscCode)
-    const bankDetails = {
-      bankAccountHolderName: user.bankAccountHolderName || "",
-      bankName: user.bankName || "",
-      accountNumber: user.bankAccountNumber || "", // 🟢 Mapped
-      ifscCode: user.bankIFSC || "", // 🟢 Mapped
-    };
-
-    // 4. Set Cache
-    await redis.set(cacheKey, JSON.stringify(bankDetails), "EX", 3600);
-
-    res.json(bankDetails);
-  } catch (err) {
-    res.status(500).json({ message: "Failed to fetch bank details" });
-  }
-};
-
-export const getUserBankDetailsAdmin = async (req, res) => {
-  try {
-    const userId = req.params.id; // Get ID from URL params
-    const cacheKey = `user:bank:${userId}`;
-
-    // 🟢 1. Check Redis
-    const cachedData = await redis.get(cacheKey);
-    if (cachedData) {
-      return res.json(JSON.parse(cachedData));
-    }
-
-    // 2. Fetch DB
-    const user = await User.findByPk(userId, {
-      attributes: [
-        "id",
-        "name",
-        "email",
-        "phone",
-        "bankAccountHolderName",
-        "bankAccountNumber",
-        "bankIFSC",
-        "bankName",
-      ],
-    });
-
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    const responseData = {
-      userId: user.id,
-      name: user.name, // Admin might need context of WHO this is
-      bankAccountHolderName: user.bankAccountHolderName || "Not Provided",
-      bankAccountNumber: user.bankAccountNumber || "Not Provided",
-      bankIFSC: user.bankIFSC || "Not Provided",
-      bankName: user.bankName || "Not Provided",
-    };
-
-    // 🟢 3. Set Cache
-    await redis.set(cacheKey, JSON.stringify(responseData), "EX", 3600);
-
-    res.json(responseData);
-  } catch (err) {
-    console.error("Admin Bank Fetch Error:", err);
-    res.status(500).json({ message: "Failed to fetch user bank details" });
-  }
-};
-
-/* ======================================================
-   🟢 ADMIN: SEARCH USER BY PHONE
-====================================================== */
 export const getUserByPhoneAdmin = async (req, res) => {
   try {
     const { phone } = req.query;
