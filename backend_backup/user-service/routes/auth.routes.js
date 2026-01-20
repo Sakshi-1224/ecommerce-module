@@ -26,6 +26,8 @@ router.put(
 
 router.post("/change-password", authMiddleware, changePassword);
 
+router.get("/admin/search", authMiddleware, admin, getUserByPhoneAdmin);
+
 //admin routes
 router.get("/users", authMiddleware, admin, getAllUsers);
 export default router;

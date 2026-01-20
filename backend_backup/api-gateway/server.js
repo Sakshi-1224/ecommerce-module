@@ -1063,6 +1063,21 @@ app.put("/api/admin/vendors/:id/reject", async (req, res) => {
   }
 });
 
+// 🟢 4. Search User by Phone
+app.get("/api/admin/users/search", async (req, res) => {
+  try {
+    const response = await axios.get(`${USER_SERVICE_URL}/admin/search`, {
+      params: req.query, // Pass ?phone=...
+      headers: { Authorization: req.headers.authorization },
+    });
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "User search failed",
+    });
+  }
+});
+
 /* ---------------- CLEAR WHOLE CART ---------------- */
 app.delete("/api/cart/clear", async (req, res) => {
   try {
@@ -1289,21 +1304,17 @@ app.post("/api/vendor/logout", async (req, res) => {
   }
 });
 
-
 app.post("/api/admin/logout", async (req, res) => {
   try {
     // Forward to Admin Service
-    const response = await axios.post(
-      `${ADMIN_SERVICE_URL}/logout`,
-      req.body,
-      { headers: { Authorization: req.headers.authorization } }
-    );
+    const response = await axios.post(`${ADMIN_SERVICE_URL}/logout`, req.body, {
+      headers: { Authorization: req.headers.authorization },
+    });
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json(err.response?.data);
   }
 });
-
 
 app.get("/api/auth/bank-details", async (req, res) => {
   try {
@@ -1319,14 +1330,16 @@ app.get("/api/auth/bank-details", async (req, res) => {
   }
 });
 
-
 app.get("/api/auth/admin/:id/bank-details", async (req, res) => {
   try {
-    const response = await axios.get(`${USER_SERVICE_URL}/admin/${req.params.id}/bank-details`, {
-      headers: {
-        Authorization: req.headers.authorization,
-      },
-    });
+    const response = await axios.get(
+      `${USER_SERVICE_URL}/admin/${req.params.id}/bank-details`,
+      {
+        headers: {
+          Authorization: req.headers.authorization,
+        },
+      }
+    );
 
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -1334,21 +1347,18 @@ app.get("/api/auth/admin/:id/bank-details", async (req, res) => {
   }
 });
 
-app.put(
-  "/api/auth/bank-details",
-  async (req, res) => {
-    try {
-      const response = await axios.put(
-        `${USER_SERVICE_URL}/bank-details`,
-        req.body,
-        { headers: { Authorization: req.headers.authorization } }
-      );
-      res.status(response.status).json(response.data);
-    } catch (err) {
-      res.status(err.response?.status || 500).json(err.response?.data);
-    }
+app.put("/api/auth/bank-details", async (req, res) => {
+  try {
+    const response = await axios.put(
+      `${USER_SERVICE_URL}/bank-details`,
+      req.body,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
   }
-);
+});
 
 /* ======================================================
    ADMIN CONCIERGE ROUTES (Register, Address, Order)
@@ -1373,7 +1383,7 @@ app.post("/api/admin/users/address", async (req, res) => {
   try {
     // Admin sends: { userId, addressLine1, city, ... }
     const response = await axios.post(
-      `${USER_SERVICE_URL}/addresses/admin/add`, 
+      `${USER_SERVICE_URL}/addresses/admin/add`,
       req.body,
       {
         headers: { Authorization: req.headers.authorization }, // Pass Admin Token
@@ -1392,7 +1402,7 @@ app.post("/api/orders/admin/create", async (req, res) => {
   try {
     // Admin sends: { userId, items, amount, address ... }
     const response = await axios.post(
-      `${ORDER_SERVICE_URL}/admin/create`, 
+      `${ORDER_SERVICE_URL}/admin/create`,
       req.body,
       {
         headers: { Authorization: req.headers.authorization },
