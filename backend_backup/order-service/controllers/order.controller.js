@@ -3,6 +3,7 @@ import OrderItem from "../models/OrderItem.js";
 import { Op } from "sequelize";
 import DeliveryBoy from "../models/DeliveryBoy.js";
 import DeliveryAssignment from "../models/DeliveryAssignment.js";
+import ShippingRate from "../models/ShippingRate.js"; // 🟢 IMPORT NEW MODEL
 import sequelize from "../config/db.js";
 import axios from "axios";
 import redis from "../config/redis.js"; 
@@ -13,14 +14,78 @@ const USER_SERVICE_URL = process.env.USER_SERVICE_URL;
 /* ======================================================
    USER: CHECKOUT
 ====================================================== */
+// 1. AUTO-ADD: Ensure areas exist in ShippingRate table
+const syncShippingRates = async (areas) => {
+  if (!areas || !Array.isArray(areas)) return;
+
+  for (const area of areas) {
+    const cleanArea = area.trim();
+    if (!cleanArea) continue;
+
+    // Find or Create with default 0 rate
+    await ShippingRate.findOrCreate({
+      where: { areaName: cleanArea },
+      defaults: { rate: 0 }
+    });
+  }
+};
+
+// 2. AUTO-DELETE: Remove area if NO delivery boy covers it anymore
+const cleanupShippingRates = async (boyId, areasToRemove) => {
+  if (!areasToRemove || areasToRemove.length === 0) return;
+
+  // Fetch ALL other active boys to see what they cover
+  const otherBoys = await DeliveryBoy.findAll({
+    where: {
+      id: { [Op.ne]: boyId },
+      active: true
+    },
+    attributes: ["assignedAreas"]
+  });
+
+  const activeAreasSet = new Set();
+  otherBoys.forEach(b => {
+    if (Array.isArray(b.assignedAreas)) {
+      b.assignedAreas.forEach(area => activeAreasSet.add(area.trim()));
+    }
+  });
+
+  for (const area of areasToRemove) {
+    const cleanArea = area.trim();
+    // If no one else covers this area, delete it
+    if (!activeAreasSet.has(cleanArea)) {
+      console.log(`🗑️ Auto-deleting orphan area: ${cleanArea}`);
+      await ShippingRate.destroy({ where: { areaName: cleanArea } });
+    }
+  }
+};
 export const checkout = async (req, res) => {
   const t = await sequelize.transaction();
 
   try {
     const { items, amount, address, paymentMethod } = req.body;
-    const selectedArea = address.area || "General";
+    const selectedArea = address.area ? address.area.trim() : "General";
 
-    // 1. FETCH USER WALLET BALANCE
+    // 🟢 1. CALCULATE SHIPPING CHARGE
+    let shippingCharge = 0;
+    const rateRecord = await ShippingRate.findOne({
+        where: { areaName: selectedArea},
+        transaction: t
+    });
+
+    if (rateRecord) {
+        shippingCharge = parseFloat(rateRecord.rate);
+    } else {
+        // Fallback: If area not in DB, default to 0 (or handle error)
+        shippingCharge = 0; 
+    }
+
+    // 🟢 2. CALCULATE FINAL PAYABLE
+    // 'amount' is usually item total. We ADD shipping.
+    const itemsTotal = parseFloat(amount);
+    let finalPayableAmount = itemsTotal + shippingCharge;
+
+    // 3. FETCH USER WALLET BALANCE
     let walletBalance = 0;
     try {
         const walletRes = await axios.get(`${USER_SERVICE_URL}/wallet`, {
@@ -31,9 +96,8 @@ export const checkout = async (req, res) => {
         console.warn("⚠️ Could not fetch wallet. Proceeding with 0 credit.");
     }
 
-    // 2. CALCULATE DEDUCTION
+    // 4. CALCULATE DEDUCTION
     let creditApplied = 0;
-    let finalPayableAmount = parseFloat(amount);
 
     if (walletBalance > 0) {
         if (walletBalance >= finalPayableAmount) {
@@ -45,18 +109,20 @@ export const checkout = async (req, res) => {
         }
     }
 
-    // 3. CREATE ORDER
+    // 5. CREATE ORDER
     const order = await Order.create(
       {
         userId: req.user.id,
         amount: finalPayableAmount,
+        shippingCharge: shippingCharge, // 🟢 Save this
         creditApplied: creditApplied,
         address,
         assignedArea: selectedArea,
-        // If wallet pays 100%, method is WALLET, else whatever user chose (COD/RAZORPAY)
         paymentMethod: finalPayableAmount === 0 ? "WALLET" : paymentMethod,
         payment: finalPayableAmount === 0,
         status: "PROCESSING",
+        // 👇 SET ORDER DATE (Payment/Placement Success)
+        orderDate: new Date()
       },
       { transaction: t }
     );
@@ -74,7 +140,7 @@ export const checkout = async (req, res) => {
       );
     }
 
-    // 4. RESERVE STOCK
+    // 6. RESERVE STOCK
     try {
       await axios.post(
         `${PRODUCT_SERVICE_URL}/inventory/reserve`,
@@ -85,7 +151,7 @@ export const checkout = async (req, res) => {
       throw new Error(apiErr.response?.data?.message || "Stock reservation failed");
     }
 
-    // 5. DEDUCT FROM WALLET
+    // 7. DEDUCT FROM WALLET
     if (creditApplied > 0) {
         try {
             await axios.post(
@@ -99,11 +165,13 @@ export const checkout = async (req, res) => {
     }
 
     await t.commit();
-await redis.del(`user:orders:${req.user.id}`);
+    await redis.del(`user:orders:${req.user.id}`);
     await redis.del("admin:orders");
+
     res.status(201).json({ 
         message: "Order placed successfully", 
         orderId: order.id,
+        shippingCharge: shippingCharge,
         creditApplied: creditApplied,
         payableAmount: finalPayableAmount 
     });
@@ -113,7 +181,7 @@ await redis.del(`user:orders:${req.user.id}`);
     res.status(400).json({ message: err.message });
   }
 };
-    
+
 /* ======================================================
    CANCEL LOGIC
 ====================================================== */
@@ -778,32 +846,47 @@ export const getAllDeliveryBoys = async (req, res) => {
     res.status(500).json({ message: "Failed to fetch delivery boys" });
   }
 };
-
+// 🟢 CREATE DELIVERY BOY (With Sync)
 export const createDeliveryBoy = async (req, res) => {
   try {
+    const { name, email, phone, password, assignedAreas } = req.body;
+
+    // 1. Sync Areas (Ensure they exist in ShippingRate)
+    await syncShippingRates(assignedAreas);
+
     const newBoy = await DeliveryBoy.create({
-      ...req.body,
+      name, email, phone, password,
+      assignedAreas, // Saved as ["Area1", "Area2"]
       active: true,
     });
 
-    // 🟢 INVALIDATE CACHE
     await redis.del("delivery_boys:all");
 
-    res.status(201).json(newBoy);
+    res.status(201).json({ 
+        message: "Delivery Boy Created", 
+        deliveryBoy: newBoy 
+    });
   } catch (err) {
-    res
-      .status(500)
-      .json({ message: "Failed to create delivery boy", error: err.message });
+    res.status(500).json({ message: "Failed to create", error: err.message });
   }
 };
 
 export const deleteDeliveryBoy = async (req, res) => {
   try {
-    await DeliveryBoy.destroy({ where: { id: req.params.id } });
+    const { id } = req.params;
+
+    const boy = await DeliveryBoy.findByPk(id);
+    if (!boy) return res.status(404).json({ message: "Delivery boy not found" });
+
+    // 1. Cleanup Areas (if this was the last boy serving them)
+    if (boy.assignedAreas && Array.isArray(boy.assignedAreas)) {
+        await cleanupShippingRates(id, boy.assignedAreas);
+    }
+
+    await DeliveryBoy.destroy({ where: { id } });
     
-    // 🟢 INVALIDATE CACHE
     await redis.del("delivery_boys:all");
-    await redis.del(`tasks:boy:${req.params.id}`);
+    await redis.del(`tasks:boy:${id}`);
 
     res.json({ message: "Deleted" });
   } catch (err) {
@@ -813,14 +896,34 @@ export const deleteDeliveryBoy = async (req, res) => {
 
 export const updateDeliveryBoy = async (req, res) => {
   try {
-    await DeliveryBoy.update(req.body, { where: { id: req.params.id } });
-    
-    // 🟢 INVALIDATE CACHE
+    const { id } = req.params;
+    const { assignedAreas } = req.body;
+
+    const boy = await DeliveryBoy.findByPk(id);
+    if(!boy) return res.status(404).json({ message: "Boy not found" });
+
+    // If areas are changing, we need to handle additions and removals
+    if (assignedAreas) {
+        // 1. Add New Areas
+        await syncShippingRates(assignedAreas);
+
+        // 2. Identify Removed Areas
+        const oldAreas = boy.assignedAreas || [];
+        const newAreas = assignedAreas || [];
+        const removedAreas = oldAreas.filter(a => !newAreas.includes(a));
+        
+        // 3. Cleanup Removed Areas (if orphan)
+        if (removedAreas.length > 0) {
+            await cleanupShippingRates(id, removedAreas);
+        }
+    }
+
+    await DeliveryBoy.update(req.body, { where: { id } });
     await redis.del("delivery_boys:all");
 
-    res.json({ message: "Updated" });
+    res.json({ message: "Delivery Boy Updated" });
   } catch (err) {
-    res.status(500).json({ message: "Failed" });
+    res.status(500).json({ message: "Failed to update" });
   }
 };
 
@@ -985,8 +1088,8 @@ export const reassignDeliveryBoy = async (req, res) => {
     // 🟢 REDIS INVALIDATION
     if(oldBoyId) await redis.del(`tasks:boy:${oldBoyId}`);
     await redis.del(`tasks:boy:${newDeliveryBoyId}`);
-    await redis.del(`order:${orderId}`);
-
+ await redis.del(`order:${orderId}`);
+await redis.del("admin:orders");
     console.log(
       `✅ Reassigned Order ${orderId} to Boy ${newDeliveryBoyId} with reason: ${previousReason}`
     );
@@ -1370,7 +1473,22 @@ export const requestReturn = async (req, res) => {
       await t.rollback();
       return res.status(400).json({ message: "Return already active." });
     }
+// 🟢 2. CHECK RETURN WINDOW (7 DAYS)
+    // Formula: (today - orderDate) / (milliseconds in a day)
+    const today = new Date();
+    const orderDate = new Date(item.Order.orderDate);
+    
+    // Calculate difference in milliseconds
+    const diffTime = Math.abs(today - orderDate);
+    // Convert to days
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
 
+    if (diffDays > 7) {
+        await t.rollback();
+        return res.status(400).json({ 
+            message: `Return Policy Expired. Returns are only allowed within 7 days of order. (Days passed: ${diffDays})` 
+        });
+    }
     // 2. Update Status (No Bank Checks needed)
     item.returnStatus = "REQUESTED";
     item.returnReason = reason;

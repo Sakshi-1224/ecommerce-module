@@ -7,7 +7,19 @@ const Order = sequelize.define(
     id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
     userId: { type: DataTypes.STRING, allowNull: false },
     amount: { type: DataTypes.FLOAT, allowNull: false },
-    // 👇 NEW FIELD: Credit Note amount used
+
+    orderDate: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW 
+    },
+    // 🟢 NEW FIELD: Store the specific shipping cost for this order
+    shippingCharge: { 
+        type: DataTypes.FLOAT, 
+        defaultValue: 0.0, 
+        allowNull: false 
+    },
+       // 👇 NEW FIELD: Credit Note amount used
     creditApplied: { 
         type: DataTypes.FLOAT, 
         defaultValue: 0.0, 

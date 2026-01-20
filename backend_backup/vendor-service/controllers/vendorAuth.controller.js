@@ -1,11 +1,9 @@
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import Vendor from "../models/Vendor.js";
-import redis from "../config/redis.js"; // 🟢 1. Import Redis
-import { validateVerhoeff } from "../utils/verhoeff.js"; // 🟢 Import Verhoeff Validator
-/*======================================================
-   REGISTER (With Verhoeff Validation)
-====================================================== */
+import redis from "../config/redis.js"; 
+import { validateVerhoeff } from "../utils/verhoeff.js"; 
+
 export const register = async (req, res) => {
   try {
     const {

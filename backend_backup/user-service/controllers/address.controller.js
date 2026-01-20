@@ -8,7 +8,7 @@ import redis from "../config/redis.js"; // 🟢 Import Redis
 ====================================================== */
 export const addAddress = async (req, res) => {
   try {
-    const { addressLine1, state, city, area, zipCode, isDefault } = req.body;
+    const { addressLine1, state, city, area, isDefault } = req.body;
 
     // Check if this is the user's first address. If so, make it default.
     const addressCount = await Address.count({ where: { userId: req.user.id } });
@@ -28,7 +28,6 @@ export const addAddress = async (req, res) => {
       state,
       city,
       area,
-      zipCode,
       isDefault: shouldBeDefault
     });
 
@@ -112,7 +111,7 @@ export const deleteAddress = async (req, res) => {
 ====================================================== */
 export const adminAddAddress = async (req, res) => {
   try {
-    const { userId, addressLine1, state, city, area, zipCode, isDefault } = req.body;
+    const { userId, addressLine1, state, city, area, isDefault } = req.body;
 
     if (!userId) {
       return res.status(400).json({ message: "User ID is required" });
@@ -136,7 +135,6 @@ export const adminAddAddress = async (req, res) => {
       state,
       city,
       area,
-      zipCode,
       isDefault: shouldBeDefault
     });
 

@@ -8,9 +8,6 @@ const Address = sequelize.define("Address", {
   state: { type: DataTypes.STRING, allowNull: false },
   city: { type: DataTypes.STRING, allowNull: false },
   area: { type: DataTypes.STRING, allowNull: false }, 
-  
-  zipCode: { type: DataTypes.STRING, allowNull: false },
-  //isDefault: { type: DataTypes.BOOLEAN, defaultValue: false }
 });
 
 export default Address;

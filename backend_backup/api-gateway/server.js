@@ -1431,6 +1431,54 @@ app.get("/api/auth/wallet", async (req, res) => {
   }
 });
 
+app.get("/api/orders/shipping/shipping-rates", async (req, res) => {
+  try {
+    const response = await axios.get(`${ORDER_SERVICE_URL}/shipping/shipping-rates`, {
+      headers: {
+        Authorization: req.headers.authorization,
+      },
+    });
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
+app.post("/api/orders/shipping/shipping-rates", async (req, res) => {
+  try {
+    // Admin sends: { userId, items, amount, address ... }
+    const response = await axios.post(
+      `${ORDER_SERVICE_URL}/shipping/shipping-rates`,
+      req.body,
+      {
+        headers: { Authorization: req.headers.authorization },
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Failed to create order",
+    });
+  }
+});
+
+app.delete("/api/orders/shipping/shipping-rates/:id", async (req, res) => {
+  try {
+    const response = await axios.delete(`${ORDER_SERVICE_URL}/shipping/shipping-rates/${req.params.id}`, {
+      headers: {
+        Authorization: req.headers.authorization,
+      },
+    });
+
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    console.error("Cart Service Error (clear):", err.message);
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "Cart service error",
+    });
+  }
+});
 
 app.listen(5007, () => {
   console.log("API Gateway running on port 5007");
