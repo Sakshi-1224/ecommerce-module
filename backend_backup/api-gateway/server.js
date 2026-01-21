@@ -1379,11 +1379,11 @@ app.post("/api/admin/users/register", async (req, res) => {
 });
 
 // 2. Add Address for User
-app.post("/api/admin/users/address", async (req, res) => {
+app.post("/api/addresses/admin/add", async (req, res) => {
   try {
     // Admin sends: { userId, addressLine1, city, ... }
     const response = await axios.post(
-      `${USER_SERVICE_URL}/addresses/admin/add`,
+      `${ADDRESS_SERVICE_URL}/admin/add`,
       req.body,
       {
         headers: { Authorization: req.headers.authorization }, // Pass Admin Token
@@ -1396,6 +1396,7 @@ app.post("/api/admin/users/address", async (req, res) => {
     });
   }
 });
+
 
 // 3. Place Order for User
 app.post("/api/orders/admin/create", async (req, res) => {
