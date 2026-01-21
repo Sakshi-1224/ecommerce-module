@@ -1397,7 +1397,6 @@ app.post("/api/addresses/admin/add", async (req, res) => {
   }
 });
 
-
 // 3. Place Order for User
 app.post("/api/orders/admin/create", async (req, res) => {
   try {
@@ -1417,7 +1416,6 @@ app.post("/api/orders/admin/create", async (req, res) => {
   }
 });
 
-
 app.get("/api/auth/wallet", async (req, res) => {
   try {
     const response = await axios.get(`${USER_SERVICE_URL}/wallet`, {
@@ -1434,11 +1432,14 @@ app.get("/api/auth/wallet", async (req, res) => {
 
 app.get("/api/orders/shipping/shipping-rates", async (req, res) => {
   try {
-    const response = await axios.get(`${ORDER_SERVICE_URL}/shipping/shipping-rates`, {
-      headers: {
-        Authorization: req.headers.authorization,
-      },
-    });
+    const response = await axios.get(
+      `${ORDER_SERVICE_URL}/shipping/shipping-rates`,
+      {
+        headers: {
+          Authorization: req.headers.authorization,
+        },
+      }
+    );
 
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -1464,13 +1465,34 @@ app.post("/api/orders/shipping/shipping-rates", async (req, res) => {
   }
 });
 
+// 🟢 NEW: Forward Shipping Calculation Request
+app.get("/api/orders/shipping/calculate", async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${ORDER_SERVICE_URL}/shipping/calculate`,
+      {
+        params: req.query, // Forwards ?area=...
+        headers: {
+          Authorization: req.headers.authorization,
+        },
+      }
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json(err.response?.data);
+  }
+});
+
 app.delete("/api/orders/shipping/shipping-rates/:id", async (req, res) => {
   try {
-    const response = await axios.delete(`${ORDER_SERVICE_URL}/shipping/shipping-rates/${req.params.id}`, {
-      headers: {
-        Authorization: req.headers.authorization,
-      },
-    });
+    const response = await axios.delete(
+      `${ORDER_SERVICE_URL}/shipping/shipping-rates/${req.params.id}`,
+      {
+        headers: {
+          Authorization: req.headers.authorization,
+        },
+      }
+    );
 
     res.status(response.status).json(response.data);
   } catch (err) {
