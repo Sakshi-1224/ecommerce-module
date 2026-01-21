@@ -5,7 +5,8 @@ import {
   logout,
   me,
   changePassword,
-  updateProfile
+  updateProfile,
+  getUserByPhoneAdmin,
 } from "../controllers/auth.controller.js";
 import authMiddleware from "../middleware/auth.middleware.js";
 import { admin } from "../middleware/admin.middleware.js";
