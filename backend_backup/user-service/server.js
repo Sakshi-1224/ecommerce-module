@@ -14,7 +14,7 @@ app.use(express.json());
 defineAssociations();
 app.use("/api/auth", authRoutes);
 app.use("/api/addresses", addressRoutes);
-app.use("/wallet", walletRoutes);
+app.use("/api/auth/wallet", walletRoutes);
 const PORT = process.env.PORT || 5001;
 sequelize
   .sync()

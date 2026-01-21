@@ -6,7 +6,7 @@ import DeliveryAssignment from "../models/DeliveryAssignment.js";
 import ShippingRate from "../models/ShippingRate.js"; // 🟢 IMPORT NEW MODEL
 import sequelize from "../config/db.js";
 import axios from "axios";
-import redis from "../config/redis.js"; 
+import redis from "../config/redis.js";
 
 const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL;
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL;
@@ -25,7 +25,7 @@ const syncShippingRates = async (areas) => {
     // Find or Create with default 0 rate
     await ShippingRate.findOrCreate({
       where: { areaName: cleanArea },
-      defaults: { rate: 0 }
+      defaults: { rate: 0 },
     });
   }
 };
@@ -38,15 +38,15 @@ const cleanupShippingRates = async (boyId, areasToRemove) => {
   const otherBoys = await DeliveryBoy.findAll({
     where: {
       id: { [Op.ne]: boyId },
-      active: true
+      active: true,
     },
-    attributes: ["assignedAreas"]
+    attributes: ["assignedAreas"],
   });
 
   const activeAreasSet = new Set();
-  otherBoys.forEach(b => {
+  otherBoys.forEach((b) => {
     if (Array.isArray(b.assignedAreas)) {
-      b.assignedAreas.forEach(area => activeAreasSet.add(area.trim()));
+      b.assignedAreas.forEach((area) => activeAreasSet.add(area.trim()));
     }
   });
 
@@ -69,15 +69,15 @@ export const checkout = async (req, res) => {
     // 🟢 1. CALCULATE SHIPPING CHARGE
     let shippingCharge = 0;
     const rateRecord = await ShippingRate.findOne({
-        where: { areaName: selectedArea},
-        transaction: t
+      where: { areaName: selectedArea },
+      transaction: t,
     });
 
     if (rateRecord) {
-        shippingCharge = parseFloat(rateRecord.rate);
+      shippingCharge = parseFloat(rateRecord.rate);
     } else {
-        // Fallback: If area not in DB, default to 0 (or handle error)
-        shippingCharge = 0; 
+      // Fallback: If area not in DB, default to 0 (or handle error)
+      shippingCharge = 0;
     }
 
     // 🟢 2. CALCULATE FINAL PAYABLE
@@ -88,25 +88,25 @@ export const checkout = async (req, res) => {
     // 3. FETCH USER WALLET BALANCE
     let walletBalance = 0;
     try {
-        const walletRes = await axios.get(`${USER_SERVICE_URL}/wallet`, {
-            headers: { Authorization: req.headers.authorization }
-        });
-        walletBalance = parseFloat(walletRes.data.balance) || 0;
+      const walletRes = await axios.get(`${USER_SERVICE_URL}/wallet`, {
+        headers: { Authorization: req.headers.authorization },
+      });
+      walletBalance = parseFloat(walletRes.data.balance) || 0;
     } catch (err) {
-        console.warn("⚠️ Could not fetch wallet. Proceeding with 0 credit.");
+      console.warn("⚠️ Could not fetch wallet. Proceeding with 0 credit.");
     }
 
     // 4. CALCULATE DEDUCTION
     let creditApplied = 0;
 
     if (walletBalance > 0) {
-        if (walletBalance >= finalPayableAmount) {
-            creditApplied = finalPayableAmount;
-            finalPayableAmount = 0;
-        } else {
-            creditApplied = walletBalance;
-            finalPayableAmount = finalPayableAmount - walletBalance;
-        }
+      if (walletBalance >= finalPayableAmount) {
+        creditApplied = finalPayableAmount;
+        finalPayableAmount = 0;
+      } else {
+        creditApplied = walletBalance;
+        finalPayableAmount = finalPayableAmount - walletBalance;
+      }
     }
 
     // 5. CREATE ORDER
@@ -122,7 +122,7 @@ export const checkout = async (req, res) => {
         payment: finalPayableAmount === 0,
         status: "PROCESSING",
         // 👇 SET ORDER DATE (Payment/Placement Success)
-        orderDate: new Date()
+        orderDate: new Date(),
       },
       { transaction: t }
     );
@@ -148,34 +148,35 @@ export const checkout = async (req, res) => {
         { headers: { Authorization: req.headers.authorization } }
       );
     } catch (apiErr) {
-      throw new Error(apiErr.response?.data?.message || "Stock reservation failed");
+      throw new Error(
+        apiErr.response?.data?.message || "Stock reservation failed"
+      );
     }
 
     // 7. DEDUCT FROM WALLET
     if (creditApplied > 0) {
-        try {
-            await axios.post(
-                `${USER_SERVICE_URL}/wallet/deduct`,
-                { amount: creditApplied },
-                { headers: { Authorization: req.headers.authorization } }
-            );
-        } catch (walletErr) {
-            throw new Error("Failed to deduct wallet. Order cancelled.");
-        }
+      try {
+        await axios.post(
+          `${USER_SERVICE_URL}/wallet/deduct`,
+          { amount: creditApplied },
+          { headers: { Authorization: req.headers.authorization } }
+        );
+      } catch (walletErr) {
+        throw new Error("Failed to deduct wallet. Order cancelled.");
+      }
     }
 
     await t.commit();
     await redis.del(`user:orders:${req.user.id}`);
     await redis.del("admin:orders");
 
-    res.status(201).json({ 
-        message: "Order placed successfully", 
-        orderId: order.id,
-        shippingCharge: shippingCharge,
-        creditApplied: creditApplied,
-        payableAmount: finalPayableAmount 
+    res.status(201).json({
+      message: "Order placed successfully",
+      orderId: order.id,
+      shippingCharge: shippingCharge,
+      creditApplied: creditApplied,
+      payableAmount: finalPayableAmount,
     });
-
   } catch (err) {
     if (!t.finished) await t.rollback();
     res.status(400).json({ message: err.message });
@@ -383,12 +384,12 @@ export const updateOrderStatusAdmin = async (req, res) => {
           }
         }
       }
-      
+
       // 🟢 INVALIDATE CACHE
       await redis.del(`order:${order.id}`);
       await redis.del("admin:orders");
       await redis.del(`user:orders:${order.userId}`);
-      if(autoAssignedBoyId) await redis.del(`tasks:boy:${autoAssignedBoyId}`);
+      if (autoAssignedBoyId) await redis.del(`tasks:boy:${autoAssignedBoyId}`);
 
       return res.json({ message: responseMsg });
     }
@@ -507,11 +508,11 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
             where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
           });
           if (!hasBoy) {
-             // 🟢 Invalidate Item even if parent doesn't update
-             await redis.del(`order:${orderId}`);
-             return res.json({
-                message: `Item updated to ${status}, but Parent Order not updated (No Delivery Boy assigned).`,
-             });
+            // 🟢 Invalidate Item even if parent doesn't update
+            await redis.del(`order:${orderId}`);
+            return res.json({
+              message: `Item updated to ${status}, but Parent Order not updated (No Delivery Boy assigned).`,
+            });
           }
         }
 
@@ -536,7 +537,7 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
     // 🟢 INVALIDATE CACHE
     await redis.del(`order:${orderId}`);
     await redis.del("admin:orders");
-    if(order.userId) await redis.del(`user:orders:${order.userId}`);
+    if (order.userId) await redis.del(`user:orders:${order.userId}`);
 
     res.json({ message: `Item updated to ${status}` });
   } catch (err) {
@@ -552,25 +553,38 @@ export const vendorSalesReport = async (req, res) => {
   try {
     const { type } = req.query;
 
-    let startDate;
-    if (type === "weekly")
-      startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    else if (type === "monthly")
-      startDate = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-    else if (type === "yearly")
-      startDate = new Date(new Date().getFullYear(), 0, 1);
+    let whereClause = {
+      vendorId: req.user.id,
+      status: "DELIVERED",
+    };
+
+    // 🟢 FIX: Only add date filter if a type is specified
+    if (type && type !== "all") {
+      let startDate;
+      if (type === "weekly")
+        startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      else if (type === "monthly")
+        startDate = new Date(
+          new Date().getFullYear(),
+          new Date().getMonth(),
+          1
+        );
+      else if (type === "yearly")
+        startDate = new Date(new Date().getFullYear(), 0, 1);
+
+      if (startDate) {
+        whereClause.createdAt = { [Op.gte]: startDate };
+      }
+    }
 
     const sales = await OrderItem.sum("price", {
-      where: {
-        vendorId: req.user.id,
-        status: "DELIVERED",
-        createdAt: { [Op.gte]: startDate },
-      },
+      where: whereClause,
     });
 
     const result = { totalSales: sales || 0 };
     res.json(result);
   } catch (err) {
+    console.error("Vendor Sales Report Error:", err);
     res.status(500).json({ message: "Failed to generate report" });
   }
 };
@@ -613,7 +627,7 @@ export const adminTotalSales = async (req, res) => {
     // 🟢 REDIS CACHE CHECK
     const cacheKey = "report:admin:totalSales";
     const cached = await redis.get(cacheKey);
-    if(cached) return res.json(JSON.parse(cached));
+    if (cached) return res.json(JSON.parse(cached));
 
     const total = await OrderItem.sum("price", {
       where: { status: "DELIVERED" },
@@ -659,8 +673,8 @@ export const getUserOrders = async (req, res) => {
     // 🟢 REDIS CACHE (Only cache Page 1 for responsiveness)
     const cacheKey = page === 1 ? `user:orders:${userId}` : null;
     if (cacheKey) {
-        const cached = await redis.get(cacheKey);
-        if (cached) return res.json(JSON.parse(cached));
+      const cached = await redis.get(cacheKey);
+      if (cached) return res.json(JSON.parse(cached));
     }
 
     const offset = (page - 1) * limit;
@@ -682,7 +696,7 @@ export const getUserOrders = async (req, res) => {
 
     // 🟢 SET REDIS CACHE (5 mins TTL)
     if (cacheKey) {
-        await redis.set(cacheKey, JSON.stringify(result), "EX", 300);
+      await redis.set(cacheKey, JSON.stringify(result), "EX", 300);
     }
 
     res.json(result);
@@ -697,7 +711,7 @@ export const getOrderById = async (req, res) => {
     // 🟢 REDIS CACHE CHECK
     const cacheKey = `order:${orderId}`;
     const cached = await redis.get(cacheKey);
-    if(cached) return res.json(JSON.parse(cached));
+    if (cached) return res.json(JSON.parse(cached));
 
     const order = await Order.findOne({
       where: { id: orderId, userId: req.user.id },
@@ -705,8 +719,8 @@ export const getOrderById = async (req, res) => {
     });
 
     // 🟢 SET REDIS CACHE (10 mins TTL)
-    if(order) {
-        await redis.set(cacheKey, JSON.stringify(order), "EX", 600);
+    if (order) {
+      await redis.set(cacheKey, JSON.stringify(order), "EX", 600);
     }
 
     res.json(order);
@@ -733,7 +747,7 @@ export const getAllOrdersAdmin = async (req, res) => {
     // 🟢 REDIS CACHE CHECK
     const cacheKey = "admin:orders";
     const cached = await redis.get(cacheKey);
-    if(cached) return res.json(JSON.parse(cached));
+    if (cached) return res.json(JSON.parse(cached));
 
     const orders = await Order.findAll({
       include: OrderItem,
@@ -756,10 +770,10 @@ export const getOrderByIdAdmin = async (req, res) => {
     // For simplicity, sharing the key:
     const cacheKey = `order:${orderId}`;
     const cached = await redis.get(cacheKey);
-    if(cached) {
-         // Note: Admin might need delivery info which user view might not have cached. 
-         // If cached data is sufficient, use it. Otherwise, force fetch.
-         // Here, we force fetch because Admin needs DeliveryAssignment data.
+    if (cached) {
+      // Note: Admin might need delivery info which user view might not have cached.
+      // If cached data is sufficient, use it. Otherwise, force fetch.
+      // Here, we force fetch because Admin needs DeliveryAssignment data.
     }
 
     const order = await Order.findByPk(orderId, {
@@ -771,7 +785,7 @@ export const getOrderByIdAdmin = async (req, res) => {
         },
       ],
     });
-    
+
     // We update the cache with this fuller object
     await redis.set(cacheKey, JSON.stringify(order), "EX", 600);
 
@@ -834,10 +848,10 @@ export const getAllDeliveryBoys = async (req, res) => {
     // 🟢 REDIS CACHE
     const cacheKey = "delivery_boys:all";
     const cached = await redis.get(cacheKey);
-    if(cached) return res.json(JSON.parse(cached));
+    if (cached) return res.json(JSON.parse(cached));
 
     const boys = await DeliveryBoy.findAll();
-    
+
     // 🟢 SET REDIS CACHE (1 hour TTL)
     await redis.set(cacheKey, JSON.stringify(boys), "EX", 3600);
 
@@ -855,16 +869,19 @@ export const createDeliveryBoy = async (req, res) => {
     await syncShippingRates(assignedAreas);
 
     const newBoy = await DeliveryBoy.create({
-      name, email, phone, password,
+      name,
+      email,
+      phone,
+      password,
       assignedAreas, // Saved as ["Area1", "Area2"]
       active: true,
     });
 
     await redis.del("delivery_boys:all");
 
-    res.status(201).json({ 
-        message: "Delivery Boy Created", 
-        deliveryBoy: newBoy 
+    res.status(201).json({
+      message: "Delivery Boy Created",
+      deliveryBoy: newBoy,
     });
   } catch (err) {
     res.status(500).json({ message: "Failed to create", error: err.message });
@@ -876,15 +893,16 @@ export const deleteDeliveryBoy = async (req, res) => {
     const { id } = req.params;
 
     const boy = await DeliveryBoy.findByPk(id);
-    if (!boy) return res.status(404).json({ message: "Delivery boy not found" });
+    if (!boy)
+      return res.status(404).json({ message: "Delivery boy not found" });
 
     // 1. Cleanup Areas (if this was the last boy serving them)
     if (boy.assignedAreas && Array.isArray(boy.assignedAreas)) {
-        await cleanupShippingRates(id, boy.assignedAreas);
+      await cleanupShippingRates(id, boy.assignedAreas);
     }
 
     await DeliveryBoy.destroy({ where: { id } });
-    
+
     await redis.del("delivery_boys:all");
     await redis.del(`tasks:boy:${id}`);
 
@@ -900,22 +918,22 @@ export const updateDeliveryBoy = async (req, res) => {
     const { assignedAreas } = req.body;
 
     const boy = await DeliveryBoy.findByPk(id);
-    if(!boy) return res.status(404).json({ message: "Boy not found" });
+    if (!boy) return res.status(404).json({ message: "Boy not found" });
 
     // If areas are changing, we need to handle additions and removals
     if (assignedAreas) {
-        // 1. Add New Areas
-        await syncShippingRates(assignedAreas);
+      // 1. Add New Areas
+      await syncShippingRates(assignedAreas);
 
-        // 2. Identify Removed Areas
-        const oldAreas = boy.assignedAreas || [];
-        const newAreas = assignedAreas || [];
-        const removedAreas = oldAreas.filter(a => !newAreas.includes(a));
-        
-        // 3. Cleanup Removed Areas (if orphan)
-        if (removedAreas.length > 0) {
-            await cleanupShippingRates(id, removedAreas);
-        }
+      // 2. Identify Removed Areas
+      const oldAreas = boy.assignedAreas || [];
+      const newAreas = assignedAreas || [];
+      const removedAreas = oldAreas.filter((a) => !newAreas.includes(a));
+
+      // 3. Cleanup Removed Areas (if orphan)
+      if (removedAreas.length > 0) {
+        await cleanupShippingRates(id, removedAreas);
+      }
     }
 
     await DeliveryBoy.update(req.body, { where: { id } });
@@ -1078,7 +1096,7 @@ export const reassignDeliveryBoy = async (req, res) => {
         orderId: orderId,
         deliveryBoyId: newDeliveryBoyId,
         status: "ASSIGNED",
-        reason: previousReason, 
+        reason: previousReason,
       },
       { transaction: t }
     );
@@ -1086,10 +1104,10 @@ export const reassignDeliveryBoy = async (req, res) => {
     await t.commit();
 
     // 🟢 REDIS INVALIDATION
-    if(oldBoyId) await redis.del(`tasks:boy:${oldBoyId}`);
+    if (oldBoyId) await redis.del(`tasks:boy:${oldBoyId}`);
     await redis.del(`tasks:boy:${newDeliveryBoyId}`);
- await redis.del(`order:${orderId}`);
-await redis.del("admin:orders");
+    await redis.del(`order:${orderId}`);
+    await redis.del("admin:orders");
     console.log(
       `✅ Reassigned Order ${orderId} to Boy ${newDeliveryBoyId} with reason: ${previousReason}`
     );
@@ -1403,7 +1421,7 @@ export const getDeliveryBoyOrders = async (req, res) => {
 
       // 🟢 2. Update Logic: Only collect cash if it's NOT a return task
       const isCodUnsettled =
-        !isReturnTask && 
+        !isReturnTask &&
         a.Order.paymentMethod === "COD" &&
         !a.cashDeposited &&
         a.Order.status !== "CANCELLED";
@@ -1446,12 +1464,11 @@ export const getDeliveryBoyOrders = async (req, res) => {
   }
 };
 
-
 export const requestReturn = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { orderId, itemId } = req.params;
-    const { reason } = req.body; 
+    const { reason } = req.body;
     const userId = req.user.id;
 
     // 1. Fetch Item
@@ -1473,21 +1490,21 @@ export const requestReturn = async (req, res) => {
       await t.rollback();
       return res.status(400).json({ message: "Return already active." });
     }
-// 🟢 2. CHECK RETURN WINDOW (7 DAYS)
+    // 🟢 2. CHECK RETURN WINDOW (7 DAYS)
     // Formula: (today - orderDate) / (milliseconds in a day)
     const today = new Date();
     const orderDate = new Date(item.Order.orderDate);
-    
+
     // Calculate difference in milliseconds
     const diffTime = Math.abs(today - orderDate);
     // Convert to days
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
     if (diffDays > 7) {
-        await t.rollback();
-        return res.status(400).json({ 
-            message: `Return Policy Expired. Returns are only allowed within 7 days of order. (Days passed: ${diffDays})` 
-        });
+      await t.rollback();
+      return res.status(400).json({
+        message: `Return Policy Expired. Returns are only allowed within 7 days of order. (Days passed: ${diffDays})`,
+      });
     }
     // 2. Update Status (No Bank Checks needed)
     item.returnStatus = "REQUESTED";
@@ -1495,30 +1512,38 @@ export const requestReturn = async (req, res) => {
     await item.save({ transaction: t });
 
     // 3. Update Order Status
-    const allItems = await OrderItem.findAll({ where: { orderId }, transaction: t });
-    const hasRequests = allItems.some(i => ["REQUESTED", "APPROVED"].includes(i.returnStatus));
-    
+    const allItems = await OrderItem.findAll({
+      where: { orderId },
+      transaction: t,
+    });
+    const hasRequests = allItems.some((i) =>
+      ["REQUESTED", "APPROVED"].includes(i.returnStatus)
+    );
+
     const parentOrder = await Order.findByPk(orderId, { transaction: t });
     if (hasRequests && parentOrder.status === "DELIVERED") {
-        parentOrder.status = "RETURN_REQUESTED";
-        await parentOrder.save({ transaction: t });
+      parentOrder.status = "RETURN_REQUESTED";
+      await parentOrder.save({ transaction: t });
     }
 
     await t.commit();
     // 🟢 REDIS INVALIDATION
     await redis.del(`order:${orderId}`);
-    await redis.del("admin:returns"); 
+    await redis.del("admin:returns");
     await redis.del(`user:orders:${userId}`);
-    res.json({ message: "Return requested. Refund will be credited to wallet upon approval." });
-
+    res.json({
+      message:
+        "Return requested. Refund will be credited to wallet upon approval.",
+    });
   } catch (err) {
     if (!t.finished) await t.rollback();
     res.status(500).json({ message: err.message });
   }
 };
 
- export const updateReturnStatusAdmin = async (req, res) => {
+export const updateReturnStatusAdmin = async (req, res) => {
   const t = await sequelize.transaction();
+  let assignedBoyId = null; // 🟢 1. Initialize variable
   try {
     const { orderId, itemId } = req.params;
     const { status } = req.body;
@@ -1576,8 +1601,9 @@ export const requestReturn = async (req, res) => {
           },
           { transaction: t }
         );
+        assignedBoyId = bestBoy.id; // 🟢 2. Capture the ID here
       }
-    } 
+    }
     // 2. RETURNED -> Mark Item Returned (Reached Warehouse)
     else if (status === "RETURNED") {
       const pickupTask = await DeliveryAssignment.findOne({
@@ -1611,59 +1637,56 @@ export const requestReturn = async (req, res) => {
     // 🟢 4. CREDITED -> Send Money to Wallet
     else if (status === "CREDITED") {
       const order = await Order.findByPk(item.orderId, { transaction: t });
-      
+
       if (order && order.userId) {
         const creditAmount = parseFloat(item.price) * parseInt(item.quantity);
-        
+
         try {
-            await axios.post(
-                `${USER_SERVICE_URL}/wallet/add`,
-                { 
-                    userId: order.userId, 
-                    amount: creditAmount,
-                    description: `Credit Note for Order #${order.id}`
-                },
-                { headers: { Authorization: req.headers.authorization } }
-            );
-            console.log(`💰 Credit of ₹${creditAmount} sent to User Wallet`);
+          await axios.post(
+            `${USER_SERVICE_URL}/wallet/add`,
+            {
+              userId: order.userId,
+              amount: creditAmount,
+              description: `Credit Note for Order #${order.id}`,
+            },
+            { headers: { Authorization: req.headers.authorization } }
+          );
+          console.log(`💰 Credit of ₹${creditAmount} sent to User Wallet`);
         } catch (walletErr) {
-            console.error("❌ Wallet Credit Failed:", walletErr.message);
-            throw new Error("Failed to credit User Wallet.");
+          console.error("❌ Wallet Credit Failed:", walletErr.message);
+          throw new Error("Failed to credit User Wallet.");
         }
       }
       item.returnStatus = "CREDITED";
-    } 
-    else if (status === "REJECTED") {
+    } else if (status === "REJECTED") {
       item.returnStatus = "REJECTED";
-    }
-    else {
+    } else {
       await t.rollback();
       return res.status(400).json({ message: `Invalid Status: ${status}` });
     }
 
     await item.save({ transaction: t });
     await t.commit();
-      // 🟢 INVALIDATE CACHE
+    // 🟢 INVALIDATE CACHE
     await redis.del(`order:${orderId}`);
     await redis.del("admin:returns");
-    if(item.Order && item.Order.userId) await redis.del(`user:orders:${item.Order.userId}`);
-    if(assignedBoyId) await redis.del(`tasks:boy:${assignedBoyId}`);
+    if (item.Order && item.Order.userId)
+      await redis.del(`user:orders:${item.Order.userId}`);
+    if (assignedBoyId) await redis.del(`tasks:boy:${assignedBoyId}`);
 
     res.json({ message: `Return status updated to ${status}` });
-
   } catch (err) {
     if (!t.finished) await t.rollback();
     res.status(500).json({ message: err.message });
   }
 };
 
-
 export const getAllReturnOrdersAdmin = async (req, res) => {
   try {
     // 🟢 REDIS CACHE
     const cacheKey = "admin:returns";
     const cached = await redis.get(cacheKey);
-    if(cached) return res.json(JSON.parse(cached));
+    if (cached) return res.json(JSON.parse(cached));
 
     // 1. Fetch all items marked for return
     const returns = await OrderItem.findAll({
@@ -1733,7 +1756,7 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
           );
           if (!pickupTask && assignments.length > 0)
             pickupTask = assignments[0];
-        } 
+        }
         // 🟢 UPDATE HERE: Changed "REFUNDED" to "CREDITED"
         else if (
           ["RETURNED", "CREDITED", "COMPLETED"].includes(item.returnStatus)
@@ -1767,7 +1790,7 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
           pickupAddress: item.Order.address,
           pickupBoy: pickupTask?.DeliveryBoy?.name || "Pending Assignment",
           pickupBoyPhone: pickupTask?.DeliveryBoy?.phone || "N/A",
-          pickupStatus: pickupTask?.status || "N/A"
+          pickupStatus: pickupTask?.status || "N/A",
         });
       }
       return acc;
@@ -1779,10 +1802,11 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
     res.json(formattedReturns);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Failed to fetch returns", error: err.message });
+    res
+      .status(500)
+      .json({ message: "Failed to fetch returns", error: err.message });
   }
 };
-
 
 /* ======================================================
    ADMIN: CREATE ORDER ON BEHALF OF USER
@@ -1803,7 +1827,7 @@ export const adminCreateOrder = async (req, res) => {
     // 2. CREATE ORDER (Linked to the specific User)
     const order = await Order.create(
       {
-        userId: userId, 
+        userId: userId,
         amount,
         address,
         assignedArea: selectedArea,
@@ -1847,11 +1871,10 @@ export const adminCreateOrder = async (req, res) => {
     await redis.del(`user:orders:${userId}`);
     await redis.del("admin:orders");
 
-    res.status(201).json({ 
-      message: "Order created successfully on behalf of user", 
-      orderId: order.id 
+    res.status(201).json({
+      message: "Order created successfully on behalf of user",
+      orderId: order.id,
     });
-
   } catch (err) {
     if (!t.finished) await t.rollback();
     console.error("Admin Create Order Error:", err.message);

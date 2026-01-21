@@ -11,8 +11,10 @@ export const addAddress = async (req, res) => {
     const { addressLine1, state, city, area, isDefault } = req.body;
 
     // Check if this is the user's first address. If so, make it default.
-    const addressCount = await Address.count({ where: { userId: req.user.id } });
-    const shouldBeDefault = addressCount === 0 ? true : (isDefault || false);
+    const addressCount = await Address.count({
+      where: { userId: req.user.id },
+    });
+    const shouldBeDefault = addressCount === 0 ? true : isDefault || false;
 
     // If setting as default, unset previous default
     if (shouldBeDefault) {
@@ -28,52 +30,61 @@ export const addAddress = async (req, res) => {
       state,
       city,
       area,
-      isDefault: shouldBeDefault
+      isDefault: shouldBeDefault,
     });
 
     // 🟢 REDIS: Invalidate Cache (Clear old list so next fetch gets new one)
     await redis.del(`addresses:${req.user.id}`);
 
-    res.status(201).json({ 
-        message: "Address saved successfully", 
-        address: newAddress 
+    res.status(201).json({
+      message: "Address saved successfully",
+      address: newAddress,
     });
-
   } catch (error) {
-    res.status(500).json({ message: "Failed to save address", error: error.message });
+    res
+      .status(500)
+      .json({ message: "Failed to save address", error: error.message });
   }
 };
 
 /* ======================================================
    🟢 2. GET ALL ADDRESSES
-   Returns list for the Checkout Page
 ====================================================== */
 export const getAddresses = async (req, res) => {
   try {
     const userId = req.user.id;
     const cacheKey = `addresses:${userId}`;
 
-    // 🟢 REDIS: Check Cache First
-    const cachedAddresses = await redis.get(cacheKey);
-    if (cachedAddresses) {
+    // 🛡️ SAFE REDIS CHECK
+    try {
+      const cachedAddresses = await redis.get(cacheKey);
+      if (cachedAddresses) {
         return res.json(JSON.parse(cachedAddresses));
+      }
+    } catch (redisErr) {
+      console.warn("Redis error (skipping cache):", redisErr.message);
+      // Do not crash, just continue to DB fetch
     }
 
-    // If not in cache, fetch from DB
+    // Fetch from DB
     const addresses = await Address.findAll({
       where: { userId },
       order: [
-          ['isDefault', 'DESC'], // Default address first
-          ['createdAt', 'DESC']  // Newest address next
-      ]
+        ["isDefault", "DESC"],
+        ["createdAt", "DESC"],
+      ],
     });
 
-    // 🟢 REDIS: Save to Cache (Expire in 1 hour)
-    // Addresses don't change often, so 1 hour is safe.
-    await redis.set(cacheKey, JSON.stringify(addresses), "EX", 3600);
+    // 🛡️ SAFE REDIS SAVE
+    try {
+      await redis.set(cacheKey, JSON.stringify(addresses), "EX", 3600);
+    } catch (redisErr) {
+      console.warn("Redis write failed:", redisErr.message);
+    }
 
     res.json(addresses);
   } catch (error) {
+    console.error("Get Addresses Error:", error); // 🔴 Log the real error to console
     res.status(500).json({ message: "Failed to fetch addresses" });
   }
 };
@@ -84,14 +95,14 @@ export const getAddresses = async (req, res) => {
 export const deleteAddress = async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     // Ensure the address belongs to the logged-in user before deleting
-    const deleted = await Address.destroy({ 
-        where: { id, userId: req.user.id } 
+    const deleted = await Address.destroy({
+      where: { id, userId: req.user.id },
     });
 
     if (!deleted) {
-        return res.status(404).json({ message: "Address not found" });
+      return res.status(404).json({ message: "Address not found" });
     }
 
     // 🟢 REDIS: Invalidate Cache
@@ -102,8 +113,6 @@ export const deleteAddress = async (req, res) => {
     res.status(500).json({ message: "Failed to delete address" });
   }
 };
-
-
 
 /* ======================================================
    🟢 4. ADMIN: ADD ADDRESS FOR USER
@@ -119,35 +128,33 @@ export const adminAddAddress = async (req, res) => {
 
     // Check if this is the user's first address
     const addressCount = await Address.count({ where: { userId } });
-    const shouldBeDefault = addressCount === 0 ? true : (isDefault || false);
+    const shouldBeDefault = addressCount === 0 ? true : isDefault || false;
 
     // If setting as default, unset previous default for THIS user
     if (shouldBeDefault) {
-      await Address.update(
-        { isDefault: false },
-        { where: { userId } }
-      );
+      await Address.update({ isDefault: false }, { where: { userId } });
     }
 
     const newAddress = await Address.create({
-      userId, 
+      userId,
       addressLine1,
       state,
       city,
       area,
-      isDefault: shouldBeDefault
+      isDefault: shouldBeDefault,
     });
 
     // 🟢 REDIS: Invalidate User's Address Cache
     await redis.del(`addresses:${userId}`);
 
-    res.status(201).json({ 
-        message: "Address added to user profile", 
-        address: newAddress 
+    res.status(201).json({
+      message: "Address added to user profile",
+      address: newAddress,
     });
-
   } catch (error) {
     console.error("Admin Add Address Error:", error);
-    res.status(500).json({ message: "Failed to save address", error: error.message });
+    res
+      .status(500)
+      .json({ message: "Failed to save address", error: error.message });
   }
 };
