@@ -14,10 +14,10 @@ app.use(express.json());
 // 👇 RUN ASSOCIATIONS HERE
 defineAssociations();
 
-app.use("/api/orders", orderRoutes);
 app.use("/api/orders/payment", paymentRoutes);
-app.use('/api/orders/delivery', deliveryRoutes);
-app.use('/api/orders/shipping', shippingRoutes);
+app.use("/api/orders/delivery", deliveryRoutes);
+app.use("/api/orders/shipping", shippingRoutes);
+app.use("/api/orders", orderRoutes);
 sequelize.sync().then(() => {
   app.listen(process.env.PORT, () =>
     console.log(`Order Service running on ${process.env.PORT}`)

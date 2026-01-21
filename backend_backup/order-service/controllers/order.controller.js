@@ -1824,16 +1824,34 @@ export const adminCreateOrder = async (req, res) => {
 
     const selectedArea = address.area || "General";
 
+    // 🟢 1. CALCULATE SHIPPING CHARGE (New Logic)
+    let shippingCharge = 0;
+    const rateRecord = await ShippingRate.findOne({
+      where: { areaName: selectedArea },
+      transaction: t,
+    });
+
+    if (rateRecord) {
+      shippingCharge = parseFloat(rateRecord.rate);
+    }
+
+    // 🟢 2. CALCULATE FINAL AMOUNT
+    const itemsTotal = parseFloat(amount); // This is the subtotal sent from frontend
+    const finalPayableAmount = itemsTotal + shippingCharge;
+
     // 2. CREATE ORDER (Linked to the specific User)
     const order = await Order.create(
       {
         userId: userId,
+        amount: finalPayableAmount,
+        shippingCharge: shippingCharge,
         amount,
         address,
         assignedArea: selectedArea,
         paymentMethod: paymentMethod || "COD",
         payment: false,
         status: "PROCESSING",
+        orderDate: new Date(),
       },
       { transaction: t }
     );
