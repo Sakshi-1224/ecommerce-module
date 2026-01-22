@@ -29,9 +29,10 @@ import {
   getReassignmentOptions,
   getDeliveryLocations,
   getDeliveryBoyOrders,
-  requestReturn, updateReturnStatusAdmin,
+  requestReturn, updateRefundStatusAdmin,
   getAllReturnOrdersAdmin,
-  adminCreateOrder
+  adminCreateOrder,
+  getCancelledRefundOrders
 } from "../controllers/order.controller.js";
 
 const router = express.Router();
@@ -49,6 +50,11 @@ router.get("/", auth, getUserOrders);
 router.get("/locations", auth, getDeliveryLocations);
 // 🟢 ADMIN: View All Returns
 router.get("/admin/returns/all", auth, admin, getAllReturnOrdersAdmin);
+
+
+router.get("/admin/refunds/cancelled", auth, admin, getCancelledRefundOrders);
+
+
 router.get("/track/:id", auth, trackOrder);
 
 router.put("/:orderId/cancel-item/:itemId", auth, cancelOrderItem);
@@ -117,6 +123,6 @@ router.put(
 router.post("/:orderId/items/:itemId/return", auth, requestReturn);
 
 // 🟢 ADMIN
-router.put("/admin/:orderId/items/:itemId/return-status", auth, admin, updateReturnStatusAdmin);
+router.put("/admin/:orderId/items/:itemId/return-status", auth, admin, updateRefundStatusAdmin,);
 router.get("/:id", auth, getOrderById); // Generic ID route last
 export default router;

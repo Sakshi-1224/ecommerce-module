@@ -25,6 +25,20 @@ app.use(
 /* ======================
    REGISTER
 ====================== */
+app.get("/api/orders/admin/refunds/cancelled", async (req, res) => {
+  try {
+    const response = await axios.get(`${ORDER_SERVICE_URL}/admin/refunds/cancelled`, {
+      headers: {
+        Authorization: req.headers.authorization,
+      },
+    });
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "order service error",
+    });
+  }
+});
 
 app.post("/api/addresses", async (req, res) => {
   try {
@@ -1496,7 +1510,7 @@ app.delete("/api/orders/shipping/shipping-rates/:id", async (req, res) => {
   } catch (err) {
     console.error("Cart Service Error (clear):", err.message);
     res.status(err.response?.status || 500).json({
-      message: err.response?.data?.message || "Cart service error",
+      message: err.response?.data?.message || "order service error",
     });
   }
 });

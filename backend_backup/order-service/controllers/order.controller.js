@@ -10,7 +10,91 @@ import redis from "../config/redis.js";
 
 const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL;
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL;
+const processAutomaticRefund = async (order, itemsToCancel, t, req) => {
+    // 🟢 SCENARIO 1: PREPAID (Online)
+    // Requirement: "Admin has to credit into the wallet no direct"
+    // Return FALSE so it stays as 'CANCELLED' for Admin to process manually.
+    if (order.payment === true) {
+        return false; 
+    } 
+    
+    // 🟢 SCENARIO 2: COD (Pure or Mixed with Wallet)
+    // Requirement: "Directly go back automatically"
+    else {
+        const walletPaid = parseFloat(order.creditApplied); 
 
+        // A. Pure COD (No Wallet Used)
+        // Requirement: "Nothing happens to wallet... simply cancelled"
+        if (walletPaid <= 0) {
+            // Just reduce the COD Amount (order.amount)
+            const currentCancelIds = itemsToCancel.map(i => i.id);
+            const activeItems = order.OrderItems.filter(i => 
+                !["CANCELLED", "RETURNED"].includes(i.status) && 
+                !currentCancelIds.includes(i.id)
+            );
+            
+            if (activeItems.length === 0) {
+                order.amount = 0; // Full Cancel
+            } else {
+                const activeTotal = activeItems.reduce((sum, i) => sum + (i.price * i.quantity), 0);
+                const shipping = (order.shippingCharge || 0);
+                order.amount = activeTotal + shipping; // Partial Cancel
+            }
+            await order.save({ transaction: t });
+            return true; // Done.
+        }
+
+        // B. Mixed (Wallet + COD)
+        // Requirement: Recalculate bill. Refund if NewTotal < WalletPaid.
+        const currentCancelIds = itemsToCancel.map(i => i.id);
+        const activeItems = order.OrderItems.filter(i => 
+            !["CANCELLED", "RETURNED"].includes(i.status) && 
+            !currentCancelIds.includes(i.id)
+        );
+
+        let newOrderTotal = 0;
+        if (activeItems.length > 0) {
+            newOrderTotal = activeItems.reduce((sum, i) => sum + (i.price * i.quantity), 0) + (order.shippingCharge || 0);
+        }
+
+        // LOGIC CHECK
+        if (newOrderTotal < walletPaid) {
+            // Refund Needed
+            const refundAmount = walletPaid - newOrderTotal;
+            
+            if (refundAmount > 0 && order.userId) {
+                try {
+                    await axios.post(`${USER_SERVICE_URL}/wallet/add`,
+                        {
+                            userId: order.userId,
+                            amount: refundAmount,
+                            description: `Auto-Refund for COD Cancellation (Order #${order.id})`,
+                        },
+                        { headers: { Authorization: req.headers.authorization } }
+                    );
+                    
+                    // Update Order Records
+                    // New Wallet Usage = New Total (since wallet covers everything now)
+                    order.creditApplied = newOrderTotal;
+                    // Cash to Collect = 0
+                    order.amount = 0;
+                    
+                    await order.save({ transaction: t });
+                    console.log(`💰 Auto-Refunded ₹${refundAmount} to Wallet`);
+                } catch (err) {
+                    throw new Error("Wallet Refund Failed.");
+                }
+            }
+        } else {
+            // No Refund Needed. Wallet covers part of NewTotal.
+            // New COD Amount = NewTotal - WalletPaid
+            order.amount = newOrderTotal - walletPaid;
+            await order.save({ transaction: t });
+        }
+
+        return true; // Done.
+    }
+};
 /* ======================================================
    USER: CHECKOUT
 ====================================================== */
@@ -186,136 +270,102 @@ export const checkout = async (req, res) => {
 /* ======================================================
    CANCEL LOGIC
 ====================================================== */
-
 export const cancelOrderItem = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { orderId, itemId } = req.params;
+    const order = await Order.findByPk(orderId, { include: OrderItem, transaction: t });
 
-    const order = await Order.findByPk(orderId, {
-      include: OrderItem,
-      transaction: t,
-    });
     if (!order) throw new Error("Order not found");
-
     const item = order.OrderItems.find((i) => i.id == itemId);
     if (!item) throw new Error("Item not found");
 
-    if (item.status !== "PENDING" && item.status !== "PROCESSING") {
-      throw new Error("Item cannot be cancelled now");
-    }
+    if (!["PENDING", "PROCESSING"].includes(item.status)) throw new Error("Item cannot be cancelled now");
 
-    // 1. Update Item Status
+    // 🟢 1. PROCESS AUTOMATIC LOGIC (COD/Mixed)
+    // Returns TRUE if handled. FALSE if Prepaid (needs Admin).
+    const isProcessed = await processAutomaticRefund(order, [item], t, req);
+
+    // 🟢 2. UPDATE STATUS
     item.status = "CANCELLED";
+    // If processed (COD), mark CREDITED. If Prepaid, mark CANCELLED for Admin list.
+    item.refundStatus = isProcessed ? "CREDITED" : "CANCELLED"; 
+    
     await item.save({ transaction: t });
 
-    // Deduct Amount
-    const deduction = parseFloat(item.price) * parseInt(item.quantity);
-    const newAmount = Math.max(0, parseFloat(order.amount) - deduction);
-    order.amount = newAmount;
-
-    // 2. Update Parent Order Status if needed
-    const activeItems = order.OrderItems.filter(
-      (i) => i.status !== "CANCELLED" && i.id != itemId
-    );
-    order.status =
-      activeItems.length === 0 ? "CANCELLED" : "PARTIALLY_CANCELLED";
-
-    if (order.status === "CANCELLED") {
-      order.amount = 0;
-    }
+    const activeItems = order.OrderItems.filter(i => i.status !== "CANCELLED" && i.id != itemId);
+    order.status = activeItems.length === 0 ? "CANCELLED" : "PARTIALLY_CANCELLED";
 
     await order.save({ transaction: t });
     await t.commit();
 
-    // 3. SYNC: RELEASE STOCK
+    // Release Stock
     try {
-      await axios.post(
-        `${PRODUCT_SERVICE_URL}/inventory/release`,
+      await axios.post(`${PRODUCT_SERVICE_URL}/inventory/release`, 
         { items: [{ productId: item.productId, quantity: item.quantity }] },
         { headers: { Authorization: req.headers.authorization } }
       );
-    } catch (apiErr) {
-      console.error("Product service sync failed", apiErr.message);
-    }
+    } catch (e) { console.error("Stock Release Failed"); }
 
-    // 🟢 REDIS INVALIDATION
     await redis.del(`order:${orderId}`);
-    await redis.del(`user:orders:${req.user.id}`);
-    await redis.del("admin:orders");
+    await redis.del("admin:refunds:cancelled"); 
 
-    res.json({ message: "Item cancelled", orderStatus: order.status });
+    res.json({ message: isProcessed ? "Item cancelled." : "Item cancelled. Refund pending Admin approval." });
   } catch (err) {
     if (!t.finished) await t.rollback();
     res.status(400).json({ message: err.message });
   }
 };
 
+/* ======================================================
+   2. CANCEL FULL ORDER
+====================================================== */
 export const cancelFullOrder = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { orderId } = req.params;
-    const order = await Order.findByPk(orderId, {
-      include: OrderItem,
-      transaction: t,
-    });
+    const order = await Order.findByPk(orderId, { include: OrderItem, transaction: t });
 
     if (!order) throw new Error("Order not found");
+    if (order.status === "CANCELLED") return res.status(400).json({ message: "Already cancelled" });
+    
+    const shipped = order.OrderItems.find(i => !["PENDING", "PROCESSING", "CANCELLED"].includes(i.status));
+    if (shipped) throw new Error("Cannot cancel. Items already shipped.");
 
-    const blockedItem = order.OrderItems.find(
-      (item) =>
-        item.status !== "PENDING" &&
-        item.status !== "PROCESSING" &&
-        item.status !== "CANCELLED"
-    );
-    if (blockedItem) {
-      throw new Error(
-        "Some items are already packed. Cancel items individually."
-      );
-    }
+    const itemsToCancel = order.OrderItems.filter(i => i.status !== "CANCELLED");
 
+    // 🟢 1. PROCESS AUTOMATIC LOGIC (COD/Mixed)
+    const isProcessed = await processAutomaticRefund(order, itemsToCancel, t, req);
+
+    // 🟢 2. UPDATE ITEMS
     const itemsToRelease = [];
-
-    for (const item of order.OrderItems) {
-      if (item.status !== "CANCELLED") {
+    for (const item of itemsToCancel) {
         item.status = "CANCELLED";
+        item.refundStatus = isProcessed ? "CREDITED" : "CANCELLED";
         await item.save({ transaction: t });
-        itemsToRelease.push({
-          productId: item.productId,
-          quantity: item.quantity,
-        });
-      }
+        itemsToRelease.push({ productId: item.productId, quantity: item.quantity });
     }
 
     order.status = "CANCELLED";
-    order.amount = 0;
     await order.save({ transaction: t });
-
     await t.commit();
 
-    // SYNC: RELEASE STOCK
     try {
-      await axios.post(
-        `${PRODUCT_SERVICE_URL}/inventory/release`,
-        { items: itemsToRelease },
+      await axios.post(`${PRODUCT_SERVICE_URL}/inventory/release`, 
+        { items: itemsToRelease }, 
         { headers: { Authorization: req.headers.authorization } }
       );
-    } catch (apiErr) {
-      console.error("Product service sync failed", apiErr.message);
-    }
+    } catch (e) { console.error("Stock Release Failed"); }
 
-    // 🟢 REDIS INVALIDATION
     await redis.del(`order:${orderId}`);
-    await redis.del(`user:orders:${req.user.id}`);
-    await redis.del("admin:orders");
+    await redis.del("admin:refunds:cancelled");
 
-    res.json({ message: "Order cancelled successfully" });
+    res.json({ message: isProcessed ? "Order cancelled." : "Order cancelled. Refund pending Admin approval." });
   } catch (err) {
     if (!t.finished) await t.rollback();
     res.status(400).json({ message: err.message });
   }
 };
-
 /* ======================================================
    ADMIN: UPDATE STATUS (SHIPMENT & DELIVERY)
 ====================================================== */
@@ -873,8 +923,8 @@ export const createDeliveryBoy = async (req, res) => {
       email,
       phone,
       password,
-      assignedAreas,
       maxOrders,
+      assignedAreas, // Saved as ["Area1", "Area2"]
       active: true,
     });
 
@@ -1072,7 +1122,7 @@ export const reassignDeliveryBoy = async (req, res) => {
         const activeReturnItems = await OrderItem.count({
           where: {
             orderId: orderId,
-            returnStatus: { [Op.or]: ["APPROVED", "PICKUP_SCHEDULED"] },
+           refundStatus: { [Op.or]: ["APPROVED", "PICKUP_SCHEDULED"] },
           },
           transaction: t,
         });
@@ -1487,7 +1537,7 @@ export const requestReturn = async (req, res) => {
       await t.rollback();
       return res.status(400).json({ message: "Item must be delivered first." });
     }
-    if (item.returnStatus !== "NONE") {
+    if (item.refundStatus !== "NONE") {
       await t.rollback();
       return res.status(400).json({ message: "Return already active." });
     }
@@ -1508,7 +1558,7 @@ export const requestReturn = async (req, res) => {
       });
     }
     // 2. Update Status (No Bank Checks needed)
-    item.returnStatus = "REQUESTED";
+    item.refundStatus = "REQUESTED";
     item.returnReason = reason;
     await item.save({ transaction: t });
 
@@ -1518,7 +1568,7 @@ export const requestReturn = async (req, res) => {
       transaction: t,
     });
     const hasRequests = allItems.some((i) =>
-      ["REQUESTED", "APPROVED"].includes(i.returnStatus)
+      ["REQUESTED", "APPROVED"].includes(i.refundStatus)
     );
 
     const parentOrder = await Order.findByPk(orderId, { transaction: t });
@@ -1542,146 +1592,149 @@ export const requestReturn = async (req, res) => {
   }
 };
 
-export const updateReturnStatusAdmin = async (req, res) => {
+/* ======================================================
+   3. ADMIN REFUND (Manual: Prepaid + Returns)
+====================================================== */
+export const updateRefundStatusAdmin = async (req, res) => {
   const t = await sequelize.transaction();
-  let assignedBoyId = null; // 🟢 1. Initialize variable
   try {
     const { orderId, itemId } = req.params;
-    const { status } = req.body;
+    const { status } = req.body; 
 
-    const item = await OrderItem.findOne({
-      where: { id: itemId, orderId },
-      include: [{ model: Order }],
-      transaction: t,
-    });
+    const item = await OrderItem.findOne({ where: { id: itemId, orderId }, transaction: t });
+    if (!item) { await t.rollback(); return res.status(404).json({ message: "Item not found" }); }
 
-    if (!item) {
-      await t.rollback();
-      return res.status(404).json({ message: "Item not found" });
-    }
+    // 🟢 ADMIN CLICKS "CREDIT"
+    if (status === "CREDITED") {
+      
+        // A. PREPAID CANCELLATION (Smart Refund Logic)
+        if (item.refundStatus === "CANCELLED") {
+            const order = await Order.findByPk(item.orderId, { include: OrderItem, transaction: t });
+            
+            if (order && order.userId) {
+                // 1. Calculate Total Paid
+                const totalPaid = parseFloat(order.amount) + parseFloat(order.creditApplied);
 
-    // 1. APPROVED -> Assign Delivery Boy
-    if (status === "APPROVED") {
-      item.returnStatus = "APPROVED";
-      const area = item.Order.assignedArea;
-      const allBoys = await DeliveryBoy.findAll({
-        where: { active: true },
-        transaction: t,
-      });
-      const validBoys = allBoys.filter(
-        (boy) => boy.assignedAreas && boy.assignedAreas.includes(area)
-      );
+                // 2. Calculate Cost of Kept Items
+                const activeItems = order.OrderItems.filter(i => 
+                    !["CANCELLED", "RETURNED"].includes(i.status) && 
+                    !["CREDITED", "COMPLETED", "RETURNED", "CANCELLED"].includes(i.refundStatus) 
+                );
 
-      if (validBoys.length > 0) {
-        const startOfDay = new Date();
-        startOfDay.setHours(0, 0, 0, 0);
-        let bestBoy = validBoys[0];
-        let minLoad = Infinity;
+                let costOfKeptItems = 0;
+                if (activeItems.length > 0) {
+                    costOfKeptItems = activeItems.reduce((sum, i) => sum + (i.price * i.quantity), 0) + (order.shippingCharge || 0);
+                }
 
-        for (const boy of validBoys) {
-          const load = await DeliveryAssignment.count({
-            where: {
-              deliveryBoyId: boy.id,
-              createdAt: { [Op.gte]: startOfDay },
-              status: { [Op.ne]: "FAILED" },
-            },
-            transaction: t,
-          });
-          if (load < minLoad) {
-            minLoad = load;
-            bestBoy = boy;
-          }
+                // 3. Max Refundable
+                const totalRefundable = Math.max(0, totalPaid - costOfKeptItems);
+
+                // 4. Decide Amount
+                const otherPendingItems = order.OrderItems.filter(i => 
+                    ["CANCELLED"].includes(i.refundStatus) && i.id !== item.id
+                );
+
+                let refundAmount = 0;
+                if (otherPendingItems.length === 0) {
+                    // Last item: Give everything remaining (including shipping/tax residue)
+                    refundAmount = totalRefundable; 
+                } else {
+                    // Partial: Give Item Price
+                    refundAmount = Math.min(parseFloat(item.price) * parseInt(item.quantity), totalRefundable);
+                }
+
+                // 5. Send Refund
+                if (refundAmount > 0) {
+                     await axios.post(`${USER_SERVICE_URL}/wallet/add`, {
+                          userId: order.userId,
+                          amount: refundAmount,
+                          description: `Refund for Prepaid Cancellation #${order.id}`,
+                     }, { headers: { Authorization: req.headers.authorization } });
+
+                     // 6. Balance the Books
+                     let remaining = refundAmount;
+                     // Deduct from Wallet Usage first
+                     if (order.creditApplied >= remaining) {
+                         order.creditApplied -= remaining;
+                         remaining = 0;
+                     } else {
+                         remaining -= order.creditApplied;
+                         order.creditApplied = 0;
+                         if (order.amount >= remaining) order.amount -= remaining;
+                     }
+                     await order.save({ transaction: t });
+                }
+            }
+            item.refundStatus = "CREDITED";
+        } 
+        
+        // B. STANDARD RETURN (Simple Logic)
+        else {
+             const order = await Order.findByPk(item.orderId, { transaction: t });
+             if (order && order.userId) {
+               const creditAmount = parseFloat(item.price) * parseInt(item.quantity);
+       
+               await axios.post(`${USER_SERVICE_URL}/wallet/add`, {
+                   userId: order.userId,
+                   amount: creditAmount,
+                   description: `Return Credit for Order #${order.id}`,
+               }, { headers: { Authorization: req.headers.authorization } });
+             }
+             item.refundStatus = "CREDITED";
         }
 
-        await DeliveryAssignment.create(
-          {
-            orderId: item.Order.id,
-            deliveryBoyId: bestBoy.id,
-            status: "ASSIGNED",
-            reason: "RETURN_PICKUP",
-          },
-          { transaction: t }
-        );
-        assignedBoyId = bestBoy.id; // 🟢 2. Capture the ID here
-      }
+        await item.save({ transaction: t });
     }
-    // 2. RETURNED -> Mark Item Returned (Reached Warehouse)
-    else if (status === "RETURNED") {
-      const pickupTask = await DeliveryAssignment.findOne({
-        where: {
-          orderId: item.Order.id,
-          reason: "RETURN_PICKUP",
-          status: { [Op.ne]: "DELIVERED" },
-        },
-        transaction: t,
-      });
-      if (pickupTask) {
-        pickupTask.status = "DELIVERED";
-        await pickupTask.save({ transaction: t });
-      }
-      item.returnStatus = "RETURNED";
-      item.status = "RETURNED";
-    }
-    // 3. COMPLETED -> Restock
-    else if (status === "COMPLETED") {
-      try {
-        await axios.post(
-          `${PRODUCT_SERVICE_URL}/admin/inventory/restock`,
-          { items: [{ productId: item.productId, quantity: item.quantity }] },
-          { headers: { Authorization: req.headers.authorization } }
-        );
-      } catch (apiErr) {
-        console.error("Stock Update Failed", apiErr.message);
-      }
-      item.returnStatus = "COMPLETED";
-    }
-    // 🟢 4. CREDITED -> Send Money to Wallet
-    else if (status === "CREDITED") {
-      const order = await Order.findByPk(item.orderId, { transaction: t });
-
-      if (order && order.userId) {
-        const creditAmount = parseFloat(item.price) * parseInt(item.quantity);
-
-        try {
-          await axios.post(
-            `${USER_SERVICE_URL}/wallet/add`,
-            {
-              userId: order.userId,
-              amount: creditAmount,
-              description: `Credit Note for Order #${order.id}`,
-            },
-            { headers: { Authorization: req.headers.authorization } }
-          );
-          console.log(`💰 Credit of ₹${creditAmount} sent to User Wallet`);
-        } catch (walletErr) {
-          console.error("❌ Wallet Credit Failed:", walletErr.message);
-          throw new Error("Failed to credit User Wallet.");
+    
+    // OTHER STATUSES
+    else if (status === "APPROVED") {
+        item.refundStatus = "APPROVED";
+        if (item.status === "DELIVERED") {
+             const order = await Order.findByPk(item.orderId);
+             const allBoys = await DeliveryBoy.findAll({ where: { active: true }, transaction: t });
+             const validBoys = allBoys.filter(boy => boy.assignedAreas && boy.assignedAreas.includes(order.assignedArea));
+             if (validBoys.length > 0) {
+                  await DeliveryAssignment.create({
+                     orderId: order.id,
+                     deliveryBoyId: validBoys[0].id,
+                     status: "ASSIGNED",
+                     reason: "RETURN_PICKUP",
+                  }, { transaction: t });
+             }
         }
-      }
-      item.returnStatus = "CREDITED";
-    } else if (status === "REJECTED") {
-      item.returnStatus = "REJECTED";
-    } else {
-      await t.rollback();
-      return res.status(400).json({ message: `Invalid Status: ${status}` });
+        await item.save({ transaction: t });
+    }
+    else {
+        item.refundStatus = status;
+        await item.save({ transaction: t });
     }
 
-    await item.save({ transaction: t });
     await t.commit();
-    // 🟢 INVALIDATE CACHE
     await redis.del(`order:${orderId}`);
-    await redis.del("admin:returns");
-    if (item.Order && item.Order.userId)
-      await redis.del(`user:orders:${item.Order.userId}`);
-    if (assignedBoyId) await redis.del(`tasks:boy:${assignedBoyId}`);
-
-    res.json({ message: `Return status updated to ${status}` });
+    res.json({ message: `Status updated to ${status}.` });
   } catch (err) {
     if (!t.finished) await t.rollback();
     res.status(500).json({ message: err.message });
   }
 };
+export const getCancelledRefundOrders = async (req, res) => {
+  try {
+    const cacheKey = "admin:refunds:cancelled";
+    const cached = await redis.get(cacheKey);
+    if (cached) return res.json(JSON.parse(cached));
 
+    const cancelledItems = await OrderItem.findAll({
+      where: { refundStatus: "CANCELLED" },
+      include: [{ model: Order, attributes: ["id", "userId", "address", "paymentMethod", "payment", "amount", "creditApplied"] }],
+      order: [["updatedAt", "DESC"]],
+    });
+
+    // (Add Product Info Fetching Logic Here if needed, same as before)
+    
+    await redis.set(cacheKey, JSON.stringify(cancelledItems), "EX", 300);
+    res.json(cancelledItems);
+  } catch (e) { res.status(500).json({message: e.message}); }
+};
 export const getAllReturnOrdersAdmin = async (req, res) => {
   try {
     // 🟢 REDIS CACHE
@@ -1692,7 +1745,7 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
     // 1. Fetch all items marked for return
     const returns = await OrderItem.findAll({
       where: {
-        returnStatus: { [Op.ne]: "NONE" },
+        refundStatus: { [Op.ne]: "NONE" },
       },
       include: [
         {
@@ -1751,7 +1804,7 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
 
         let pickupTask = null;
 
-        if (["APPROVED", "PICKUP_SCHEDULED"].includes(item.returnStatus)) {
+        if (["APPROVED", "PICKUP_SCHEDULED"].includes(item.refundStatus)) {
           pickupTask = assignments.find((task) =>
             ["ASSIGNED", "PICKED", "OUT_FOR_DELIVERY"].includes(task.status)
           );
@@ -1760,7 +1813,7 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
         }
         // 🟢 UPDATE HERE: Changed "REFUNDED" to "CREDITED"
         else if (
-          ["RETURNED", "CREDITED", "COMPLETED"].includes(item.returnStatus)
+          ["RETURNED", "CREDITED", "COMPLETED"].includes(item.refundStatus)
         ) {
           pickupTask = assignments.find((task) => task.status === "DELIVERED");
           if (!pickupTask && assignments.length > 0)
@@ -1783,7 +1836,7 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
           productImage: productData.imageUrl,
           quantity: item.quantity,
           amountToRefund: item.price,
-          status: item.returnStatus,
+          status: item.refundStatus,
           reason: item.returnReason,
           lastUpdated: item.updatedAt,
           customerName: item.Order.address?.fullName || "Guest",

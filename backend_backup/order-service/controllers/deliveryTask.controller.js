@@ -30,7 +30,7 @@ export const getMyTasks = async (req, res) => {
           include: [
             {
               model: OrderItem,
-              attributes: ["id", "productId", "quantity", "price", "status", "returnStatus", "returnReason"],
+              attributes: ["id", "productId", "quantity", "price", "status", "refundStatus", "returnReason"],
             },
           ],
         },
@@ -69,14 +69,14 @@ export const getMyTasks = async (req, res) => {
       if (isReturn) {
         if (isActiveTask) {
            if (task.status === "ASSIGNED") {
-             rawItems = rawItems.filter(item => item.returnStatus === "APPROVED");
+             rawItems = rawItems.filter(item => item.refundStatus === "APPROVED");
            } else {
-             rawItems = rawItems.filter(item => ["APPROVED", "PICKUP_SCHEDULED"].includes(item.returnStatus));
+             rawItems = rawItems.filter(item => ["APPROVED", "PICKUP_SCHEDULED"].includes(item.refundStatus));
            }
            rawItems = rawItems.filter(item => !seenActiveItemIds.has(item.id));
            rawItems.forEach(item => seenActiveItemIds.add(item.id));
         } else {
-           rawItems = rawItems.filter(item => ["RETURNED", "REFUNDED", "COMPLETED"].includes(item.returnStatus));
+           rawItems = rawItems.filter(item => ["RETURNED", "REFUNDED", "COMPLETED"].includes(item.refundStatus));
         }
       } else {
          rawItems = rawItems.filter(item => item.status !== "CANCELLED");
@@ -152,15 +152,15 @@ export const updateTaskStatus = async (req, res) => {
       const orderItems = await OrderItem.findAll({ where: { orderId: assignment.orderId } });
       if (status === "PICKED") {
          for(const item of orderItems) {
-             if (item.returnStatus === "APPROVED") {
-                 item.returnStatus = "PICKUP_SCHEDULED";
+             if (item.refundStatus === "APPROVED") {
+                 item.refundStatus = "PICKUP_SCHEDULED";
                  await item.save();
              }
          }
       } else if (status === "DELIVERED") {
          for(const item of orderItems) {
-             if (item.returnStatus === "PICKUP_SCHEDULED") {
-                 item.returnStatus = "RETURNED";
+             if (item.refundStatus === "PICKUP_SCHEDULED") {
+                 item.refundStatus = "RETURNED";
                  await item.save();
              }
          }
@@ -172,7 +172,7 @@ export const updateTaskStatus = async (req, res) => {
         if (status === "PICKED") {
           order.status = "OUT_FOR_DELIVERY";
           for (const item of order.OrderItems) {
-            if (item.status !== "CANCELLED" && item.status !== "DELIVERED" && item.returnStatus === "NONE") {
+            if (item.status !== "CANCELLED" && item.status !== "DELIVERED" && item.refundStatus === "NONE") {
               item.status = "OUT_FOR_DELIVERY";
               await item.save();
             }
@@ -181,7 +181,7 @@ export const updateTaskStatus = async (req, res) => {
           order.status = "DELIVERED";
           order.payment = true;
           for (const item of order.OrderItems) {
-             if (item.status !== "CANCELLED" && item.returnStatus === "NONE") {
+             if (item.status !== "CANCELLED" && item.refundStatus === "NONE") {
                item.status = "DELIVERED";
                await item.save();
              }

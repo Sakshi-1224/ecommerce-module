@@ -20,13 +20,14 @@ const OrderItem = sequelize.define("OrderItem", {
     ),
     defaultValue: "PENDING",
   },
-  returnStatus: {
+  refundStatus: {
     type: DataTypes.ENUM(
       "NONE",
       "REQUESTED",
       "APPROVED",
       "REJECTED",
       "PICKUP_SCHEDULED",
+      "CANCELLED",
       "RETURNED",
       "CREDITED",
       "COMPLETED"
