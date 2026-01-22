@@ -863,7 +863,7 @@ export const getAllDeliveryBoys = async (req, res) => {
 // 🟢 CREATE DELIVERY BOY (With Sync)
 export const createDeliveryBoy = async (req, res) => {
   try {
-    const { name, email, phone, password, assignedAreas } = req.body;
+    const { name, email, phone, password, maxOrders, assignedAreas } = req.body;
 
     // 1. Sync Areas (Ensure they exist in ShippingRate)
     await syncShippingRates(assignedAreas);
@@ -873,7 +873,8 @@ export const createDeliveryBoy = async (req, res) => {
       email,
       phone,
       password,
-      assignedAreas, // Saved as ["Area1", "Area2"]
+      assignedAreas,
+      maxOrders,
       active: true,
     });
 

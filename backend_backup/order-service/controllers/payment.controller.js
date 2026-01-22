@@ -108,11 +108,8 @@ export const verifyPayment = async (req, res) => {
 
     await order.save();
 
-    // 🟢 6. REDIS INVALIDATION (Critical for Consistency)
-    // Clear the specific order detail cache
     await redis.del(`order:${orderId}`);
-    
-    // Clear the user's order list cache so they see the status update immediately
+ 
     if (order.userId) {
         await redis.del(`user:orders:${order.userId}`);
     }

@@ -90,80 +90,6 @@ export const updateQuantity = async (req, res) => {
   }
 };
 
-/* ---------------- GET CART ---------------- */
-/*
-export const getCart = async (req, res) => {
-  try {
-    const { userId } = req.params;
-
-    if (!userId) return res.status(400).json({ message: "User ID is required" });
-
-    // 🟢 4. CHECK CACHE
-    const cacheKey = `cart:${userId}`;
-    const cachedCart = await redis.get(cacheKey);
-
-    if (cachedCart) {
-      // Return cached JSON immediately
-      return res.json(JSON.parse(cachedCart));
-    }
-
-    // If not in cache, fetch from DB
-    const cartItems = await CartItem.findAll({ where: { userId } });
-
-    let total = 0;
-    const detailedCart = [];
-    
-    // Optimize: Batch fetch products instead of loop if possible, 
-    // but for now, we keep logic same, just cached.
-    // Ideally, Cart Service should call `POST /products/batch?ids=...`
-    
-    // Fetch product details (Slow Part)
-    for (const item of cartItems) {
-      try {
-        const { data: product } = await axios.get(`${PRODUCT_SERVICE_URL}/${item.productId}`);
-
-        if (!product) continue;
-
-        const subtotal = product.price * item.quantity;
-        total += subtotal;
-
-        detailedCart.push({
-          id: item.id,
-          cartItemId: item.id,
-          quantity: item.quantity,
-          userId: item.userId,
-          productId: item.productId,
-          price: product.price,
-          Product: {
-            id: product.id,
-            name: product.name,
-            imageUrl: product.imageUrl,
-            images: product.images, // Pass the new images array to frontend!
-            price: product.price,
-            category: product.category,
-            availableStock: product.availableStock ?? product.stock ?? 0,
-            vendorId: product.vendorId,
-          },
-        });
-      } catch (err) {
-        // Skip items if product service fails for one item
-      }
-    }
-
-    const responseData = { items: detailedCart, total };
-
-    // 🟢 5. SAVE TO CACHE (Expires in 1 hour)
-    // We can cache longer because any write operation above will clear it instantly.
-    await redis.set(cacheKey, JSON.stringify(responseData), "EX", 3600);
-
-    res.json(responseData);
-  } catch (err) {
-    console.error("Get cart error:", err);
-    res.status(err.response?.status || 500).json({ message: "Failed to fetch cart" });
-  }
-};
-
-*/
 
 export const getCart = async (req, res) => {
   try {
@@ -185,16 +111,12 @@ export const getCart = async (req, res) => {
     // 🟢 3. Extract Unique Product IDs
     const productIds = [...new Set(cartItems.map(item => item.productId))];
 
-    // 🟢 4. Batch Fetch from Product Service (1 Request instead of N)
-    // Calls: GET http://localhost:5002/api/products/batch?ids=1,2,5
     let productsMap = {};
     try {
         const { data: products } = await axios.get(`${PRODUCT_SERVICE_URL}/batch`, {
             params: { ids: productIds.join(",") }
         });
 
-        // Convert Array to Map for instant ID lookup
-        // { 101: {name: "Shoe"...}, 102: {name: "Hat"...} }
         products.forEach(p => {
             productsMap[p.id] = p;
         });
@@ -230,9 +152,7 @@ export const getCart = async (req, res) => {
                 // Handle image array from batch response
                 imageUrl: product.images && product.images.length > 0 ? product.images[0] : null, 
                 price: product.price,
-                category: product.Category ? product.Category.name : null, // Check your batch endpoint response structure
-                // Note: Ensure your batch endpoint returns stock info if needed here
-                // stock: product.availableStock 
+                category: product.Category ? product.Category.name : null, 
             availableStock: product.availableStock ?? product.stock ?? 0,
             vendorId: product.vendorId,
             },

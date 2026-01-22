@@ -475,8 +475,6 @@ app.delete("/api/products/:id", async (req, res) => {
 
 app.post("/api/cart/add", async (req, res) => {
   try {
-    console.log("API Gateway - Add to cart:", req.body); // Add this
-
     const response = await axios.post(`${CART_SERVICE_URL}/add`, req.body, {
       headers: {
         Authorization: req.headers.authorization,
