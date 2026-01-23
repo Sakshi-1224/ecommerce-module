@@ -1906,20 +1906,15 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
 
     // 4. Format Data with Smart Assignment Matching
     const seenItemIds = new Set();
-    const formattedReturns = returns.reduce((acc, item) => {
-      if (!seenItemIds.has(item.id)) {
-        seenItemIds.add(item.id);
-
-        const assignments =
-          item.Order.DeliveryAssignments ||
-          (item.Order.DeliveryAssignment
-            ? [item.Order.DeliveryAssignment]
-            : []) ||
-          [];
-
-        assignments.sort(
-          (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
-        );
+   // 🟢 3. FORMAT DATA (Smart Assignment Matching & Image Fix)
+    const formattedReturns = rows.map((item) => {
+      const assignments =
+        item.Order.DeliveryAssignments ||
+        (item.Order.DeliveryAssignment
+          ? [item.Order.DeliveryAssignment]
+          : []) ||
+        [];
+      assignments.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
       let pickupTask = null;
       if (["APPROVED", "PICKUP_SCHEDULED"].includes(item.refundStatus)) {
