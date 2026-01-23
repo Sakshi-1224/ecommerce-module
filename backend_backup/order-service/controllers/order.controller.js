@@ -31,7 +31,7 @@ const processAutomaticRefund = async (order, itemsToCancel, t, req) => {
       const activeItems = order.OrderItems.filter(
         (i) =>
           !["CANCELLED", "RETURNED"].includes(i.status) &&
-          !currentCancelIds.includes(i.id),
+          !currentCancelIds.includes(i.id)
       );
 
       if (activeItems.length === 0) {
@@ -39,7 +39,7 @@ const processAutomaticRefund = async (order, itemsToCancel, t, req) => {
       } else {
         const activeTotal = activeItems.reduce(
           (sum, i) => sum + i.price * i.quantity,
-          0,
+          0
         );
         const shipping = order.shippingCharge || 0;
         order.amount = activeTotal + shipping; // Partial Cancel
@@ -54,7 +54,7 @@ const processAutomaticRefund = async (order, itemsToCancel, t, req) => {
     const activeItems = order.OrderItems.filter(
       (i) =>
         !["CANCELLED", "RETURNED"].includes(i.status) &&
-        !currentCancelIds.includes(i.id),
+        !currentCancelIds.includes(i.id)
     );
 
     let newOrderTotal = 0;
@@ -78,7 +78,7 @@ const processAutomaticRefund = async (order, itemsToCancel, t, req) => {
               amount: refundAmount,
               description: `Auto-Refund for COD Cancellation (Order #${order.id})`,
             },
-            { headers: { Authorization: req.headers.authorization } },
+            { headers: { Authorization: req.headers.authorization } }
           );
 
           // Update Order Records
@@ -217,7 +217,7 @@ export const checkout = async (req, res) => {
         // 👇 SET ORDER DATE (Payment/Placement Success)
         orderDate: new Date(),
       },
-      { transaction: t },
+      { transaction: t }
     );
 
     for (const item of items) {
@@ -229,7 +229,7 @@ export const checkout = async (req, res) => {
           quantity: item.quantity,
           price: item.price,
         },
-        { transaction: t },
+        { transaction: t }
       );
     }
 
@@ -238,11 +238,11 @@ export const checkout = async (req, res) => {
       await axios.post(
         `${PRODUCT_SERVICE_URL}/inventory/reserve`,
         { items },
-        { headers: { Authorization: req.headers.authorization } },
+        { headers: { Authorization: req.headers.authorization } }
       );
     } catch (apiErr) {
       throw new Error(
-        apiErr.response?.data?.message || "Stock reservation failed",
+        apiErr.response?.data?.message || "Stock reservation failed"
       );
     }
 
@@ -252,7 +252,7 @@ export const checkout = async (req, res) => {
         await axios.post(
           `${USER_SERVICE_URL}/wallet/deduct`,
           { amount: creditApplied },
-          { headers: { Authorization: req.headers.authorization } },
+          { headers: { Authorization: req.headers.authorization } }
         );
       } catch (walletErr) {
         throw new Error("Failed to deduct wallet. Order cancelled.");
@@ -307,7 +307,7 @@ export const cancelOrderItem = async (req, res) => {
     await item.save({ transaction: t });
 
     const activeItems = order.OrderItems.filter(
-      (i) => i.status !== "CANCELLED" && i.id != itemId,
+      (i) => i.status !== "CANCELLED" && i.id != itemId
     );
     order.status =
       activeItems.length === 0 ? "CANCELLED" : "PARTIALLY_CANCELLED";
@@ -320,7 +320,7 @@ export const cancelOrderItem = async (req, res) => {
       await axios.post(
         `${PRODUCT_SERVICE_URL}/inventory/release`,
         { items: [{ productId: item.productId, quantity: item.quantity }] },
-        { headers: { Authorization: req.headers.authorization } },
+        { headers: { Authorization: req.headers.authorization } }
       );
     } catch (e) {
       console.error("Stock Release Failed");
@@ -357,12 +357,12 @@ export const cancelFullOrder = async (req, res) => {
       return res.status(400).json({ message: "Already cancelled" });
 
     const shipped = order.OrderItems.find(
-      (i) => !["PENDING", "PROCESSING", "CANCELLED"].includes(i.status),
+      (i) => !["PENDING", "PROCESSING", "CANCELLED"].includes(i.status)
     );
     if (shipped) throw new Error("Cannot cancel. Items already shipped.");
 
     const itemsToCancel = order.OrderItems.filter(
-      (i) => i.status !== "CANCELLED",
+      (i) => i.status !== "CANCELLED"
     );
 
     // 🟢 1. PROCESS AUTOMATIC LOGIC (COD/Mixed)
@@ -370,7 +370,7 @@ export const cancelFullOrder = async (req, res) => {
       order,
       itemsToCancel,
       t,
-      req,
+      req
     );
 
     // 🟢 2. UPDATE ITEMS
@@ -393,7 +393,7 @@ export const cancelFullOrder = async (req, res) => {
       await axios.post(
         `${PRODUCT_SERVICE_URL}/inventory/release`,
         { items: itemsToRelease },
-        { headers: { Authorization: req.headers.authorization } },
+        { headers: { Authorization: req.headers.authorization } }
       );
     } catch (e) {
       console.error("Stock Release Failed");
@@ -401,6 +401,7 @@ export const cancelFullOrder = async (req, res) => {
 
     await redis.del(`order:${orderId}`);
     await redis.del("admin:refunds:cancelled");
+    await redis.del(`user:orders:${req.user.id}`);
 
     res.json({
       message: isProcessed
@@ -444,7 +445,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
           await axios.post(
             `${process.env.PRODUCT_SERVICE_URL}/inventory/ship`,
             { items: itemsToShip },
-            { headers: { Authorization: req.headers.authorization } },
+            { headers: { Authorization: req.headers.authorization } }
           );
         }
       } catch (apiErr) {
@@ -472,7 +473,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
         if (!existingAssignment) {
           const result = await autoAssignDeliveryBoy(
             order.id,
-            order.assignedArea,
+            order.assignedArea
           );
           if (result && result.success) {
             responseMsg += ` & Auto-Assigned to ${result.boy.name}`;
@@ -576,7 +577,7 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
         await axios.post(
           `${process.env.PRODUCT_SERVICE_URL}/inventory/ship`,
           { items: [{ productId: item.productId, quantity: item.quantity }] },
-          { headers: { Authorization: req.headers.authorization } },
+          { headers: { Authorization: req.headers.authorization } }
         );
       } catch (apiErr) {
         return res.status(400).json({
@@ -663,7 +664,7 @@ export const vendorSalesReport = async (req, res) => {
         startDate = new Date(
           new Date().getFullYear(),
           new Date().getMonth(),
-          1,
+          1
         );
       else if (type === "yearly")
         startDate = new Date(new Date().getFullYear(), 0, 1);
@@ -1072,7 +1073,7 @@ const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
     });
 
     const validBoys = allBoys.filter(
-      (boy) => boy.assignedAreas && boy.assignedAreas.includes(area),
+      (boy) => boy.assignedAreas && boy.assignedAreas.includes(area)
     );
 
     if (validBoys.length === 0) {
@@ -1121,7 +1122,7 @@ const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
         deliveryBoyId: bestBoy.id,
         status: "ASSIGNED",
       },
-      { transaction },
+      { transaction }
     );
 
     return { success: true, boy: bestBoy, message: "Assigned Successfully" };
@@ -1175,7 +1176,7 @@ export const reassignDeliveryBoy = async (req, res) => {
 
         if (activeReturnItems > 0) {
           console.log(
-            `⚠️ Detected missing tag for Order ${orderId}. Auto-correcting to RETURN_PICKUP.`,
+            `⚠️ Detected missing tag for Order ${orderId}. Auto-correcting to RETURN_PICKUP.`
           );
           previousReason = "RETURN_PICKUP";
         }
@@ -1195,7 +1196,7 @@ export const reassignDeliveryBoy = async (req, res) => {
         status: "ASSIGNED",
         reason: previousReason,
       },
-      { transaction: t },
+      { transaction: t }
     );
 
     await t.commit();
@@ -1206,7 +1207,7 @@ export const reassignDeliveryBoy = async (req, res) => {
     await redis.del(`order:${orderId}`);
     await redis.del("admin:orders");
     console.log(
-      `✅ Reassigned Order ${orderId} to Boy ${newDeliveryBoyId} with reason: ${previousReason}`,
+      `✅ Reassigned Order ${orderId} to Boy ${newDeliveryBoyId} with reason: ${previousReason}`
     );
     res.json({ message: "Reassignment Successful" });
   } catch (err) {
@@ -1349,7 +1350,7 @@ export const settleCOD = async (req, res) => {
           status: "DELIVERED",
           cashDeposited: false,
         },
-      },
+      }
     );
 
     if (result[0] === 0)
@@ -1614,7 +1615,7 @@ export const requestReturn = async (req, res) => {
       transaction: t,
     });
     const hasRequests = allItems.some((i) =>
-      ["REQUESTED", "APPROVED"].includes(i.refundStatus),
+      ["REQUESTED", "APPROVED"].includes(i.refundStatus)
     );
 
     const parentOrder = await Order.findByPk(orderId, { transaction: t });
@@ -1656,7 +1657,7 @@ export const updateRefundStatusAdmin = async (req, res) => {
       return res.status(404).json({ message: "Item not found" });
     }
 
-    // 🟢 ADMIN CLICKS "CREDIT"
+    // 🟢 CASE 1: ADMIN CLICKS "CREDIT" (REFUND)
     if (status === "CREDITED") {
       // A. PREPAID CANCELLATION (Smart Refund Logic)
       if (item.refundStatus === "CANCELLED") {
@@ -1675,8 +1676,8 @@ export const updateRefundStatusAdmin = async (req, res) => {
             (i) =>
               !["CANCELLED", "RETURNED"].includes(i.status) &&
               !["CREDITED", "COMPLETED", "RETURNED", "CANCELLED"].includes(
-                i.refundStatus,
-              ),
+                i.refundStatus
+              )
           );
 
           let costOfKeptItems = 0;
@@ -1691,7 +1692,7 @@ export const updateRefundStatusAdmin = async (req, res) => {
 
           // 4. Decide Amount
           const otherPendingItems = order.OrderItems.filter(
-            (i) => ["CANCELLED"].includes(i.refundStatus) && i.id !== item.id,
+            (i) => ["CANCELLED"].includes(i.refundStatus) && i.id !== item.id
           );
 
           let refundAmount = 0;
@@ -1702,7 +1703,7 @@ export const updateRefundStatusAdmin = async (req, res) => {
             // Partial: Give Item Price
             refundAmount = Math.min(
               parseFloat(item.price) * parseInt(item.quantity),
-              totalRefundable,
+              totalRefundable
             );
           }
 
@@ -1715,7 +1716,7 @@ export const updateRefundStatusAdmin = async (req, res) => {
                 amount: refundAmount,
                 description: `Refund for Prepaid Cancellation #${order.id}`,
               },
-              { headers: { Authorization: req.headers.authorization } },
+              { headers: { Authorization: req.headers.authorization } }
             );
 
             // 6. Balance the Books
@@ -1748,7 +1749,7 @@ export const updateRefundStatusAdmin = async (req, res) => {
               amount: creditAmount,
               description: `Return Credit for Order #${order.id}`,
             },
-            { headers: { Authorization: req.headers.authorization } },
+            { headers: { Authorization: req.headers.authorization } }
           );
         }
         item.refundStatus = "CREDITED";
@@ -1768,7 +1769,7 @@ export const updateRefundStatusAdmin = async (req, res) => {
         });
         const validBoys = allBoys.filter(
           (boy) =>
-            boy.assignedAreas && boy.assignedAreas.includes(order.assignedArea),
+            boy.assignedAreas && boy.assignedAreas.includes(order.assignedArea)
         );
         if (validBoys.length > 0) {
           await DeliveryAssignment.create(
@@ -1778,7 +1779,7 @@ export const updateRefundStatusAdmin = async (req, res) => {
               status: "ASSIGNED",
               reason: "RETURN_PICKUP",
             },
-            { transaction: t },
+            { transaction: t }
           );
         }
       }
@@ -1789,13 +1790,28 @@ export const updateRefundStatusAdmin = async (req, res) => {
     }
 
     await t.commit();
-    await redis.del(`order:${orderId}`);
+
+    // =========================================================
+    // 🟢 CRITICAL UPDATES: CLEAR ALL RELEVANT CACHES
+    // =========================================================
+    await redis.del(`order:${orderId}`); // 1. Clear Single Order Cache
+    await redis.del("admin:returns"); // 2. Clear Admin Returns List
+    await redis.del("admin:refunds:cancelled"); // 3. Clear Admin Cancellations List
+    if (targetUserId) {
+      await redis.del(`user:orders:${targetUserId}`); // 4. Clear User's Order List
+    }
+
     res.json({ message: `Status updated to ${status}.` });
   } catch (err) {
     if (!t.finished) await t.rollback();
+    console.error("Update Refund Status Error:", err);
     res.status(500).json({ message: err.message });
   }
 };
+
+/* ======================================================
+   GET CANCELLED REFUNDS (Paginated + Sticky History)
+====================================================== */
 export const getCancelledRefundOrders = async (req, res) => {
   try {
     const cacheKey = "admin:refunds:cancelled";
@@ -1819,6 +1835,8 @@ export const getCancelledRefundOrders = async (req, res) => {
         },
       ],
       order: [["updatedAt", "DESC"]],
+      limit: limit,
+      offset: offset,
     });
 
     // (Add Product Info Fetching Logic Here if needed, same as before)
@@ -1829,17 +1847,22 @@ export const getCancelledRefundOrders = async (req, res) => {
     res.status(500).json({ message: e.message });
   }
 };
+
+/* ======================================================
+   GET RETURN ORDERS (Paginated + Exclude Cancellations)
+====================================================== */
 export const getAllReturnOrdersAdmin = async (req, res) => {
   try {
-    // 🟢 REDIS CACHE
-    const cacheKey = "admin:returns";
-    const cached = await redis.get(cacheKey);
-    if (cached) return res.json(JSON.parse(cached));
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
 
-    // 1. Fetch all items marked for return
-    const returns = await OrderItem.findAll({
+    // 🟢 1. FETCH DATA (Paginated)
+    const { count, rows } = await OrderItem.findAndCountAll({
       where: {
         refundStatus: { [Op.ne]: "NONE" },
+        // 🟢 LOGIC: Exclude Cancelled items (they belong to the other tab)
+        status: { [Op.ne]: "CANCELLED" },
       },
       include: [
         {
@@ -1854,28 +1877,30 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
           ],
         },
       ],
-      order: [["updatedAt", "DESC"]], // Show recently updated items first
+      order: [["updatedAt", "DESC"]],
+      limit: limit,
+      offset: offset,
+      distinct: true, // Important for correct count when using includes
     });
 
-    // 2. 🟢 Collect Product IDs for Batch Fetch
+    // 🟢 2. FETCH PRODUCT DETAILS
     const productIds = new Set();
-    returns.forEach((item) => {
+    rows.forEach((item) => {
       if (item.productId) productIds.add(item.productId);
     });
 
-    // 3. 🟢 Fetch Product Details from Microservice
     let productMap = {};
     if (productIds.size > 0) {
       try {
         const idsStr = Array.from(productIds).join(",");
         const response = await axios.get(
-          `${process.env.PRODUCT_SERVICE_URL}/batch?ids=${idsStr}`,
+          `${process.env.PRODUCT_SERVICE_URL}/batch?ids=${idsStr}`
         );
         response.data.forEach((p) => {
           productMap[p.id] = p;
         });
       } catch (err) {
-        console.error("⚠️ Product fetch error:", err.message);
+        console.error("Product fetch error:", err.message);
       }
     }
 
@@ -1896,60 +1921,57 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
           (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
         );
 
-        let pickupTask = null;
-
-        if (["APPROVED", "PICKUP_SCHEDULED"].includes(item.refundStatus)) {
-          pickupTask = assignments.find((task) =>
-            ["ASSIGNED", "PICKED", "OUT_FOR_DELIVERY"].includes(task.status),
-          );
-          if (!pickupTask && assignments.length > 0)
-            pickupTask = assignments[0];
-        }
-        // 🟢 UPDATE HERE: Changed "REFUNDED" to "CREDITED"
-        else if (
-          ["RETURNED", "CREDITED", "COMPLETED"].includes(item.refundStatus)
-        ) {
-          pickupTask = assignments.find((task) => task.status === "DELIVERED");
-          if (!pickupTask && assignments.length > 0)
-            pickupTask = assignments[0];
-        } else {
-          pickupTask = null;
-        }
-
-        const productData = productMap[item.productId] || {
-          name: "Unknown Item",
-          imageUrl: "",
-        };
-
-        acc.push({
-          itemId: item.id,
-          orderId: item.Order.id,
-          userId: item.Order.userId,
-          productId: item.productId,
-          productName: productData.name,
-          productImage: productData.imageUrl,
-          quantity: item.quantity,
-          amountToRefund: item.price,
-          status: item.refundStatus,
-          reason: item.returnReason,
-          lastUpdated: item.updatedAt,
-          customerName: item.Order.address?.fullName || "Guest",
-          customerPhone: item.Order.address?.phone || "N/A",
-          pickupAddress: item.Order.address,
-          pickupBoy: pickupTask?.DeliveryBoy?.name || "Pending Assignment",
-          pickupBoyPhone: pickupTask?.DeliveryBoy?.phone || "N/A",
-          pickupStatus: pickupTask?.status || "N/A",
-        });
+      let pickupTask = null;
+      if (["APPROVED", "PICKUP_SCHEDULED"].includes(item.refundStatus)) {
+        pickupTask = assignments.find((task) =>
+          ["ASSIGNED", "PICKED", "OUT_FOR_DELIVERY"].includes(task.status)
+        );
+        if (!pickupTask && assignments.length > 0) pickupTask = assignments[0];
+      } else if (
+        ["RETURNED", "CREDITED", "COMPLETED"].includes(item.refundStatus)
+      ) {
+        pickupTask = assignments.find((task) => task.status === "DELIVERED");
+        if (!pickupTask && assignments.length > 0) pickupTask = assignments[0];
       }
-      return acc;
-    }, []);
 
-    // 🟢 SET REDIS CACHE (5 mins TTL)
-    await redis.set(cacheKey, JSON.stringify(formattedReturns), "EX", 300);
+      // 🟢 FIX: Extract correct image from array
+      const product = productMap[item.productId];
+      let validImage = null;
 
-    res.json(formattedReturns);
+      if (
+        product &&
+        product.images &&
+        Array.isArray(product.images) &&
+        product.images.length > 0
+      ) {
+        validImage = product.images[0];
+      }
+
+      return {
+        itemId: item.id,
+        orderId: item.Order.id,
+        userId: item.Order.userId,
+        productId: item.productId,
+        productName: product ? product.name : "Unknown Item",
+        productImage: validImage, // 🟢 Now sending correct URL
+        quantity: item.quantity,
+        amountToRefund: item.price,
+        status: item.refundStatus,
+        reason: item.returnReason,
+        lastUpdated: item.updatedAt,
+        customerName: item.Order.address?.fullName || "Guest",
+        customerPhone: item.Order.address?.phone || "N/A",
+        pickupBoy: pickupTask?.DeliveryBoy?.name || "Pending Assignment",
+      };
+    });
+
+    res.json({
+      items: formattedReturns,
+      total: count,
+      currentPage: page,
+      totalPages: Math.ceil(count / limit),
+    });
   } catch (err) {
-    console.error(err);
     res
       .status(500)
       .json({ message: "Failed to fetch returns", error: err.message });
@@ -2001,7 +2023,7 @@ export const adminCreateOrder = async (req, res) => {
         status: "PROCESSING",
         orderDate: new Date(),
       },
-      { transaction: t },
+      { transaction: t }
     );
 
     // 3. Create Order Items
@@ -2014,7 +2036,7 @@ export const adminCreateOrder = async (req, res) => {
           quantity: item.quantity,
           price: item.price,
         },
-        { transaction: t },
+        { transaction: t }
       );
     }
 
@@ -2023,11 +2045,11 @@ export const adminCreateOrder = async (req, res) => {
       await axios.post(
         `${PRODUCT_SERVICE_URL}/inventory/reserve`,
         { items },
-        { headers: { Authorization: req.headers.authorization } },
+        { headers: { Authorization: req.headers.authorization } }
       );
     } catch (apiErr) {
       throw new Error(
-        apiErr.response?.data?.message || "Stock reservation failed",
+        apiErr.response?.data?.message || "Stock reservation failed"
       );
     }
 
