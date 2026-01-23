@@ -283,6 +283,8 @@ export const cancelOrderItem = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { orderId, itemId } = req.params;
+    const { reason } = req.body; // 🟢 Capture Reason
+
     const order = await Order.findByPk(orderId, {
       include: OrderItem,
       transaction: t,
@@ -295,17 +297,17 @@ export const cancelOrderItem = async (req, res) => {
     if (!["PENDING", "PROCESSING"].includes(item.status))
       throw new Error("Item cannot be cancelled now");
 
-    // 🟢 1. PROCESS AUTOMATIC LOGIC (COD/Mixed)
-    // Returns TRUE if handled. FALSE if Prepaid (needs Admin).
+    // 1. Process Refund Logic (COD vs Prepaid)
     const isProcessed = await processAutomaticRefund(order, [item], t, req);
 
-    // 🟢 2. UPDATE STATUS
+    // 2. Update Item Status & Reason
     item.status = "CANCELLED";
-    // If processed (COD), mark CREDITED. If Prepaid, mark CANCELLED for Admin list.
     item.refundStatus = isProcessed ? "CREDITED" : "CANCELLED";
+    item.returnReason = reason || "Customer Cancelled"; // 🟢 Save Reason
 
     await item.save({ transaction: t });
 
+    // 3. Update Order Status
     const activeItems = order.OrderItems.filter(
       (i) => i.status !== "CANCELLED" && i.id != itemId
     );
@@ -315,7 +317,7 @@ export const cancelOrderItem = async (req, res) => {
     await order.save({ transaction: t });
     await t.commit();
 
-    // Release Stock
+    // 4. Release Stock
     try {
       await axios.post(
         `${PRODUCT_SERVICE_URL}/inventory/release`,
@@ -326,8 +328,10 @@ export const cancelOrderItem = async (req, res) => {
       console.error("Stock Release Failed");
     }
 
+    // 5. Clear Cache
     await redis.del(`order:${orderId}`);
     await redis.del("admin:refunds:cancelled");
+    await redis.del(`user:orders:${req.user.id}`);
 
     res.json({
       message: isProcessed
@@ -347,6 +351,8 @@ export const cancelFullOrder = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { orderId } = req.params;
+    const { reason } = req.body; // 🟢 Capture Reason
+
     const order = await Order.findByPk(orderId, {
       include: OrderItem,
       transaction: t,
@@ -365,7 +371,7 @@ export const cancelFullOrder = async (req, res) => {
       (i) => i.status !== "CANCELLED"
     );
 
-    // 🟢 1. PROCESS AUTOMATIC LOGIC (COD/Mixed)
+    // 1. Process Refund Logic
     const isProcessed = await processAutomaticRefund(
       order,
       itemsToCancel,
@@ -373,11 +379,12 @@ export const cancelFullOrder = async (req, res) => {
       req
     );
 
-    // 🟢 2. UPDATE ITEMS
+    // 2. Update Items with Reason
     const itemsToRelease = [];
     for (const item of itemsToCancel) {
       item.status = "CANCELLED";
       item.refundStatus = isProcessed ? "CREDITED" : "CANCELLED";
+      item.returnReason = reason || "Customer Cancelled"; // 🟢 Save Reason
       await item.save({ transaction: t });
       itemsToRelease.push({
         productId: item.productId,
@@ -389,6 +396,7 @@ export const cancelFullOrder = async (req, res) => {
     await order.save({ transaction: t });
     await t.commit();
 
+    // 3. Release Stock
     try {
       await axios.post(
         `${PRODUCT_SERVICE_URL}/inventory/release`,
@@ -399,6 +407,7 @@ export const cancelFullOrder = async (req, res) => {
       console.error("Stock Release Failed");
     }
 
+    // 4. Clear Cache
     await redis.del(`order:${orderId}`);
     await redis.del("admin:refunds:cancelled");
     await redis.del(`user:orders:${req.user.id}`);
@@ -413,6 +422,7 @@ export const cancelFullOrder = async (req, res) => {
     res.status(400).json({ message: err.message });
   }
 };
+
 /* ======================================================
    ADMIN: UPDATE STATUS (SHIPMENT & DELIVERY)
 ====================================================== */
@@ -1657,9 +1667,11 @@ export const updateRefundStatusAdmin = async (req, res) => {
       return res.status(404).json({ message: "Item not found" });
     }
 
-    // 🟢 CASE 1: ADMIN CLICKS "CREDIT" (REFUND)
+    let targetUserId = null; // Store for cache clearing
+
+    // A. ADMIN CLICKS "CREDIT" (Refund Logic)
     if (status === "CREDITED") {
-      // A. PREPAID CANCELLATION (Smart Refund Logic)
+      // 1. Prepaid Cancellation Logic
       if (item.refundStatus === "CANCELLED") {
         const order = await Order.findByPk(item.orderId, {
           include: OrderItem,
@@ -1667,11 +1679,10 @@ export const updateRefundStatusAdmin = async (req, res) => {
         });
 
         if (order && order.userId) {
-          // 1. Calculate Total Paid
+          targetUserId = order.userId;
           const totalPaid =
             parseFloat(order.amount) + parseFloat(order.creditApplied);
 
-          // 2. Calculate Cost of Kept Items
           const activeItems = order.OrderItems.filter(
             (i) =>
               !["CANCELLED", "RETURNED"].includes(i.status) &&
@@ -1687,27 +1698,21 @@ export const updateRefundStatusAdmin = async (req, res) => {
               (order.shippingCharge || 0);
           }
 
-          // 3. Max Refundable
           const totalRefundable = Math.max(0, totalPaid - costOfKeptItems);
-
-          // 4. Decide Amount
           const otherPendingItems = order.OrderItems.filter(
             (i) => ["CANCELLED"].includes(i.refundStatus) && i.id !== item.id
           );
 
           let refundAmount = 0;
           if (otherPendingItems.length === 0) {
-            // Last item: Give everything remaining (including shipping/tax residue)
             refundAmount = totalRefundable;
           } else {
-            // Partial: Give Item Price
             refundAmount = Math.min(
               parseFloat(item.price) * parseInt(item.quantity),
               totalRefundable
             );
           }
 
-          // 5. Send Refund
           if (refundAmount > 0) {
             await axios.post(
               `${USER_SERVICE_URL}/wallet/add`,
@@ -1719,9 +1724,8 @@ export const updateRefundStatusAdmin = async (req, res) => {
               { headers: { Authorization: req.headers.authorization } }
             );
 
-            // 6. Balance the Books
+            // Balance Order Books
             let remaining = refundAmount;
-            // Deduct from Wallet Usage first
             if (order.creditApplied >= remaining) {
               order.creditApplied -= remaining;
               remaining = 0;
@@ -1735,13 +1739,12 @@ export const updateRefundStatusAdmin = async (req, res) => {
         }
         item.refundStatus = "CREDITED";
       }
-
-      // B. STANDARD RETURN (Simple Logic)
+      // 2. Standard Return Logic
       else {
         const order = await Order.findByPk(item.orderId, { transaction: t });
         if (order && order.userId) {
+          targetUserId = order.userId;
           const creditAmount = parseFloat(item.price) * parseInt(item.quantity);
-
           await axios.post(
             `${USER_SERVICE_URL}/wallet/add`,
             {
@@ -1754,15 +1757,16 @@ export const updateRefundStatusAdmin = async (req, res) => {
         }
         item.refundStatus = "CREDITED";
       }
-
       await item.save({ transaction: t });
     }
 
-    // OTHER STATUSES
+    // B. APPROVED (Assign Pickup)
     else if (status === "APPROVED") {
       item.refundStatus = "APPROVED";
       if (item.status === "DELIVERED") {
-        const order = await Order.findByPk(item.orderId);
+        const order = await Order.findByPk(item.orderId, { transaction: t });
+        if (order) targetUserId = order.userId;
+
         const allBoys = await DeliveryBoy.findAll({
           where: { active: true },
           transaction: t,
@@ -1771,6 +1775,7 @@ export const updateRefundStatusAdmin = async (req, res) => {
           (boy) =>
             boy.assignedAreas && boy.assignedAreas.includes(order.assignedArea)
         );
+
         if (validBoys.length > 0) {
           await DeliveryAssignment.create(
             {
@@ -1784,27 +1789,30 @@ export const updateRefundStatusAdmin = async (req, res) => {
         }
       }
       await item.save({ transaction: t });
-    } else {
+    }
+    // C. Other Statuses
+    else {
+      const order = await Order.findByPk(item.orderId, {
+        attributes: ["userId"],
+        transaction: t,
+      });
+      if (order) targetUserId = order.userId;
+
       item.refundStatus = status;
       await item.save({ transaction: t });
     }
 
     await t.commit();
 
-    // =========================================================
-    // 🟢 CRITICAL UPDATES: CLEAR ALL RELEVANT CACHES
-    // =========================================================
-    await redis.del(`order:${orderId}`); // 1. Clear Single Order Cache
-    await redis.del("admin:returns"); // 2. Clear Admin Returns List
-    await redis.del("admin:refunds:cancelled"); // 3. Clear Admin Cancellations List
-    if (targetUserId) {
-      await redis.del(`user:orders:${targetUserId}`); // 4. Clear User's Order List
-    }
+    // 🟢 CRITICAL: Clear ALL Caches
+    await redis.del(`order:${orderId}`);
+    await redis.del("admin:returns");
+    await redis.del("admin:refunds:cancelled");
+    if (targetUserId) await redis.del(`user:orders:${targetUserId}`);
 
     res.json({ message: `Status updated to ${status}.` });
   } catch (err) {
     if (!t.finished) await t.rollback();
-    console.error("Update Refund Status Error:", err);
     res.status(500).json({ message: err.message });
   }
 };
@@ -1814,12 +1822,17 @@ export const updateRefundStatusAdmin = async (req, res) => {
 ====================================================== */
 export const getCancelledRefundOrders = async (req, res) => {
   try {
-    const cacheKey = "admin:refunds:cancelled";
-    const cached = await redis.get(cacheKey);
-    if (cached) return res.json(JSON.parse(cached));
+    // 🟢 1. Pagination
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
 
-    const cancelledItems = await OrderItem.findAll({
-      where: { refundStatus: "CANCELLED" },
+    // 🟢 2. Fetch Cancelled Items (Keeping History)
+    const { count, rows } = await OrderItem.findAndCountAll({
+      where: {
+        status: "CANCELLED",
+        refundStatus: { [Op.in]: ["CANCELLED", "CREDITED"] },
+      },
       include: [
         {
           model: Order,
@@ -1839,10 +1852,48 @@ export const getCancelledRefundOrders = async (req, res) => {
       offset: offset,
     });
 
-    // (Add Product Info Fetching Logic Here if needed, same as before)
+    // 🟢 3. Fetch Products (Batch)
+    const productIds = [...new Set(rows.map((i) => i.productId))];
+    let productMap = {};
 
-    await redis.set(cacheKey, JSON.stringify(cancelledItems), "EX", 300);
-    res.json(cancelledItems);
+    if (productIds.length > 0) {
+      try {
+        const { data } = await axios.get(`${PRODUCT_SERVICE_URL}/batch`, {
+          params: { ids: productIds.join(",") },
+        });
+        data.forEach((p) => (productMap[p.id] = p));
+      } catch (e) {
+        console.error("Product fetch failed", e.message);
+      }
+    }
+
+    // 🟢 4. Format & Fix Image
+    const enrichedItems = rows.map((item) => {
+      const product = productMap[item.productId];
+      let validImage = null;
+      if (
+        product &&
+        product.images &&
+        Array.isArray(product.images) &&
+        product.images.length > 0
+      ) {
+        validImage = product.images[0];
+      }
+
+      return {
+        ...item.toJSON(),
+        Product: product
+          ? { name: product.name, imageUrl: validImage }
+          : { name: "Unknown", imageUrl: null },
+      };
+    });
+
+    res.json({
+      items: enrichedItems,
+      total: count,
+      currentPage: page,
+      totalPages: Math.ceil(count / limit),
+    });
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
@@ -1857,12 +1908,11 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
-    // 🟢 1. FETCH DATA (Paginated)
+    // 🟢 1. Fetch Returns (Excluding Cancellations)
     const { count, rows } = await OrderItem.findAndCountAll({
       where: {
         refundStatus: { [Op.ne]: "NONE" },
-        // 🟢 LOGIC: Exclude Cancelled items (they belong to the other tab)
-        status: { [Op.ne]: "CANCELLED" },
+        status: { [Op.ne]: "CANCELLED" }, // Separate from Cancellations tab
       },
       include: [
         {
@@ -1880,10 +1930,10 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
       order: [["updatedAt", "DESC"]],
       limit: limit,
       offset: offset,
-      distinct: true, // Important for correct count when using includes
+      distinct: true,
     });
 
-    // 🟢 2. FETCH PRODUCT DETAILS
+    // 🟢 2. Fetch Products
     const productIds = new Set();
     rows.forEach((item) => {
       if (item.productId) productIds.add(item.productId);
@@ -1894,7 +1944,7 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
       try {
         const idsStr = Array.from(productIds).join(",");
         const response = await axios.get(
-          `${process.env.PRODUCT_SERVICE_URL}/batch?ids=${idsStr}`
+          `${PRODUCT_SERVICE_URL}/batch?ids=${idsStr}`
         );
         response.data.forEach((p) => {
           productMap[p.id] = p;
@@ -1904,9 +1954,7 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
       }
     }
 
-    // 4. Format Data with Smart Assignment Matching
-    const seenItemIds = new Set();
-   // 🟢 3. FORMAT DATA (Smart Assignment Matching & Image Fix)
+    // 🟢 3. Format Response
     const formattedReturns = rows.map((item) => {
       const assignments =
         item.Order.DeliveryAssignments ||
@@ -1929,10 +1977,9 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
         if (!pickupTask && assignments.length > 0) pickupTask = assignments[0];
       }
 
-      // 🟢 FIX: Extract correct image from array
+      // FIX: Extract Image
       const product = productMap[item.productId];
       let validImage = null;
-
       if (
         product &&
         product.images &&
@@ -1948,7 +1995,7 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
         userId: item.Order.userId,
         productId: item.productId,
         productName: product ? product.name : "Unknown Item",
-        productImage: validImage, // 🟢 Now sending correct URL
+        productImage: validImage,
         quantity: item.quantity,
         amountToRefund: item.price,
         status: item.refundStatus,
