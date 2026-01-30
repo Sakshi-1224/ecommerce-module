@@ -32,7 +32,9 @@ import {
   requestReturn, updateRefundStatusAdmin,
   getAllReturnOrdersAdmin,
   adminCreateOrder,
-  getCancelledRefundOrders
+  getCancelledRefundOrders,
+  getAdminStats,
+  getVendorStats
 } from "../controllers/order.controller.js";
 
 const router = express.Router();
@@ -51,7 +53,8 @@ router.get("/locations", auth, getDeliveryLocations);
 // 🟢 ADMIN: View All Returns
 router.get("/admin/returns/all", auth, admin, getAllReturnOrdersAdmin);
 
-
+router.get("/admin/stats", auth, admin, getAdminStats);
+router.get("/vendor/stats", auth, vendor, getVendorStats);
 router.get("/admin/refunds/cancelled", auth, admin, getCancelledRefundOrders);
 
 

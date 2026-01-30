@@ -21,7 +21,8 @@ import {
   shipStock,
   getProductsByVendorId,
   getProductsBatch,
-  restockInventory
+  restockInventory,
+  releaseStockafterreturn
 } from "../controllers/product.controller.js";
 
 const router = express.Router();
@@ -34,6 +35,7 @@ router.get("/categories", getAllCategories);
 // Ideally protect these with a special internal token or check IP
 router.post("/inventory/reserve", auth, reserveStock);
 router.post("/inventory/release", auth, releaseStock);
+router.post("/inventory/releaseafterreturn", auth, releaseStockafterreturn);
 router.post("/inventory/ship", auth, shipStock);
 
 /* ================= VENDOR ================= */

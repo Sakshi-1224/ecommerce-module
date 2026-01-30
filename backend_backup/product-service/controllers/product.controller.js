@@ -550,6 +550,51 @@ export const releaseStock = async (req, res) => {
   }
 };
 
+
+export const releaseStockafterreturn = async (req, res) => {
+  const t = await sequelize.transaction();
+  const vendorIdsToClear = new Set();
+
+  try {
+    const { items } = req.body;
+    for (const item of items) {
+      const product = await Product.findByPk(item.productId, {
+        transaction: t,
+      });
+
+      if (product) {
+       // product.reservedStock -= item.quantity;
+        // Safety check
+       // if (product.reservedStock < 0) product.reservedStock = 0;
+        product.totalStock += item.quantity;
+        product.warehouseStock += item.quantity;
+        product.availableStock = product.totalStock - product.reservedStock;
+       
+        if (product.vendorId) vendorIdsToClear.add(product.vendorId);
+
+        await product.save({ transaction: t });
+      }
+    }
+
+    await t.commit();
+
+    // Cache Invalidation
+    for (const item of items) {
+      await redis.del(`product:${item.productId}`);
+    }
+    for (const vendorId of vendorIdsToClear) {
+      await redis.del(`inventory:vendor:${vendorId}`);
+      await redis.del(`products:vendor:${vendorId}`);
+    }
+    await redis.del(`inventory:admin`);
+
+    res.json({ message: "Stock released" });
+  } catch (err) {
+    if (!t.finished) await t.rollback();
+    res.status(500).json({ message: err.message });
+  }
+};
+
 export const shipStock = async (req, res) => {
   const t = await sequelize.transaction();
   const vendorIdsToClear = new Set();

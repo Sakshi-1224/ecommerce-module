@@ -20,18 +20,57 @@ app.use(
   cors({
     origin: "http://localhost:5174",
     credentials: true,
-  })
+  }),
 );
 /* ======================
    REGISTER
 ====================== */
+app.get("/api/orders/admin/stats", async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${ORDER_SERVICE_URL}/admin/stats`,
+      {
+        headers: {
+          Authorization: req.headers.authorization,
+        },
+      },
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "order service error",
+    });
+  }
+});
+
+app.get("/api/orders/vendor/stats", async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${ORDER_SERVICE_URL}/vendor/stats`,
+      {
+        headers: {
+          Authorization: req.headers.authorization,
+        },
+      },
+    );
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      message: err.response?.data?.message || "order service error",
+    });
+  }
+});
+
 app.get("/api/orders/admin/refunds/cancelled", async (req, res) => {
   try {
-    const response = await axios.get(`${ORDER_SERVICE_URL}/admin/refunds/cancelled`, {
-      headers: {
-        Authorization: req.headers.authorization,
+    const response = await axios.get(
+      `${ORDER_SERVICE_URL}/admin/refunds/cancelled`,
+      {
+        headers: {
+          Authorization: req.headers.authorization,
+        },
       },
-    });
+    );
     res.status(response.status).json(response.data);
   } catch (err) {
     res.status(err.response?.status || 500).json({
@@ -78,7 +117,7 @@ app.delete("/api/addresses/:id", async (req, res) => {
         headers: {
           Authorization: req.headers.authorization,
         },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -124,7 +163,7 @@ app.post("/api/auth/logout", async (req, res) => {
         headers: {
           Authorization: req.headers.authorization,
         },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -177,7 +216,7 @@ app.post("/api/auth/change-password", async (req, res) => {
         headers: {
           Authorization: req.headers.authorization,
         },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -251,7 +290,7 @@ app.post("/api/products/inventory/reserve", async (req, res) => {
       req.body,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -267,7 +306,7 @@ app.post("/api/products/inventory/release", async (req, res) => {
       req.body,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -283,7 +322,7 @@ app.post("/api/products/inventory/ship", async (req, res) => {
       req.body,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -302,7 +341,7 @@ app.get("/api/products/vendor/my-products", async (req, res) => {
       `${PRODUCT_SERVICE_URL}/vendor/my-products`,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -317,7 +356,7 @@ app.get("/api/products/vendor/inventory", async (req, res) => {
       `${PRODUCT_SERVICE_URL}/vendor/inventory`,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -349,7 +388,7 @@ app.post("/api/products/admin/inventory/transfer", async (req, res) => {
       req.body,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -365,7 +404,7 @@ app.put("/api/products/admin/inventory/update", async (req, res) => {
       req.body,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -380,7 +419,7 @@ app.get("/api/products/vendor/:vendorId", async (req, res) => {
       `${PRODUCT_SERVICE_URL}/vendor/${req.params.vendorId}`,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -457,7 +496,7 @@ app.put("/api/products/:id", upload.array("images"), async (req, res) => {
           Authorization: req.headers.authorization,
           ...formData.getHeaders(), // IMPORTANT
         },
-      }
+      },
     );
 
     res.status(response.status).json(response.data);
@@ -476,7 +515,7 @@ app.delete("/api/products/:id", async (req, res) => {
       `${PRODUCT_SERVICE_URL}/${req.params.id}`,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
 
     res.status(response.status).json(response.data);
@@ -514,7 +553,7 @@ app.put("/api/cart/update/:id", async (req, res) => {
         headers: {
           Authorization: req.headers.authorization,
         },
-      }
+      },
     );
 
     res.status(response.status).json(response.data);
@@ -534,7 +573,7 @@ app.get("/api/cart/:userId", async (req, res) => {
         headers: {
           Authorization: req.headers.authorization,
         },
-      }
+      },
     );
 
     res.status(response.status).json(response.data);
@@ -554,7 +593,7 @@ app.delete("/api/cart/remove/:id", async (req, res) => {
         headers: {
           Authorization: req.headers.authorization,
         },
-      }
+      },
     );
 
     res.status(response.status).json(response.data);
@@ -583,7 +622,7 @@ app.post("/api/orders/checkout", async (req, res) => {
       req.body,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -623,7 +662,7 @@ app.get("/api/orders/track/:id", async (req, res) => {
       `${ORDER_SERVICE_URL}/track/${req.params.id}`,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -636,10 +675,12 @@ app.put("/api/orders/:orderId/cancel", async (req, res) => {
   try {
     const response = await axios.put(
       `${ORDER_SERVICE_URL}/${req.params.orderId}/cancel`,
-      {},
+      {
+        reason: req.body.reason,
+      },
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -652,10 +693,12 @@ app.put("/api/orders/:orderId/cancel-item/:itemId", async (req, res) => {
   try {
     const response = await axios.put(
       `${ORDER_SERVICE_URL}/${req.params.orderId}/cancel-item/${req.params.itemId}`,
-      {},
+      {
+        reason: req.body.reason,
+      },
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -686,7 +729,7 @@ app.get("/api/orders/admin/sales/vendors", async (req, res) => {
       {
         params: req.query, // 👈 ADD THIS
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -701,7 +744,7 @@ app.get("/api/orders/admin/sales/vendor/:vendorId", async (req, res) => {
       {
         params: req.query, // 👈 CRITICAL: Forwards ?type=monthly
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -719,7 +762,7 @@ app.get("/api/orders/admin/delivery-boys", async (req, res) => {
       `${ORDER_SERVICE_URL}/admin/delivery-boys`,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -734,7 +777,7 @@ app.post("/api/orders/admin/delivery-boys", async (req, res) => {
       req.body,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -748,7 +791,7 @@ app.delete("/api/orders/admin/delivery-boys/:id", async (req, res) => {
       `${ORDER_SERVICE_URL}/admin/delivery-boys/${req.params.id}`,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -776,7 +819,7 @@ app.get("/api/orders/admin/:id", async (req, res) => {
       `${ORDER_SERVICE_URL}/admin/${req.params.id}`,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -790,7 +833,7 @@ app.put("/api/orders/admin/:id/status", async (req, res) => {
       req.body,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -805,7 +848,7 @@ app.put("/api/orders/admin/:orderId/item/:itemId/status", async (req, res) => {
       req.body,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -819,7 +862,7 @@ app.get("/api/orders/admin/reconciliation/cod", async (req, res) => {
       `${ORDER_SERVICE_URL}/admin/reconciliation/cod`,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -833,7 +876,7 @@ app.get("/api/orders/admin/delivery-boys/:id/cash-status", async (req, res) => {
       `${ORDER_SERVICE_URL}/admin/delivery-boys/${req.params.id}/cash-status`,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -848,7 +891,7 @@ app.put("/api/orders/admin/delivery-boys/:id", async (req, res) => {
       req.body,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -863,7 +906,7 @@ app.post("/api/orders/admin/reconciliation/settle", async (req, res) => {
       req.body,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -893,7 +936,7 @@ app.get("/api/orders/vendor/sales-report", async (req, res) => {
       {
         params: req.query, // 👈 ADD THIS
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -923,7 +966,7 @@ app.put("/api/orders/admin/reassign-delivery/:orderId", async (req, res) => {
       req.body,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -956,7 +999,7 @@ app.post("/api/admin/change-password", async (req, res) => {
         headers: {
           Authorization: req.headers.authorization,
         },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -990,7 +1033,7 @@ app.post("/api/vendor/register", async (req, res) => {
   try {
     const response = await axios.post(
       `${VENDOR_SERVICE_URL}/register`,
-      req.body
+      req.body,
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -1047,7 +1090,7 @@ app.put("/api/admin/vendors/:id/approve", async (req, res) => {
         headers: {
           Authorization: req.headers.authorization,
         },
-      }
+      },
     );
 
     res.status(response.status).json(response.data);
@@ -1066,7 +1109,7 @@ app.put("/api/admin/vendors/:id/reject", async (req, res) => {
         headers: {
           Authorization: req.headers.authorization,
         },
-      }
+      },
     );
 
     res.status(response.status).json(response.data);
@@ -1117,7 +1160,7 @@ app.post("/api/payment/create", async (req, res) => {
     const response = await axios.post(
       `${ORDER_SERVICE_URL}/payment/create`,
       req.body,
-      { headers: { Authorization: req.headers.authorization } }
+      { headers: { Authorization: req.headers.authorization } },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -1131,7 +1174,7 @@ app.post("/api/payment/verify", async (req, res) => {
     const response = await axios.post(
       `${ORDER_SERVICE_URL}/payment/verify`,
       req.body,
-      { headers: { Authorization: req.headers.authorization } }
+      { headers: { Authorization: req.headers.authorization } },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -1144,7 +1187,7 @@ app.put("/api/orders/vendor/item/:itemId/status", async (req, res) => {
     const response = await axios.put(
       `${ORDER_SERVICE_URL}/vendor/item/${req.params.itemId}/status`,
       req.body,
-      { headers: { Authorization: req.headers.authorization } }
+      { headers: { Authorization: req.headers.authorization } },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -1174,7 +1217,7 @@ app.get("/api/orders/admin/reassign-options/:orderId", async (req, res) => {
         headers: {
           Authorization: req.headers.authorization,
         },
-      }
+      },
     );
 
     res.status(response.status).json(response.data);
@@ -1191,7 +1234,7 @@ app.get("/api/orders/admin/delivery-boys/:id/orders", async (req, res) => {
         headers: {
           Authorization: req.headers.authorization,
         },
-      }
+      },
     );
 
     res.status(response.status).json(response.data);
@@ -1206,7 +1249,7 @@ app.post("/api/orders/delivery/login", async (req, res) => {
     const response = await axios.post(
       `${ORDER_SERVICE_URL}/delivery/login`,
       req.body,
-      { headers: { Authorization: req.headers.authorization } }
+      { headers: { Authorization: req.headers.authorization } },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -1235,13 +1278,13 @@ app.put(
       const response = await axios.put(
         `${ORDER_SERVICE_URL}/delivery/update-status/${req.params.assignmentId}`,
         req.body,
-        { headers: { Authorization: req.headers.authorization } }
+        { headers: { Authorization: req.headers.authorization } },
       );
       res.status(response.status).json(response.data);
     } catch (err) {
       res.status(err.response?.status || 500).json(err.response?.data);
     }
-  }
+  },
 );
 
 app.put(
@@ -1251,13 +1294,13 @@ app.put(
       const response = await axios.put(
         `${ORDER_SERVICE_URL}/admin/${req.params.orderId}/items/${req.params.itemId}/return-status`,
         req.body,
-        { headers: { Authorization: req.headers.authorization } }
+        { headers: { Authorization: req.headers.authorization } },
       );
       res.status(response.status).json(response.data);
     } catch (err) {
       res.status(err.response?.status || 500).json(err.response?.data);
     }
-  }
+  },
 );
 
 app.get("/api/orders/admin/returns/all", async (req, res) => {
@@ -1280,7 +1323,7 @@ app.post("/api/orders/:orderId/items/:itemId/return", async (req, res) => {
     const response = await axios.post(
       `${ORDER_SERVICE_URL}/${req.params.orderId}/items/${req.params.itemId}/return`,
       req.body,
-      { headers: { Authorization: req.headers.authorization } }
+      { headers: { Authorization: req.headers.authorization } },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -1294,7 +1337,7 @@ app.post("/api/orders/delivery/logout", async (req, res) => {
     const response = await axios.post(
       `${ORDER_SERVICE_URL}/delivery/logout`,
       req.body,
-      { headers: { Authorization: req.headers.authorization } }
+      { headers: { Authorization: req.headers.authorization } },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -1308,7 +1351,7 @@ app.post("/api/vendor/logout", async (req, res) => {
     const response = await axios.post(
       `${VENDOR_SERVICE_URL}/logout`,
       req.body,
-      { headers: { Authorization: req.headers.authorization } }
+      { headers: { Authorization: req.headers.authorization } },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -1350,7 +1393,7 @@ app.get("/api/auth/admin/:id/bank-details", async (req, res) => {
         headers: {
           Authorization: req.headers.authorization,
         },
-      }
+      },
     );
 
     res.status(response.status).json(response.data);
@@ -1364,7 +1407,7 @@ app.put("/api/auth/bank-details", async (req, res) => {
     const response = await axios.put(
       `${USER_SERVICE_URL}/bank-details`,
       req.body,
-      { headers: { Authorization: req.headers.authorization } }
+      { headers: { Authorization: req.headers.authorization } },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -1399,7 +1442,7 @@ app.post("/api/addresses/admin/add", async (req, res) => {
       req.body,
       {
         headers: { Authorization: req.headers.authorization }, // Pass Admin Token
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -1418,7 +1461,7 @@ app.post("/api/orders/admin/create", async (req, res) => {
       req.body,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -1450,7 +1493,7 @@ app.get("/api/orders/shipping/shipping-rates", async (req, res) => {
         headers: {
           Authorization: req.headers.authorization,
         },
-      }
+      },
     );
 
     res.status(response.status).json(response.data);
@@ -1467,7 +1510,7 @@ app.post("/api/orders/shipping/shipping-rates", async (req, res) => {
       req.body,
       {
         headers: { Authorization: req.headers.authorization },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -1487,7 +1530,7 @@ app.get("/api/orders/shipping/calculate", async (req, res) => {
         headers: {
           Authorization: req.headers.authorization,
         },
-      }
+      },
     );
     res.status(response.status).json(response.data);
   } catch (err) {
@@ -1503,7 +1546,7 @@ app.delete("/api/orders/shipping/shipping-rates/:id", async (req, res) => {
         headers: {
           Authorization: req.headers.authorization,
         },
-      }
+      },
     );
 
     res.status(response.status).json(response.data);
