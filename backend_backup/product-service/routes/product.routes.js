@@ -4,26 +4,14 @@ import vendor from "../middleware/vendor.middleware.js";
 import admin from "../middleware/admin.middleware.js";
 import vendorOrAdmin from "../middleware/vendorOrAdmin.middleware.js";
 import upload from "../middleware/upload.js";
-import {
-  getProducts,
-  getSingleProduct,
-  createProduct,
-  updateProduct,
-  deleteProduct,
-  getVendorProducts,
-  getAllCategories,
-  getVendorInventory,
-  getAllWarehouseInventory,
-  transferToWarehouse,
-  updateWarehouseStock,
-  reserveStock,
-  releaseStock,
-  shipStock,
-  getProductsByVendorId,
-  getProductsBatch,
-  restockInventory,
-  releaseStockafterreturn
-} from "../controllers/product.controller.js";
+
+import { getProducts, getSingleProduct, getAllCategories, getProductsBatch } from "../controllers/catalog.controller.js";
+
+import { createProduct, updateProduct, deleteProduct, getVendorProducts, getProductsByVendorId } from "../controllers/vendor.controller.js";
+
+import { getVendorInventory, getAllWarehouseInventory, transferToWarehouse, updateWarehouseStock } from "../controllers/inventory.controller.js";
+
+import { reserveStock, releaseStock, releaseStockafterreturn, shipStock, restockInventory } from "../controllers/sync.controller.js";
 
 const router = express.Router();
 

@@ -1,46 +1,31 @@
 import razorpay from "../config/razorpay.js";
 import crypto from "crypto";
 import Order from "../models/Order.js";
-import redis from "../config/redis.js"; // 🟢 1. Import Redis
+import { Op } from "sequelize";
+import redis from "../config/redis.js"; 
+import sequelize from "../config/db.js";
 
 /* ======================
-   CREATE PAYMENT ORDER
+   CREATE PAYMENT ORDER (Online Checkout)
 ====================== */
 export const createPaymentOrder = async (req, res) => {
   try {
     const { amount, orderId } = req.body;
 
-    // 1️ Basic validation
-    if (!amount || amount <= 0) {
-      return res.status(400).json({ message: "Invalid payment amount" });
-    }
+    if (!amount || amount <= 0) return res.status(400).json({ message: "Invalid payment amount" });
+    if (!orderId) return res.status(400).json({ message: "Order ID is required" });
 
-    if (!orderId) {
-      return res.status(400).json({ message: "Order ID is required" });
-    }
-
-    // 2️ Check order exists (Direct DB check - No Cache for Payments)
     const order = await Order.findByPk(orderId);
-    if (!order) {
-      return res.status(404).json({ message: "Order not found" });
-    }
+    if (!order) return res.status(404).json({ message: "Order not found" });
+    if (order.payment === true) return res.status(409).json({ message: "Order is already paid" });
 
-    // 3️ Prevent duplicate payment
-    if (order.payment === true) {
-      return res.status(409).json({ message: "Order is already paid" });
-    }
-
-    // 4️ Create Razorpay order
     const razorpayOrder = await razorpay.orders.create({
       amount: amount * 100,
       currency: "INR",
       receipt: `order_${orderId}`,
     });
 
-    res.json({
-      success: true,
-      razorpayOrder,
-    });
+    res.json({ success: true, razorpayOrder });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to create payment order" });
@@ -48,49 +33,22 @@ export const createPaymentOrder = async (req, res) => {
 };
 
 /* ======================
-   VERIFY PAYMENT
+   VERIFY PAYMENT (Works for Initial Checkout AND "Pay Anytime")
 ====================== */
 export const verifyPayment = async (req, res) => {
   try {
-    const {
-      razorpay_order_id,
-      razorpay_payment_id,
-      razorpay_signature,
-      orderId,
-    } = req.body;
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, orderId } = req.body;
 
-    // Required fields check
-    if (
-      !razorpay_order_id ||
-      !razorpay_payment_id ||
-      !razorpay_signature ||
-      !orderId
-    ) {
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !orderId) {
       return res.status(400).json({ message: "Incomplete payment details" });
     }
 
-    // Check order exists
     const order = await Order.findByPk(orderId);
-    if (!order) {
-      return res.status(404).json({ message: "Order not found" });
-    }
+    if (!order) return res.status(404).json({ message: "Order not found" });
+    if (order.payment === true) return res.status(200).json({ success: true, message: "Payment already verified" });
 
-    // 3️ Prevent double verification
-    if (order.payment === true) {
-      return res.status(200).json({
-        success: true,
-        message: "Payment already verified",
-      });
-    }
-
-    // 4️ Signature verification
     const body = razorpay_order_id + "|" + razorpay_payment_id;
-
-    // Safety Check: Ensure Secret exists
-    if (!process.env.RAZORPAY_KEY_SECRET) {
-      console.error("❌ RAZORPAY_KEY_SECRET is missing in .env");
-      return res.status(500).json({ message: "Server configuration error" });
-    }
+    if (!process.env.RAZORPAY_KEY_SECRET) return res.status(500).json({ message: "Server configuration error" });
 
     const expectedSignature = crypto
       .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
@@ -101,28 +59,128 @@ export const verifyPayment = async (req, res) => {
       return res.status(400).json({ message: "Payment verification failed" });
     }
 
-    // 5 Update order
+    // 🟢 Mark as paid and save Razorpay ID for future auto-refunds
     order.payment = true;
     order.paymentMethod = "RAZORPAY";
-    order.status = "PROCESSING"; 
-
+    order.razorpayPaymentId = razorpay_payment_id; 
+    
+    // Only upgrade status to PROCESSING if it was stuck on PENDING.
+    // This preserves "PACKED" or "OUT_FOR_DELIVERY" if they pay later!
+    if (order.status === "PENDING") {
+        order.status = "PROCESSING";
+    }
+    
     await order.save();
 
     await redis.del(`order:${orderId}`);
- 
-    if (order.userId) {
-        await redis.del(`user:orders:${order.userId}`);
-    }
-    
-    // Clear the Admin dashboard cache
+    if (order.userId) await redis.del(`user:orders:${order.userId}`);
     await redis.del("admin:orders");
 
-    res.json({
-      success: true,
-      message: "Payment verified and order confirmed",
+    // Clear delivery boy cache if one is already assigned
+    const assignment = await sequelize.models.DeliveryAssignment?.findOne({
+      where: { orderId: orderId, status: { [Op.in]: ["ASSIGNED", "PICKED", "OUT_FOR_DELIVERY"] } }
     });
+    if (assignment) {
+      await redis.del(`tasks:boy:${assignment.deliveryBoyId}`);
+    }
+
+    res.json({ success: true, message: "Payment verified and order confirmed" });
   } catch (err) {
     console.error("Verify Payment Error:", err);
     res.status(500).json({ message: "Payment verification failed" });
+  }
+};
+
+/* ==========================================
+   🟢 GENERATE DYNAMIC QR FOR DELIVERY BOY
+========================================== */
+export const createDeliveryQR = async (req, res) => {
+  try {
+    const { orderId } = req.body;
+
+    const order = await Order.findByPk(orderId);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+    if (order.payment === true) return res.status(400).json({ message: "Order is already paid" });
+
+    const qrCode = await razorpay.qrCode.create({
+      type: "upi_qr",
+      name: "Order Delivery Payment",
+      usage: "single_use",
+      fixed_amount: true,
+      payment_amount: order.amount * 100, 
+      description: `Payment for Order #${order.id}`,
+      notes: { orderId: order.id.toString() },
+    });
+
+    res.json({ success: true, qrCodeUrl: qrCode.image_url, qrString: qrCode.id });
+  } catch (err) {
+    console.error("QR Generation Error:", err);
+    res.status(500).json({ message: "Failed to generate QR code" });
+  }
+};
+
+/* ==========================================
+   🟢 CHECK PAYMENT STATUS (For Delivery App Polling)
+========================================== */
+export const checkPaymentStatus = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const order = await Order.findByPk(orderId, { attributes: ['id', 'payment', 'codPaymentMode', 'utrNumber'] });
+
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    res.json({ paid: order.payment, mode: order.codPaymentMode, utr: order.utrNumber });
+  } catch (err) {
+    console.error("Status Check Error:", err);
+    res.status(500).json({ message: "Failed to check payment status" });
+  }
+};
+
+/* ==========================================
+   🟢 RAZORPAY WEBHOOK (AUTO-UPDATE STATUS & CAPTURE ID)
+========================================== */
+export const razorpayWebhook = async (req, res) => {
+  try {
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET; 
+    
+    // Validate signature ONLY if secret is set (allows dev/postman testing)
+    if (webhookSecret) {
+      const signature = req.headers["x-razorpay-signature"];
+      const expectedSignature = crypto
+        .createHmac("sha256", webhookSecret)
+        .update(JSON.stringify(req.body))
+        .digest("hex");
+
+      if (expectedSignature !== signature) return res.status(400).json({ message: "Invalid signature" });
+    } else {
+      console.warn("⚠️ RAZORPAY_WEBHOOK_SECRET missing. Skipping validation (Dev Mode).");
+    }
+
+    if (req.body.event === "payment.captured") {
+      const paymentEntity = req.body.payload.payment.entity;
+      const orderId = paymentEntity.notes?.orderId;
+
+      if (orderId) {
+        const order = await Order.findByPk(orderId);
+        
+        if (order && order.payment === false) {
+          order.payment = true;
+          order.codPaymentMode = "QR"; 
+          order.utrNumber = paymentEntity.acquirer_data?.rrn || paymentEntity.id; 
+          order.razorpayPaymentId = paymentEntity.id; // 🟢 Save for auto-refund!
+          await order.save();
+
+          await redis.del(`order:${order.id}`);
+          await redis.del("admin:orders");
+          if (order.userId) await redis.del(`user:orders:${order.userId}`);
+          
+          console.log(`✅ Webhook: Order #${orderId} marked as PAID via QR!`);
+        }
+      }
+    }
+    res.status(200).send("OK");
+  } catch (err) {
+    console.error("Webhook Error:", err);
+    res.status(500).send("Webhook Failed");
   }
 };

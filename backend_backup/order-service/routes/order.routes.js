@@ -4,50 +4,55 @@ import admin from "../middleware/admin.middleware.js";
 import vendor from "../middleware/vendor.middleware.js";
 import {
   checkout,
+  adminCreateOrder,
+  updateOrderStatusAdmin,
+  updateOrderItemStatusAdmin,
   getUserOrders,
   getOrderById,
   trackOrder,
-  cancelFullOrder,
-  cancelOrderItem,
   getAllOrdersAdmin,
   getOrderByIdAdmin,
-  updateOrderStatusAdmin,
-  updateOrderItemStatusAdmin,
-  reassignDeliveryBoy,
+  getVendorOrders,
+} from "../controllers/order.controller.js";
+
+import {
   getAllDeliveryBoys,
   createDeliveryBoy,
   deleteDeliveryBoy,
-  getVendorOrders,
-  vendorSalesReport,
-  adminTotalSales,
-  adminVendorSalesReport, // 🟢 Ensure this is imported
-  adminAllVendorsSalesReport,
   updateDeliveryBoy,
-  getDeliveryBoyCashStatus,
-  getCODReconciliation,
-  settleCOD,
+  reassignDeliveryBoy,
   getReassignmentOptions,
-  getDeliveryLocations,
   getDeliveryBoyOrders,
-  requestReturn, updateRefundStatusAdmin,
+  getDeliveryBoyCashStatus,
+  settleCOD,
+  getCODReconciliation,
+  getDeliveryLocations,
+} from "../controllers/deliveryBoy.controller.js";
+
+import {
+  requestReturn,
   getAllReturnOrdersAdmin,
-  adminCreateOrder,
+  updateRefundStatusAdmin,
+  cancelOrderItem,
+  cancelFullOrder,
   getCancelledRefundOrders,
+} from "../controllers/refund.controller.js";
+
+import {
   getAdminStats,
-  getVendorStats
-} from "../controllers/order.controller.js";
+  getVendorStats,
+  vendorSalesReport,
+  adminVendorSalesReport,
+  adminTotalSales,
+  adminAllVendorsSalesReport,
+} from "../controllers/analytics.controller.js";
 
 const router = express.Router();
 
 router.get("/admin/delivery-boys", auth, admin, getAllDeliveryBoys);
 /* ================= USER ================= */
 router.post("/checkout", auth, checkout);
-router.post(
-  "/admin/create", 
-  auth, 
-  admin, 
-  adminCreateOrder
-);
+router.post("/admin/create", auth, admin, adminCreateOrder);
 router.get("/", auth, getUserOrders);
 router.get("/locations", auth, getDeliveryLocations);
 // 🟢 ADMIN: View All Returns
@@ -56,7 +61,6 @@ router.get("/admin/returns/all", auth, admin, getAllReturnOrdersAdmin);
 router.get("/admin/stats", auth, admin, getAdminStats);
 router.get("/vendor/stats", auth, vendor, getVendorStats);
 router.get("/admin/refunds/cancelled", auth, admin, getCancelledRefundOrders);
-
 
 router.get("/track/:id", auth, trackOrder);
 
@@ -70,7 +74,7 @@ router.put(
   "/vendor/item/:itemId/status",
   auth,
   vendor,
-  updateOrderItemStatusAdmin
+  updateOrderItemStatusAdmin,
 );
 
 /* ================= ADMIN: RECONCILIATION ================= */
@@ -79,7 +83,7 @@ router.get(
   "/admin/delivery-boys/:id/cash-status",
   auth,
   admin,
-  getDeliveryBoyCashStatus
+  getDeliveryBoyCashStatus,
 );
 router.post("/admin/reconciliation/settle", auth, admin, settleCOD);
 
@@ -91,7 +95,7 @@ router.get(
   "/admin/sales/vendor/:vendorId",
   auth,
   admin,
-  adminVendorSalesReport
+  adminVendorSalesReport,
 );
 
 /* ================= ADMIN: DELIVERY ================= */
@@ -102,16 +106,21 @@ router.put(
   "/admin/reassign-delivery/:orderId",
   auth,
   admin,
-  reassignDeliveryBoy
+  reassignDeliveryBoy,
 );
 router.get(
   "/admin/reassign-options/:orderId",
   auth,
   admin,
-  getReassignmentOptions
+  getReassignmentOptions,
 );
 router.get("/admin/all", auth, admin, getAllOrdersAdmin);
-router.get("/admin/delivery-boys/:id/orders", auth, admin, getDeliveryBoyOrders);
+router.get(
+  "/admin/delivery-boys/:id/orders",
+  auth,
+  admin,
+  getDeliveryBoyOrders,
+);
 /* ================= ADMIN: ORDER MANAGEMENT ================= */
 
 router.get("/admin/:id", auth, admin, getOrderByIdAdmin);
@@ -120,12 +129,17 @@ router.put(
   "/admin/:orderId/item/:itemId/status",
   auth,
   admin,
-  updateOrderItemStatusAdmin
+  updateOrderItemStatusAdmin,
 );
 // 🟢 USER
 router.post("/:orderId/items/:itemId/return", auth, requestReturn);
 
 // 🟢 ADMIN
-router.put("/admin/:orderId/items/:itemId/return-status", auth, admin, updateRefundStatusAdmin,);
+router.put(
+  "/admin/:orderId/items/:itemId/return-status",
+  auth,
+  admin,
+  updateRefundStatusAdmin,
+);
 router.get("/:id", auth, getOrderById); // Generic ID route last
 export default router;

@@ -3,21 +3,18 @@ import DeliveryAssignment from "../models/DeliveryAssignment.js";
 import Order from "../models/Order.js";
 import OrderItem from "../models/OrderItem.js";
 import axios from "axios"; 
-import redis from "../config/redis.js"; // 🟢 1. Import Redis
-// 🟢 1. GET MY TASKS (Strict Filtering & Deduplication)
+import redis from "../config/redis.js"; 
+
 export const getMyTasks = async (req, res) => {
   try {
-    
     const boyId = req.user.id;
     const cacheKey = `tasks:boy:${boyId}`;
 
-    // 🟢 1. CHECK REDIS
     const cachedData = await redis.get(cacheKey);
     if (cachedData) {
       return res.json(JSON.parse(cachedData));
     }
 
-    // 🟢 2. FETCH FROM DB (Original Logic)
     const allTasks = await DeliveryAssignment.findAll({
       where: {
         deliveryBoyId: boyId,
@@ -26,7 +23,7 @@ export const getMyTasks = async (req, res) => {
       include: [
         {
           model: Order,
-          attributes: ["id", "amount", "address", "status", "paymentMethod", "payment", "createdAt", "updatedAt"],
+          attributes: ["id", "amount", "address", "status", "paymentMethod", "payment", "codPaymentMode", "createdAt", "updatedAt"],
           include: [
             {
               model: OrderItem,
@@ -38,7 +35,6 @@ export const getMyTasks = async (req, res) => {
       order: [["status", "ASC"], ["createdAt", "ASC"]],
     });
 
-    // Product Fetch Optimization
     const productIds = new Set();
     allTasks.forEach((task) => {
       task.Order?.OrderItems?.forEach((item) => {
@@ -89,13 +85,20 @@ export const getMyTasks = async (req, res) => {
           Product: productMap[item.productId] || { name: "Unknown", imageUrl: "" } 
       }));
 
+      // Calculate Cash Flow
       const amountToCollect = (!isReturn && task.Order.paymentMethod === "COD" && !task.Order.payment) ? task.Order.amount : 0;
+      
+      let cashToRefund = 0;
+      if (isReturn && task.Order.codPaymentMode === "CASH") {
+          cashToRefund = displayItems.reduce((sum, item) => sum + (parseFloat(item.price) * item.quantity), 0);
+      }
 
       const formattedTask = {
         assignmentId: task.id,
         status: task.status,
         type: type,
-        cashToCollect: amountToCollect,
+        cashToCollect: amountToCollect, // Collect from customer
+        cashToRefund: cashToRefund,     // Hand back to customer (for returned CASH items)
         amount: task.Order.amount,
         paymentMethod: task.Order.paymentMethod,
         orderId: task.Order.id,
@@ -112,9 +115,7 @@ export const getMyTasks = async (req, res) => {
     });
 
     const responseData = { active, history };
-
-    // 🟢 3. SAVE TO REDIS (Expire in 10 mins)
-   await redis.set(cacheKey, JSON.stringify(responseData), "EX", 600);
+    await redis.set(cacheKey, JSON.stringify(responseData), "EX", 600);
 
     res.json(responseData);
   } catch (err) {
@@ -122,32 +123,25 @@ export const getMyTasks = async (req, res) => {
   }
 };
 
-/* ======================================================
-   🟢 UPDATE TASK STATUS (Invalidates Cache)
-====================================================== */
 export const updateTaskStatus = async (req, res) => {
   try {
     const { assignmentId } = req.params;
-    const { status } = req.body;
+    const { status, codPaymentMode, utrNumber } = req.body; 
     const boyId = req.user.id;
 
-    // 1. Find the Assignment
     const assignment = await DeliveryAssignment.findOne({
       where: { id: assignmentId, deliveryBoyId: boyId },
     });
 
     if (!assignment) return res.status(404).json({ message: "Task not found" });
 
-    // 2. Fetch the Parent Order (We need the userId to fix the cache bug!)
     const parentOrder = await Order.findByPk(assignment.orderId, {
         attributes: ['id', 'userId', 'status'] 
     });
 
-    // 3. Update Assignment Status
     assignment.status = status;
     await assignment.save();
   
-    // 4. Update Item/Order Status (Your existing logic)
     if (assignment.reason === "RETURN_PICKUP") {
       const orderItems = await OrderItem.findAll({ where: { orderId: assignment.orderId } });
       if (status === "PICKED") {
@@ -166,7 +160,6 @@ export const updateTaskStatus = async (req, res) => {
          }
       }
     } else {
-      // Normal Delivery Logic
       const order = await Order.findByPk(assignment.orderId, { include: OrderItem });
       if (order) {
         if (status === "PICKED") {
@@ -178,8 +171,24 @@ export const updateTaskStatus = async (req, res) => {
             }
           }
         } else if (status === "DELIVERED") {
+          
+          // 🟢 Handle Delivery Payment Logic
+          if (order.paymentMethod === "COD") {
+            if (codPaymentMode === "QR") {
+              // Only require manual UTR if the webhook hasn't updated it yet
+              if (!utrNumber && order.payment === false) {
+                return res.status(400).json({ message: "UTR number is required for manual QR payment verification" });
+              }
+              order.codPaymentMode = "QR";
+              if (utrNumber) order.utrNumber = utrNumber;
+            } else {
+              order.codPaymentMode = "CASH";
+            }
+          }
+
           order.status = "DELIVERED";
-          order.payment = true;
+          order.payment = true; // Mark as paid!
+          
           for (const item of order.OrderItems) {
              if (item.status !== "CANCELLED" && item.refundStatus === "NONE") {
                item.status = "DELIVERED";
@@ -190,18 +199,12 @@ export const updateTaskStatus = async (req, res) => {
         await order.save();
       }
     }
-    // 1. Invalidate Delivery Boy's Task List
+
     await redis.del(`tasks:boy:${boyId}`);
-    
-    // 2. Invalidate Specific Order Details (Why Image 2 was correct)
     await redis.del(`order:${assignment.orderId}`);
-    
-    // 3. Invalidate Admin Lists
     await redis.del("admin:orders"); 
     await redis.del("admin:returns"); 
 
-    // 🟢 4. INVALIDATE THE USER'S LIST (Why Image 1 was wrong)
-    // This forces the "My Orders" page to refresh from the DB
     if (parentOrder && parentOrder.userId) {
         await redis.del(`user:orders:${parentOrder.userId}`);
     }

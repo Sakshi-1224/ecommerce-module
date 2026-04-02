@@ -4,7 +4,6 @@ import cors from "cors";
 import sequelize from "./config/db.js";
 import defineAssociations from "./models/associations.js";
 import authRoutes from "./routes/auth.routes.js";
-import walletRoutes from "./routes/wallet.routes.js";
 import addressRoutes from "./routes/address.routes.js";
 dotenv.config();
 
@@ -14,7 +13,7 @@ app.use(express.json());
 defineAssociations();
 app.use("/api/auth", authRoutes);
 app.use("/api/addresses", addressRoutes);
-app.use("/api/auth/wallet", walletRoutes);
+
 const PORT = process.env.PORT || 5001;
 sequelize
   .sync()

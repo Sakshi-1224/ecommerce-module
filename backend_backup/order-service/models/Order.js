@@ -13,18 +13,13 @@ const Order = sequelize.define(
       allowNull: false,
       defaultValue: DataTypes.NOW 
     },
-    // 🟢 NEW FIELD: Store the specific shipping cost for this order
+
     shippingCharge: { 
         type: DataTypes.FLOAT, 
         defaultValue: 0.0, 
         allowNull: false 
     },
-       // 👇 NEW FIELD: Credit Note amount used
-    creditApplied: { 
-        type: DataTypes.FLOAT, 
-        defaultValue: 0.0, 
-        allowNull: false 
-    },
+
     address: { type: DataTypes.JSON, allowNull: false },
     assignedArea: {
       type: DataTypes.STRING,
@@ -38,12 +33,21 @@ const Order = sequelize.define(
         "DELIVERED",
         "CANCELLED",
         "PARTIALLY_CANCELLED",
-        "RETURN_REQUESTED" // 🟢 ADD THIS HERE
+        "RETURN_REQUESTED" 
       ),
       defaultValue: "PROCESSING",
     },
+    razorpayPaymentId: { 
+      type: DataTypes.STRING, 
+      allowNull: true 
+    },
     paymentMethod: { type: DataTypes.STRING, allowNull: false },
     payment: { type: DataTypes.BOOLEAN, defaultValue: false },
+
+    codPaymentMode: { type: DataTypes.ENUM("CASH", "QR"), allowNull: true },
+    utrNumber: { type: DataTypes.STRING, allowNull: true },
+
+    razorpayPaymentId: { type: DataTypes.STRING, allowNull: true },
     date: {
       type: DataTypes.DATE,
       allowNull: false,

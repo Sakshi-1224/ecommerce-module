@@ -32,11 +32,6 @@ const User = sequelize.define("User", {
   role: {
     type: DataTypes.ENUM("user"),
     allowNull: false,
-  },
-  walletBalance: {
-    type: DataTypes.FLOAT,
-    defaultValue: 0.0,
-    allowNull: false
   }
 });
 
