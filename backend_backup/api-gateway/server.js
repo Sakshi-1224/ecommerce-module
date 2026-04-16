@@ -18,7 +18,7 @@ const app = express();
 
 // 🟢 1. BULLETPROOF CORS CONFIGURATION
 const corsOptions = {
-  origin: "http://localhost:5174",
+  origin: process.env.FRONTEND_URL || "http://localhost:5174", 
   credentials: true,
 };
 
@@ -40,18 +40,31 @@ const proxy = (target) => {
   return createProxyMiddleware({
     target,
     changeOrigin: true,
-    // Optional: Uncomment the lines below if you want to see exactly how requests are routed in your console
-    // onProxyReq: (proxyReq, req, res) => {
-    //   console.log(`[Gateway] Proxied: ${req.method} ${req.originalUrl} -> ${target}${req.path}`);
-    // },
-    // Error handling so the gateway doesn't crash if a microservice is offline
+    
+    // 🟢 1. Add Timeout Settings (e.g., 10 seconds)
+    proxyTimeout: 10000, // Time in ms to wait for the microservice to respond
+    timeout: 10000,      // Time in ms to wait for the incoming client request
+    
     onError: (err, req, res) => {
       console.error(`[Gateway Error] connecting to ${target}:`, err.message);
-      res.status(502).json({ message: "Bad Gateway: Underlying service is down or unreachable." });
+      
+      // Prevent crashing if headers were already sent to the client
+      if (res.headersSent) return;
+
+      // 🟢 2. Check specifically for Timeout Errors
+      if (err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.message.includes('timeout')) {
+        return res.status(504).json({ 
+          message: "Gateway Timeout: The underlying microservice took too long to respond." 
+        });
+      }
+
+      // 3. Default fallback for other connection errors (service offline)
+      res.status(502).json({ 
+        message: "Bad Gateway: Underlying service is down or unreachable." 
+      });
     }
   });
 };
-
 // ==========================================
 // ROUTING CONFIGURATION
 // ==========================================

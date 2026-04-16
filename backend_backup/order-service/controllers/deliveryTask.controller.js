@@ -47,7 +47,12 @@ export const getMyTasks = async (req, res) => {
     if (productIds.size > 0) {
       try {
         const idsStr = Array.from(productIds).join(",");
-        const response = await axios.get(`${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/batch?ids=${idsStr}`);
+        const response = await axios.get(`${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/batch?ids=${idsStr}`,
+          {
+        headers: { "x-internal-token": process.env.INTERNAL_API_KEY } // 🟢 ADD THIS HERE
+      }
+        );
+        
         response.data.forEach((p) => { productMap[p.id] = p; });
       } catch (err) { console.error("Product fetch error:", err.message); }
     }

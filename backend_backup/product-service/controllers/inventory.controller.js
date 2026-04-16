@@ -111,7 +111,6 @@ export const transferToWarehouse = async (req, res) => {
     await product.save();
 
     // 🟢 INVALIDATE CACHE
-    await invalidateProductCache(productId, product.vendorId);
 
     res.json({ message: "Transfer successful", product });
   } catch (err) {
@@ -134,10 +133,11 @@ export const updateWarehouseStock = async (req, res) => {
     await product.save();
 
     // 🟢 INVALIDATE CACHE
-    await invalidateProductCache(productId, product.vendorId);
+
 
     res.json({ message: "Warehouse stock updated", product });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
+

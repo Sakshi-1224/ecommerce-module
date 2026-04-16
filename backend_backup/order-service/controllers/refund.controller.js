@@ -55,7 +55,9 @@ export const cancelOrderItem = async (req, res) => {
       await axios.post(
         `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/release`,
         { items: [{ productId: item.productId, quantity: item.quantity }] },
-        { headers: { Authorization: req.headers.authorization } },
+         {
+        headers: { "x-internal-token": process.env.INTERNAL_API_KEY } // 🟢 ADD THIS HERE
+      } ,
       );
     } catch (e) {
       console.error("Stock Release Failed");
@@ -137,7 +139,9 @@ export const cancelFullOrder = async (req, res) => {
       await axios.post(
         `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/release`,
         { items: itemsToRelease },
-        { headers: { Authorization: req.headers.authorization } },
+        {
+        headers: { "x-internal-token": process.env.INTERNAL_API_KEY } // 🟢 ADD THIS HERE
+      },
       );
     } catch (e) {
       console.error("Stock Release Failed");
@@ -351,7 +355,9 @@ export const updateRefundStatusAdmin = async (req, res) => {
         await axios.post(
           `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/releaseafterreturn`,
           { items: [{ productId: item.productId, quantity: item.quantity }] },
-          { headers: { Authorization: req.headers.authorization } }
+         {
+        headers: { "x-internal-token": process.env.INTERNAL_API_KEY } // 🟢 ADD THIS HERE
+      }
         );
         console.log(`📦 Stock Restored for Verified Return Item #${item.id}`);
       } catch (apiErr) {
@@ -434,7 +440,9 @@ export const getCancelledRefundOrders = async (req, res) => {
     if (productIds.length > 0) {
       try {
         const { data } = await axios.get(`${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/batch`, {
-          params: { ids: productIds.join(",") },
+          params: { ids: productIds.join(",") },   
+        headers: { "x-internal-token": process.env.INTERNAL_API_KEY } // 🟢 ADD THIS HERE
+      
         });
         data.forEach((p) => (productMap[p.id] = p));
       } catch (e) {
@@ -498,6 +506,9 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
         const idsStr = Array.from(productIds).join(",");
         const response = await axios.get(
           `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/batch?ids=${idsStr}`,
+          {
+        headers: { "x-internal-token": process.env.INTERNAL_API_KEY } // 🟢 ADD THIS HERE
+      }
         );
         response.data.forEach((p) => {
           productMap[p.id] = p;

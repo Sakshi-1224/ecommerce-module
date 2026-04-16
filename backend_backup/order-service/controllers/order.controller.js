@@ -17,6 +17,7 @@ const USER_SERVICE_URL = process.env.USER_SERVICE_URL;
 import razorpay from "../config/razorpay.js"; // 🟢 Ensure this is imported at the top!
 
 export const checkout = async (req, res) => {
+  let stockReserved = false;
   const t = await sequelize.transaction();
 
   try {
@@ -71,8 +72,9 @@ export const checkout = async (req, res) => {
       await axios.post(
         `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/reserve`,
         { items },
-        { headers: { Authorization: req.headers.authorization } }
+       { headers: { "x-internal-token": process.env.INTERNAL_API_KEY } }
       );
+      stockReserved = true;
     } catch (apiErr) {
       throw new Error(apiErr.response?.data?.message || "Stock reservation failed");
     }
@@ -102,6 +104,21 @@ export const checkout = async (req, res) => {
     });
   } catch (err) {
     if (!t.finished) await t.rollback();
+    if (stockReserved) {
+      try {
+        console.warn(`[Saga Rollback] Checkout failed after reservation. Releasing stock...`);
+        await axios.post(
+          `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/release`,
+          { items }, // Send the exact same items array back
+         { headers: { "x-internal-token": process.env.INTERNAL_API_KEY } }
+        );
+        console.log(`[Saga Rollback] Phantom stock successfully released.`);
+      } catch (rollbackErr) {
+        // CRITICAL: If the rollback itself fails, you have an inventory anomaly.
+        // In production, you would log this to a file or alert an admin system to fix it manually.
+        console.error(`🚨 [CRITICAL SAGA FAILURE] Failed to release stock for items:`, items, rollbackErr.message);
+      }
+    }
     res.status(400).json({ message: err.message });
   }
 };
@@ -133,7 +150,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
           await axios.post(
             `${process.env.PRODUCT_SERVICE_URL}/inventory/ship`,
             { items: itemsToShip },
-            { headers: { Authorization: req.headers.authorization } },
+           { headers: { "x-internal-token": process.env.INTERNAL_API_KEY } }
           );
         }
       } catch (apiErr) {
@@ -262,7 +279,7 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
         await axios.post(
           `${process.env.PRODUCT_SERVICE_URL}/inventory/ship`,
           { items: [{ productId: item.productId, quantity: item.quantity }] },
-          { headers: { Authorization: req.headers.authorization } },
+          { headers: { "x-internal-token": process.env.INTERNAL_API_KEY } }
         );
       } catch (apiErr) {
         return res.status(400).json({
@@ -457,7 +474,7 @@ export const getVendorOrders = async (req, res) => {
         const targetUrl = `${PRODUCT_SERVICE_URL}/batch`;
         const productsResponse = await axios.get(targetUrl, {
           params: { ids: productIds.join(",") },
-          headers: { Authorization: req.headers.authorization },
+          headers: { "x-internal-token": process.env.INTERNAL_API_KEY },
         });
 
         productsMap = productsResponse.data.reduce((acc, product) => {
@@ -602,7 +619,6 @@ export const adminCreateOrder = async (req, res) => {
         userId: userId,
         amount: finalPayableAmount,
         shippingCharge: shippingCharge,
-        amount,
         address,
         assignedArea: selectedArea,
         paymentMethod: paymentMethod || "COD",
@@ -630,7 +646,7 @@ export const adminCreateOrder = async (req, res) => {
       await axios.post(
         `${PRODUCT_SERVICE_URL}/inventory/reserve`,
         { items },
-        { headers: { Authorization: req.headers.authorization } },
+        { headers: { "x-internal-token": process.env.INTERNAL_API_KEY } },
       );
     } catch (apiErr) {
       throw new Error(

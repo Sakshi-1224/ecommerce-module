@@ -64,6 +64,7 @@ export const releaseStock = async (req, res) => {
     for (const item of items) {
       const product = await Product.findByPk(item.productId, {
         transaction: t,
+        lock: t.LOCK.UPDATE
       });
 
       if (product) {

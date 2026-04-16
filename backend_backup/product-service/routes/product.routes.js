@@ -13,6 +13,8 @@ import { getVendorInventory, getAllWarehouseInventory, transferToWarehouse, upda
 
 import { reserveStock, releaseStock, releaseStockafterreturn, shipStock, restockInventory } from "../controllers/sync.controller.js";
 
+import internalAuth from "../middleware/internalAuth.middleware.js";
+
 const router = express.Router();
 
 /* ================= PUBLIC ================= */
@@ -21,10 +23,10 @@ router.get("/categories", getAllCategories);
 
 /* ================= INTERNAL SYNC (Order Service Only) ================= */
 // Ideally protect these with a special internal token or check IP
-router.post("/inventory/reserve", auth, reserveStock);
-router.post("/inventory/release", auth, releaseStock);
-router.post("/inventory/releaseafterreturn", auth, releaseStockafterreturn);
-router.post("/inventory/ship", auth, shipStock);
+router.post("/inventory/reserve", internalAuth, reserveStock);
+router.post("/inventory/release", internalAuth, releaseStock);
+router.post("/inventory/releaseafterreturn", internalAuth, releaseStockafterreturn);
+router.post("/inventory/ship", internalAuth, shipStock);
 
 /* ================= VENDOR ================= */
 router.get("/vendor/my-products", auth, vendor, getVendorProducts);
@@ -37,7 +39,7 @@ router.post("/admin/inventory/transfer", auth, admin, transferToWarehouse); // T
 router.put("/admin/inventory/update", auth, admin, updateWarehouseStock); // Edit Stock
 router.post("/admin/inventory/restock", auth, admin, restockInventory);
 /* ================= CRUD (Vendor or Admin) ================= */
-router.get("/batch", getProductsBatch);
+router.get("/batch",internalAuth, getProductsBatch);
 router.post("/", auth, vendorOrAdmin, upload.array("images", 5), createProduct);
 router.put("/:id", auth, vendorOrAdmin, upload.array("images", 5), updateProduct);
 router.delete("/:id", auth, vendorOrAdmin, deleteProduct);
