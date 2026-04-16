@@ -24,10 +24,11 @@ export const getMyTasks = async (req, res) => {
         {
           model: Order,
           attributes: ["id", "amount", "address", "status", "paymentMethod", "payment", "codPaymentMode", "createdAt", "updatedAt"],
+          // 🟢 FIX 1: Correctly nested OrderItem model to get the items and their refundMethod
           include: [
             {
               model: OrderItem,
-              attributes: ["id", "productId", "quantity", "price", "status", "refundStatus", "returnReason"],
+              attributes: ["id", "productId", "quantity", "price", "status", "refundStatus", "returnReason", "refundMethod"],
             },
           ],
         },
@@ -46,7 +47,7 @@ export const getMyTasks = async (req, res) => {
     if (productIds.size > 0) {
       try {
         const idsStr = Array.from(productIds).join(",");
-        const response = await axios.get(`${process.env.PRODUCT_SERVICE_URL}/batch?ids=${idsStr}`);
+        const response = await axios.get(`${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/batch?ids=${idsStr}`);
         response.data.forEach((p) => { productMap[p.id] = p; });
       } catch (err) { console.error("Product fetch error:", err.message); }
     }
@@ -85,20 +86,18 @@ export const getMyTasks = async (req, res) => {
           Product: productMap[item.productId] || { name: "Unknown", imageUrl: "" } 
       }));
 
-      // Calculate Cash Flow
+      // 🟢 FIX 2: Restored the amountToCollect calculation so it doesn't crash
       const amountToCollect = (!isReturn && task.Order.paymentMethod === "COD" && !task.Order.payment) ? task.Order.amount : 0;
       
-      let cashToRefund = 0;
-      if (isReturn && task.Order.codPaymentMode === "CASH") {
-          cashToRefund = displayItems.reduce((sum, item) => sum + (parseFloat(item.price) * item.quantity), 0);
-      }
+      // 🟢 FIX 3: Forced cashToRefund to 0 because Admin handles the money for COD returns via Bank/Warehouse
+      const cashToRefund = 0;
 
       const formattedTask = {
         assignmentId: task.id,
         status: task.status,
         type: type,
-        cashToCollect: amountToCollect, // Collect from customer
-        cashToRefund: cashToRefund,     // Hand back to customer (for returned CASH items)
+        cashToCollect: amountToCollect, // Collect from customer for deliveries
+        cashToRefund: cashToRefund,     // Always 0 for returns now
         amount: task.Order.amount,
         paymentMethod: task.Order.paymentMethod,
         orderId: task.Order.id,

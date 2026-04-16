@@ -38,10 +38,12 @@ export const cleanupShippingRates = async (boyId, areasToRemove) => {
   }
 };
 
-export const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
+// 🟢 ADDED: `reason = null` as the 4th parameter
+export const autoAssignDeliveryBoy = async (orderId, area, transaction, reason = null) => {
   try {
     const existingAssignment = await DeliveryAssignment.findOne({
-      where: { orderId, status: { [Op.ne]: "FAILED" } },
+      // 🟢 ADDED: `reason: reason` so it doesn't confuse a past delivery with a new return
+      where: { orderId, status: { [Op.ne]: "FAILED" }, reason: reason },
       transaction,
     });
 
@@ -82,7 +84,8 @@ export const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
     if (!bestBoy) return { success: false, message: `All boys fully booked` };
 
     await DeliveryAssignment.create(
-      { orderId, deliveryBoyId: bestBoy.id, status: "ASSIGNED" },
+      // 🟢 ADDED: `reason: reason` to properly tag the new task in the database
+      { orderId, deliveryBoyId: bestBoy.id, status: "ASSIGNED", reason: reason },
       { transaction },
     );
 

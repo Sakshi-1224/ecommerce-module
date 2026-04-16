@@ -53,6 +53,13 @@ images: {
             product.availableStock = product.totalStock - product.reservedStock;
         }
     }
+  ,
+  beforeBulkCreate: (products) => {
+      // Loops through every product in the array and does the math before saving
+      products.forEach((product) => {
+        product.availableStock = product.totalStock - (product.reservedStock || 0);
+      });
+    }
   }
 });
 

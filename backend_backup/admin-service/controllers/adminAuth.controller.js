@@ -13,35 +13,35 @@ export const adminLogin = async (req, res) => {
 
     // 🟢 1. CHECK RATE LIMIT (Brute Force Protection)
     // Key format: "login_attempts:PHONE_NUMBER"
-    const attemptsKey = `login_attempts:${phone}`;
-    const attempts = await redis.get(attemptsKey);
+    // const attemptsKey = `login_attempts:${phone}`;
+    // const attempts = await redis.get(attemptsKey);
 
-    if (attempts && parseInt(attempts) >= 5) {
-      return res.status(429).json({ 
-        message: "Too many failed attempts. Account locked for 10 minutes." 
-      });
-    }
+    // if (attempts && parseInt(attempts) >= 5) {
+    //   return res.status(429).json({ 
+    //     message: "Too many failed attempts. Account locked for 10 minutes." 
+    //   });
+    // }
 
     const admin = await Admin.findOne({ where: { phone } });
     
-    // Helper function to handle failure (increment Redis counter)
-    const handleFailedLogin = async () => {
-      const current = await redis.incr(attemptsKey);
-      if (current === 1) {
-        await redis.expire(attemptsKey, 600); // Expire in 10 minutes
-      }
-      return res.status(401).json({ message: "Invalid credentials" });
-    };
+  //  Helper function to handle failure (increment Redis counter)
+    // const handleFailedLogin = async () => {
+    //   const current = await redis.incr(attemptsKey);
+    //   if (current === 1) {
+    //     await redis.expire(attemptsKey, 600); // Expire in 10 minutes
+    //   }
+    //   return res.status(401).json({ message: "Invalid credentials" });
+    // };
 
-    if (!admin) return await handleFailedLogin();
+    if (!admin) return res.status(401).json({ message: "Invalid credentials" });
 
     const match = await bcrypt.compare(password, admin.password);
     
-    if (!match) return await handleFailedLogin();
+     if (!match) return res.status(401).json({ message: "Invalid credentials" });
 
     // 🟢 2. LOGIN SUCCESS: RESET COUNTER
     // If they get it right, clear their failed attempts
-    await redis.del(attemptsKey);
+    // await redis.del(attemptsKey);
 
     const token = jwt.sign(
       { id: admin.id, role: admin.role },

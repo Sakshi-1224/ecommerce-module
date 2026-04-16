@@ -6,10 +6,11 @@ import paymentRoutes from "./routes/payment.routes.js";
 import deliveryRoutes from "./routes/delivery.routes.js";
 import defineAssociations from "./models/associations.js";
 import shippingRoutes from "./routes/shipping.routes.js";
+
 dotenv.config();
 
 const app = express();
-// ... middleware ...
+
 app.use(express.json());
 // 👇 RUN ASSOCIATIONS HERE
 defineAssociations();

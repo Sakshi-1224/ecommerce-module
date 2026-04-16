@@ -181,11 +181,7 @@ export const vendorSalesReport = async (req, res) => {
   try {
     const { type } = req.query;
 
-    let whereClause = {
-      vendorId: req.user.id,
-      status: "DELIVERED",
-    };
-
+    let dateCondition = {};
     if (type && type !== "all") {
       let startDate;
       if (type === "weekly")
@@ -200,15 +196,20 @@ export const vendorSalesReport = async (req, res) => {
         startDate = new Date(new Date().getFullYear(), 0, 1);
 
       if (startDate) {
-        whereClause.createdAt = { [Op.gte]: startDate };
+        dateCondition = { createdAt: { [Op.gte]: startDate } };
       }
     }
 
-    const sales = await OrderItem.sum("price", {
-      where: whereClause,
+    // 🟢 FIX: Used getSalesFilter to exclude returns and proper SUM(price * quantity)
+    const salesData = await OrderItem.findAll({
+      where: getSalesFilter(req.user.id, dateCondition),
+      attributes: [
+        [sequelize.literal("COALESCE(SUM(price * quantity), 0)"), "totalSales"],
+      ],
+      raw: true,
     });
 
-    const result = { totalSales: sales || 0 };
+    const result = { totalSales: parseFloat(salesData[0]?.totalSales || 0) };
     res.json(result);
   } catch (err) {
     console.error("Vendor Sales Report Error:", err);
@@ -285,16 +286,24 @@ export const adminTotalSales = async (req, res) => {
 
 export const adminAllVendorsSalesReport = async (req, res) => {
   try {
+    // 🟢 FIX: Used getSalesFilter to exclude returns, and fixed the SUM logic to include quantity
     const sales = await OrderItem.findAll({
+      where: getSalesFilter(null), // Replaces raw { status: "DELIVERED" }
       attributes: [
         "vendorId",
-        [sequelize.fn("SUM", sequelize.col("price")), "totalSales"],
+        [sequelize.literal("COALESCE(SUM(price * quantity), 0)"), "totalSales"],
       ],
-      where: { status: "DELIVERED" },
       group: ["vendorId"],
+      raw: true,
     });
 
-    const result = { vendors: sales };
+    // Ensure totalSales is parsed as a number in the JSON response
+    const formattedSales = sales.map(s => ({
+        vendorId: s.vendorId,
+        totalSales: parseFloat(s.totalSales)
+    }));
+
+    const result = { vendors: formattedSales };
     res.json(result);
   } catch (err) {
     res.status(500).json({ message: err.message });

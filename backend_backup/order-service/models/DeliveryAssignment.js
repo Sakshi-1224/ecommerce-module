@@ -31,7 +31,6 @@ const DeliveryAssignment = sequelize.define("DeliveryAssignment", {
   reason: {
     type: DataTypes.STRING, allowNull: true
   },
-  // 💰 RECONCILIATION FIELDS
   cashDeposited: {
     type: DataTypes.BOOLEAN,
     defaultValue: false, 

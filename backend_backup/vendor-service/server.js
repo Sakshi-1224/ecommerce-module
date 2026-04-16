@@ -1,6 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
-import cors from "cors";
+
 import sequelize from "./config/db.js";
 import vendorRoutes from "./routes/vendor.routes.js";
 import adminVendorRoutes from "./routes/admin.vendor.routes.js";
@@ -11,7 +11,7 @@ const app = express();
 /* ======================
    MIDDLEWARE
 ====================== */
-app.use(cors());
+
 app.use(express.json());
 
 /* ======================

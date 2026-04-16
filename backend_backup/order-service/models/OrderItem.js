@@ -20,6 +20,7 @@ const OrderItem = sequelize.define("OrderItem", {
     ),
     defaultValue: "PENDING",
   },
+
   refundStatus: {
     type: DataTypes.ENUM(
       "NONE",
@@ -34,7 +35,24 @@ const OrderItem = sequelize.define("OrderItem", {
     ),
     defaultValue: "NONE",
   },
+
   returnReason: { type: DataTypes.STRING, allowNull: true },
+
+  refundMethod: {
+      type: DataTypes.ENUM("ORIGINAL_SOURCE", "BANK_TRANSFER", "WAREHOUSE_COLLECT"),
+      allowNull: true,
+    },
+
+    bankDetails: {
+      type: DataTypes.JSON, // To store Account No, IFSC, Bank Name, etc.
+      allowNull: true,
+    },
+
+    returnDropMethod: {
+      type: DataTypes.ENUM("DELIVERY_BOY", "WAREHOUSE_DROP"),
+      allowNull: true,
+    },
+
 });
 
 export default OrderItem;

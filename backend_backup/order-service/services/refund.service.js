@@ -13,13 +13,13 @@ const processAutomaticRefund = async (order, itemsToCancel, t, req) => {
   }
 
   const refundAmount = order.amount - newOrderTotal;
+  
+  // Update the parent order's new total
   order.amount = newOrderTotal;
   await order.save({ transaction: t });
 
-  if (order.payment === true && refundAmount > 0 && order.razorpayPaymentId) {
-    // Note: To make this auto-refund work for cancellations, import razorpay at the top of order.controller.js
-    console.log(`💰 Automatically Initiated Razorpay Refund of ₹${refundAmount} for cancellation`);
-  }
-
-  return true; 
+  // Simply return true if money needs to be refunded (amount > 0)
+  return refundAmount > 0; 
 };
+
+export { processAutomaticRefund };

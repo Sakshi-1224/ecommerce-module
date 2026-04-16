@@ -62,6 +62,7 @@ export const verifyPayment = async (req, res) => {
     // 🟢 Mark as paid and save Razorpay ID for future auto-refunds
     order.payment = true;
     order.paymentMethod = "RAZORPAY";
+    order.codPaymentMode = null;
     order.razorpayPaymentId = razorpay_payment_id; 
     
     // Only upgrade status to PROCESSING if it was stuck on PENDING.
@@ -94,7 +95,7 @@ export const verifyPayment = async (req, res) => {
 /* ==========================================
    🟢 GENERATE DYNAMIC QR FOR DELIVERY BOY
 ========================================== */
-export const createDeliveryQR = async (req, res) => {
+export const createDeliveryQR = async (req, res) => { 
   try {
     const { orderId } = req.body;
 

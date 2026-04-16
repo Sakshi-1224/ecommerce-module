@@ -152,40 +152,22 @@ export const login = async (req, res) => {
         .status(400)
         .json({ message: "Phone number must be exactly 10 digits" });
 
-    // 🟢 2. CHECK RATE LIMIT
-    // Prevent Brute Force: Limit to 5 attempts per 10 minutes
-    const attemptsKey = `login_attempts:vendor:${phone}`;
-    const attempts = await redis.get(attemptsKey);
-
-    if (attempts && parseInt(attempts) >= 5) {
-      return res.status(429).json({
-        message: "Too many failed attempts. Account locked for 10 minutes.",
-      });
-    }
-
-    // Helper to handle failure
-    const handleFailedLogin = async () => {
-      const current = await redis.incr(attemptsKey);
-      if (current === 1) await redis.expire(attemptsKey, 600); // 10 mins
-      return res
-        .status(401)
-        .json({ message: "Invalid credentials or Vendor not approved" });
-    };
-
-    // 3. Verify Vendor
     const vendor = await Vendor.findOne({ where: { phone } });
 
-    if (!vendor || vendor.status !== "APPROVED") {
-      return await handleFailedLogin();
-    }
+     if (!vendor || vendor.status !== "APPROVED") {
+      return res
+         .status(401)
+       .json({ message: "Invalid credentials or Vendor not approved" }) ;
+     }
 
     const ok = await bcrypt.compare(password, vendor.password);
     if (!ok) {
-      return await handleFailedLogin();
+      return res
+         .status(401)
+       .json({ message: "Invalid credentials or Vendor not approved" } );
     }
 
-    // 🟢 4. LOGIN SUCCESS: Clear Counter
-    await redis.del(attemptsKey);
+ 
 
     const token = jwt.sign(
       { id: vendor.id, role: "vendor" },

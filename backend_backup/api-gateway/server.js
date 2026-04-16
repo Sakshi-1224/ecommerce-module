@@ -16,13 +16,14 @@ const ADDRESS_SERVICE_URL = process.env.ADDRESS_SERVICE_URL;
 
 const app = express();
 
-// 1. Global Middleware (CORS)
-app.use(
-  cors({
-    origin: "http://localhost:5174",
-    credentials: true,
-  })
-);
+// 🟢 1. BULLETPROOF CORS CONFIGURATION
+const corsOptions = {
+  origin: "http://localhost:5174",
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+app.options(/(.*)/, cors(corsOptions));
 
 /* 🚨 CRITICAL ARCHITECTURE CHANGE 🚨
   We have REMOVED `app.use(express.json())` and the `multer` upload middleware.

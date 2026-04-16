@@ -1,4 +1,5 @@
 import Order from "../models/Order.js";
+
 import OrderItem from "../models/OrderItem.js";
 import { Op } from "sequelize";
 import DeliveryBoy from "../models/DeliveryBoy.js";
@@ -7,10 +8,13 @@ import ShippingRate from "../models/ShippingRate.js";
 import sequelize from "../config/db.js";
 import axios from "axios";
 import redis from "../config/redis.js";
-import razorpay from "../config/razorpay.js";
+import { syncShippingRates } from "../services/delivery.service.js";
+
 const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL;
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL;
 
+
+import razorpay from "../config/razorpay.js"; // 🟢 Ensure this is imported at the top!
 
 export const checkout = async (req, res) => {
   const t = await sequelize.transaction();
@@ -24,6 +28,7 @@ export const checkout = async (req, res) => {
       where: { areaName: selectedArea },
       transaction: t,
     });
+    
     if (!rateRecord) {
       await t.rollback();
       return res.status(400).json({
@@ -64,7 +69,7 @@ export const checkout = async (req, res) => {
 
     try {
       await axios.post(
-        `${process.env.PRODUCT_SERVICE_URL}/inventory/reserve`,
+        `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/reserve`,
         { items },
         { headers: { Authorization: req.headers.authorization } }
       );
@@ -72,15 +77,28 @@ export const checkout = async (req, res) => {
       throw new Error(apiErr.response?.data?.message || "Stock reservation failed");
     }
 
+    // 🟢 NEW: Generate Razorpay Order if payment method is online
+    let razorpayOrderData = null;
+    if (paymentMethod === "RAZORPAY") {
+        const options = {
+            amount: Math.round(finalPayableAmount * 100), // Razorpay expects amount in paise (multiply by 100)
+            currency: "INR",
+            receipt: `receipt_order_${order.id}`
+        };
+        razorpayOrderData = await razorpay.orders.create(options);
+    }
+
     await t.commit();
     await redis.del(`user:orders:${req.user.id}`);
     await redis.del("admin:orders");
 
+    // 🟢 UPDATED: Send razorpayOrder details back to the frontend
     res.status(201).json({
       message: "Order placed successfully",
       orderId: order.id,
       shippingCharge: shippingCharge,
       payableAmount: finalPayableAmount,
+      razorpayOrder: razorpayOrderData // The frontend needs this to open the payment popup!
     });
   } catch (err) {
     if (!t.finished) await t.rollback();
@@ -185,7 +203,12 @@ export const updateOrderStatusAdmin = async (req, res) => {
     else if (status === "DELIVERED") {
       order.status = "DELIVERED";
       order.payment = true;
-      await order.save();
+     
+if (order.paymentMethod === "COD" && order.codPaymentMode !== "QR") {
+    order.codPaymentMode = "CASH";
+  }
+
+ await order.save();
 
       for (const item of order.OrderItems) {
         if (item.status !== "CANCELLED") {

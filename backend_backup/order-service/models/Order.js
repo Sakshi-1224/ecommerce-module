@@ -47,7 +47,6 @@ const Order = sequelize.define(
     codPaymentMode: { type: DataTypes.ENUM("CASH", "QR"), allowNull: true },
     utrNumber: { type: DataTypes.STRING, allowNull: true },
 
-    razorpayPaymentId: { type: DataTypes.STRING, allowNull: true },
     date: {
       type: DataTypes.DATE,
       allowNull: false,

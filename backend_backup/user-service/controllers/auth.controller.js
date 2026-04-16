@@ -68,7 +68,6 @@ export const register = async (req, res) => {
       phone,
       password: hashedPassword,
       role: "user",
-      walletBalance: 0.0
     });
 
     const token = jwt.sign(
@@ -134,7 +133,6 @@ export const login = async (req, res) => {
         name: user.name,
         phone: user.phone,
         email: user.email,
-        walletBalance: user.walletBalance,
         profilePic: user.profilePic,
         role: user.role
       },
@@ -185,7 +183,6 @@ export const me = async (req, res) => {
       email: user.email,
       phone: user.phone,
       role: user.role,
-      walletBalance: user.walletBalance,
       profilePic: user.profilePic
     });
   } catch (err) {

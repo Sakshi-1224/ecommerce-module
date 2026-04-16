@@ -124,7 +124,9 @@ router.get(
 /* ================= ADMIN: ORDER MANAGEMENT ================= */
 
 router.get("/admin/:id", auth, admin, getOrderByIdAdmin);
+
 router.put("/admin/:id/status", auth, admin, updateOrderStatusAdmin);
+
 router.put(
   "/admin/:orderId/item/:itemId/status",
   auth,

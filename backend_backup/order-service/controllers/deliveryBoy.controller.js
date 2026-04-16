@@ -8,7 +8,7 @@ import sequelize from "../config/db.js";
 import axios from "axios";
 import redis from "../config/redis.js";
 import razorpay from "../config/razorpay.js";
-
+import { syncShippingRates } from "../services/delivery.service.js";
 export const getAllDeliveryBoys = async (req, res) => {
   try {
     const cacheKey = "delivery_boys:all";
@@ -306,6 +306,7 @@ export const getDeliveryBoyOrders = async (req, res) => {
             "status",
             "paymentMethod",
             "payment",
+            "codPaymentMode", // 🟢 ADDED: Need this to verify QR vs CASH
             "date",
             "assignedArea",
             "userId",
@@ -342,11 +343,14 @@ export const getDeliveryBoyOrders = async (req, res) => {
 
     const formatOrder = (a) => {
       const isReturnTask = a.reason === "RETURN_PICKUP";
+      
+      // 🟢 UPDATED: Only expect cash if it's COD, NOT cancelled, and (is unpaid OR was paid with actual CASH but not deposited)
       const isCodUnsettled =
         !isReturnTask &&
         a.Order.paymentMethod === "COD" &&
-        !a.cashDeposited &&
-        a.Order.status !== "CANCELLED";
+        a.Order.status !== "CANCELLED" &&
+        ((!a.Order.payment) || (a.Order.payment && a.Order.codPaymentMode === "CASH" && !a.cashDeposited));
+
       let parsedAddress = a.Order.address;
       try {
         if (typeof parsedAddress === "string")
@@ -399,7 +403,8 @@ export const getDeliveryBoyCashStatus = async (req, res) => {
         {
           model: Order,
           where: { paymentMethod: "COD" },
-          attributes: ["id", "amount", "status", "payment", "address"],
+          // 🟢 ADDED codPaymentMode here
+          attributes: ["id", "amount", "status", "payment", "address", "codPaymentMode"], 
         },
       ],
     });
@@ -413,14 +418,19 @@ export const getDeliveryBoyCashStatus = async (req, res) => {
 
     assignments.forEach((assignment) => {
       const amt = assignment.Order.amount;
-      if (assignment.status === "DELIVERED" && !assignment.cashDeposited) {
+      const isDelivered = assignment.status === "DELIVERED";
+      const isPhysicalCash = assignment.Order.codPaymentMode === "CASH";
+      const isPendingPayment = !assignment.Order.payment;
+
+      // 🟢 UPDATED: Only count actual CASH towards the boy's cashOnHand limit (Ignore QR)
+      if (isDelivered && isPhysicalCash && !assignment.cashDeposited) {
         cashOnHand += amt;
         activeOrders.push({
           status: "COLLECTED_UNSETTLED",
           orderId: assignment.Order.id,
           amount: amt,
         });
-      } else if (["ASSIGNED", "OUT_FOR_DELIVERY"].includes(assignment.status)) {
+      } else if (["ASSIGNED", "OUT_FOR_DELIVERY"].includes(assignment.status) && isPendingPayment) {
         pendingCash += amt;
         activeOrders.push({
           status: "PENDING_DELIVERY",
@@ -429,7 +439,8 @@ export const getDeliveryBoyCashStatus = async (req, res) => {
         });
       } else if (
         assignment.cashDeposited &&
-        assignment.depositedAt >= startOfDay
+        assignment.depositedAt >= startOfDay &&
+        isPhysicalCash // 🟢 Only count actual cash deposits
       ) {
         depositedToday += amt;
       }
@@ -485,7 +496,8 @@ export const getCODReconciliation = async (req, res) => {
       include: [
         {
           model: Order,
-          where: { paymentMethod: "COD", payment: true },
+          // 🟢 CRITICAL FIX: Only reconcile codPaymentMode: "CASH". We don't need to reconcile QR codes as money is already digital.
+          where: { paymentMethod: "COD", payment: true, codPaymentMode: "CASH" },
           attributes: ["id", "amount", "address", "updatedAt"],
         },
         { model: DeliveryBoy, attributes: ["id", "name", "phone"] },
