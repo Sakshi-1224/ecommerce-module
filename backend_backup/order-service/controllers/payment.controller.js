@@ -73,10 +73,6 @@ export const verifyPayment = async (req, res) => {
     
     await order.save();
 
-    await redis.del(`order:${orderId}`);
-    if (order.userId) await redis.del(`user:orders:${order.userId}`);
-    await redis.del("admin:orders");
-
     // Clear delivery boy cache if one is already assigned
     const assignment = await sequelize.models.DeliveryAssignment?.findOne({
       where: { orderId: orderId, status: { [Op.in]: ["ASSIGNED", "PICKED", "OUT_FOR_DELIVERY"] } }
@@ -170,10 +166,6 @@ export const razorpayWebhook = async (req, res) => {
           order.utrNumber = paymentEntity.acquirer_data?.rrn || paymentEntity.id; 
           order.razorpayPaymentId = paymentEntity.id; // 🟢 Save for auto-refund!
           await order.save();
-
-          await redis.del(`order:${order.id}`);
-          await redis.del("admin:orders");
-          if (order.userId) await redis.del(`user:orders:${order.userId}`);
           
           console.log(`✅ Webhook: Order #${orderId} marked as PAID via QR!`);
         }

@@ -4,25 +4,16 @@ import { uploadImageToMinio } from "../utils/uploadToMinio.js";
 import { Op } from "sequelize";
 import sequelize from "../config/db.js";
 import redis from "../config/redis.js"; // 🟢 Import Redis
-import { invalidateProductCache } from "../utils/cache.helper.js";
-
-
-
+import { safeInvalidateCatalog } from "../utils/redisWrapper.js";
 
 export const getVendorProducts = async (req, res) => {
   try {
-    const cacheKey = `products:vendor:${req.user.id}`;
-
-    // 🟢 Redis Cache: 5 Minutes
-    const cachedData = await redis.get(cacheKey);
-    if (cachedData) return res.json(JSON.parse(cachedData));
-
+ 
     const products = await Product.findAll({
       where: { vendorId: req.user.id },
       include: { model: Category },
     });
 
-    await redis.set(cacheKey, JSON.stringify(products), "EX", 300);
     res.json(products);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -91,14 +82,7 @@ export const createProduct = async (req, res) => {
       warehouseStock: 0,
     });
 
-    // 🟢 INVALIDATE CACHE
-    // Clear the vendor's list so their new product shows up immediately
-    if (product.vendorId) {
-      await redis.del(`products:vendor:${product.vendorId}`);
-      await redis.del(`inventory:vendor:${product.vendorId}`);
-    }
-    // Also clear admin inventory cache
-    await redis.del(`inventory:admin`);
+await safeInvalidateCatalog();
 
     res.status(201).json({ message: "Product created", product });
   } catch (err) {
@@ -142,10 +126,7 @@ export const updateProduct = async (req, res) => {
     }
 
     await product.save();
-
-    // 🟢 INVALIDATE CACHE
-    await invalidateProductCache(product.id, product.vendorId);
-
+await safeInvalidateCatalog(product.id);
     res.json({ message: "Product updated", product });
   } catch (err) {
     res.status(500).json({ message: "Update failed" });
@@ -159,13 +140,11 @@ export const deleteProduct = async (req, res) => {
     if (req.user.role === "vendor" && product.vendorId !== req.user.id)
       return res.status(403).json({ message: "Unauthorized" });
 
-    // Store IDs before delete for cache clearing
-    const { id, vendorId } = product;
+    const productId = product.id;
 
     await product.destroy();
 
-    // 🟢 INVALIDATE CACHE
-    await invalidateProductCache(id, vendorId);
+    await safeInvalidateCatalog(productId);
 
     res.json({ message: "Product deleted" });
   } catch {
@@ -177,17 +156,12 @@ export const deleteProduct = async (req, res) => {
 export const getProductsByVendorId = async (req, res) => {
   try {
     const { vendorId } = req.params;
-    // 🟢 Cache this per vendor ID for 60s
-    const cacheKey = `products:vendor:${vendorId}`;
-    const cachedData = await redis.get(cacheKey);
-    if (cachedData) return res.json(JSON.parse(cachedData));
+
 
     const products = await Product.findAll({
       where: { vendorId: vendorId },
       include: { model: Category },
     });
-
-    await redis.set(cacheKey, JSON.stringify(products), "EX", 60);
 
     res.json(products);
   } catch (err) {

@@ -1,31 +1,23 @@
 import Vendor from "../models/Vendor.js";
 import redis from "../config/redis.js"; // 🟢 1. Import Redis
+import { fetchWithCache, safeDeleteCache } from "../utils/redisWrapper.js";
 
 /* ---------------- GET ALL VENDORS ---------------- */
 export const getAllVendors = async (req, res) => {
   try {
-    // 🟢 2. Check Redis Cache
     const cacheKey = "vendors:all";
-    const cachedData = await redis.get(cacheKey);
 
-    if (cachedData) {
-      return res.json(JSON.parse(cachedData));
-    }
-
-    // Fetch from DB if not in cache
-    const vendors = await Vendor.findAll({
-      attributes: { exclude: ["password"] }
+    // 🟢 Use Safe Wrapper (Expire in 15 mins)
+    const vendors = await fetchWithCache(cacheKey, 900, async () => {
+      return await Vendor.findAll({
+        attributes: { exclude: ["password"] }
+      });
     });
-
-    // 🟢 3. Save to Redis (Expire in 15 minutes)
-    await redis.set(cacheKey, JSON.stringify(vendors), "EX", 900);
 
     res.json(vendors);
   } catch (err) {
     console.error(err);
-    res.status(500).json({
-      message: "Failed to fetch vendors"
-    });
+    res.status(500).json({ message: "Failed to fetch vendors" });
   }
 };
 
@@ -49,9 +41,7 @@ export const approveVendor = async (req, res) => {
     vendor.status = "APPROVED";
     await vendor.save();
 
-    // 🟢 4. Invalidate Cache
-    // The list changed, so clear the cache to force a refresh
-    await redis.del("vendors:all");
+  await safeDeleteCache("vendors:all");
 
     res.json({ message: "Vendor approved" });
   } catch (err) {
@@ -80,9 +70,7 @@ export const rejectVendor = async (req, res) => {
     vendor.status = "REJECTED";
     await vendor.save();
 
-    // 🟢 5. Invalidate Cache
-    // The list changed, so clear the cache
-    await redis.del("vendors:all");
+   await safeDeleteCache("vendors:all");
 
     res.json({ message: "Vendor rejected" });
   } catch (err) {

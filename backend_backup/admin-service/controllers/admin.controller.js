@@ -2,6 +2,7 @@ import axios from "axios";
 import Admin from "../models/Admin.js";
 import bcrypt from "bcrypt";
 import redis from "../config/redis.js"; // 🟢 1. Import Redis
+import { fetchWithCache } from "../utils/redisWrapper.js";
 
 const ORDER = process.env.ORDER_SERVICE_URL;
 const USER = process.env.USER_SERVICE_URL;
@@ -53,84 +54,46 @@ export const changePassword = async (req, res) => {
   }
 };
 
-/* ======================================================
-   🟢 UPDATED: DASHBOARD WITH REDIS CACHING
-====================================================== */
 export const getDashboardData = async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
-
     if (!authHeader) {
-      return res.status(401).json({
-        message: "Authorization header missing"
-      });
+      return res.status(401).json({ message: "Authorization header missing" });
     }
 
-    // 🟢 1. Check Redis Cache
-    // We cache dashboard stats for 60 seconds.
     const cacheKey = "admin:dashboard:stats";
-    const cachedData = await redis.get(cacheKey);
 
-    if (cachedData) {
-      // If found in cache, return it immediately (Skip Axios calls)
-      return res.json(JSON.parse(cachedData));
-    }
+    // Call the wrapper: Cache for 60 seconds
+    const responseData = await fetchWithCache(cacheKey, 60, async () => {
+      const [ordersResult, usersResult] = await Promise.allSettled([
+        axios.get(`${ORDER}/admin/all`, { headers: { Authorization: authHeader } }),
+        axios.get(`${USER}/users`, { headers: { Authorization: authHeader } })
+      ]);
 
-    // 🟢 2. Fetch Data (If not in cache)
-    const [ordersResult, usersResult] = await Promise.allSettled([
-      axios.get(`${ORDER}/admin/all`, {
-        headers: { Authorization: authHeader }
-      }),
-      axios.get(`${USER}/users`, {
-        headers: { Authorization: authHeader }
-      })
-    ]);
+      const orders = ordersResult.status === "fulfilled" ? ordersResult.value.data : [];
+      const users = usersResult.status === "fulfilled" ? usersResult.value.data : [];
 
-    const orders =
-      ordersResult.status === "fulfilled"
-        ? ordersResult.value.data
-        : [];
+      const totalOrders = orders.length;
+      const totalRevenue = orders.reduce((sum, order) => sum + (order.amount || 0), 0);
+      const activeUsers = users.length;
 
-    const users =
-      usersResult.status === "fulfilled"
-        ? usersResult.value.data
-        : [];
+      const recentOrders = orders.map(order => ({
+        orderId: order.id,
+        customer: order.address?.name || "User",
+        date: order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "N/A",
+        status: order.status,
+        total: order.amount
+      }));
 
-    const totalOrders = orders.length;
-    const totalRevenue = orders.reduce(
-      (sum, order) => sum + (order.amount || 0),
-      0
-    );
-    const activeUsers = users.length;
-
-    const recentOrders = orders.map(order => ({
-      orderId: order.id,
-      customer: order.address?.name || "User",
-      date: order.createdAt
-        ? new Date(order.createdAt).toLocaleDateString()
-        : "N/A",
-      status: order.status,
-      total: order.amount
-    }));
-
-    const responseData = {
-      stats: {
-        totalRevenue,
-        totalOrders,
-        activeUsers
-      },
-      recentOrders
-    };
-
-    // 🟢 3. Save to Redis (Expires in 60 seconds)
-    // We use a short time because new orders come in frequently.
-    await redis.set(cacheKey, JSON.stringify(responseData), "EX", 60);
+      return {
+        stats: { totalRevenue, totalOrders, activeUsers },
+        recentOrders
+      };
+    });
 
     res.json(responseData);
   } catch (err) {
     console.error(err);
-    res.status(500).json({
-      message: "Dashboard fetch failed"
-    });
+    res.status(500).json({ message: "Dashboard fetch failed" });
   }
 };

@@ -150,8 +150,14 @@ export const logout = async (req, res) => {
     const token = req.headers.authorization?.split(" ")[1];
     if (token) {
       const key = `blacklist:${token}`;
-      await redis.set(key, "true", "EX", 604800);
-      console.log(`🚫 Token blacklisted: ${token.substring(0, 10)}...`);
+      
+      // 🟢 Fail-Open Strategy: Only blacklist if Redis is alive
+      if (redis.status === "ready") {
+        await redis.set(key, "true", "EX", 604800); // 7 days
+        console.log(`🚫 Token blacklisted: ${token.substring(0, 10)}...`);
+      } else {
+        console.warn("⚠️ Redis is down. Token could not be blacklisted, but proceeding with logout.");
+      }
     }
     res.json({ message: "Logout successful" });
   } catch (err) {

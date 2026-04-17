@@ -9,16 +9,13 @@ import axios from "axios";
 import redis from "../config/redis.js";
 import razorpay from "../config/razorpay.js";
 import { syncShippingRates } from "../services/delivery.service.js";
+import { fetchWithCache, safeDeleteCache } from "../utils/redisWrapper.js";
+
 export const getAllDeliveryBoys = async (req, res) => {
   try {
-    const cacheKey = "delivery_boys:all";
-    const cached = await redis.get(cacheKey);
-    if (cached) return res.json(JSON.parse(cached));
-
-    const boys = await DeliveryBoy.findAll();
-
-    await redis.set(cacheKey, JSON.stringify(boys), "EX", 3600);
-
+    const boys = await fetchWithCache("delivery_boys:all", 3600, async () => {
+      return await DeliveryBoy.findAll();
+    });
     res.json(boys);
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch delivery boys" });
@@ -41,7 +38,7 @@ export const createDeliveryBoy = async (req, res) => {
       active: true,
     });
 
-    await redis.del("delivery_boys:all");
+ await safeDeleteCache(["delivery_boys:all", "delivery_locations:all"]);
 
     res.status(201).json({
       message: "Delivery Boy Created",
@@ -121,8 +118,7 @@ export const deleteDeliveryBoy = async (req, res) => {
 
     await DeliveryBoy.destroy({ where: { id } });
 
-    await redis.del("delivery_boys:all");
-    await redis.del(`tasks:boy:${id}`);
+ await safeDeleteCache(["delivery_boys:all", "delivery_locations:all"]);
 
     res.json({ message: "Deleted" });
   } catch (err) {
@@ -150,7 +146,7 @@ export const updateDeliveryBoy = async (req, res) => {
     }
 
     await DeliveryBoy.update(req.body, { where: { id } });
-    await redis.del("delivery_boys:all");
+  await safeDeleteCache(["delivery_boys:all", "delivery_locations:all"]);
 
     res.json({ message: "Delivery Boy Updated" });
   } catch (err) {
@@ -219,10 +215,10 @@ export const reassignDeliveryBoy = async (req, res) => {
 
     await t.commit();
 
-    if (oldBoyId) await redis.del(`tasks:boy:${oldBoyId}`);
-    await redis.del(`tasks:boy:${newDeliveryBoyId}`);
-    await redis.del(`order:${orderId}`);
-    await redis.del("admin:orders");
+   await safeDeleteCache([
+  `order:${orderId}`,
+  "admin:orders"
+]);
     console.log(
       `✅ Reassigned Order ${orderId} to Boy ${newDeliveryBoyId} with reason: ${previousReason}`,
     );
@@ -542,32 +538,37 @@ export const getCODReconciliation = async (req, res) => {
 
 export const getDeliveryLocations = async (req, res) => {
   try {
-    const boys = await DeliveryBoy.findAll({
-      where: { active: true },
-      attributes: ["state", "city", "assignedAreas"],
-    });
+    // 🟢 Cache for 1 hour (3600 seconds)
+    const response = await fetchWithCache("delivery_locations:all", 3600, async () => {
+      const boys = await DeliveryBoy.findAll({
+        where: { active: true },
+        attributes: ["state", "city", "assignedAreas"],
+      });
 
-    const locationMap = {};
+      const locationMap = {};
 
-    boys.forEach((boy) => {
-      const { state, city, assignedAreas } = boy;
-      if (!locationMap[state]) locationMap[state] = {};
-      if (!locationMap[state][city]) locationMap[state][city] = new Set();
+      boys.forEach((boy) => {
+        const { state, city, assignedAreas } = boy;
+        if (!locationMap[state]) locationMap[state] = {};
+        if (!locationMap[state][city]) locationMap[state][city] = new Set();
 
-      if (Array.isArray(assignedAreas)) {
-        assignedAreas.forEach((area) => {
-          if (area) locationMap[state][city].add(area.trim());
-        });
+        if (Array.isArray(assignedAreas)) {
+          assignedAreas.forEach((area) => {
+            if (area) locationMap[state][city].add(area.trim());
+          });
+        }
+      });
+
+      const formattedResponse = {};
+      for (const s in locationMap) {
+        formattedResponse[s] = {};
+        for (const c in locationMap[s]) {
+          formattedResponse[s][c] = [...locationMap[s][c]].sort();
+        }
       }
-    });
 
-    const response = {};
-    for (const s in locationMap) {
-      response[s] = {};
-      for (const c in locationMap[s]) {
-        response[s][c] = [...locationMap[s][c]].sort();
-      }
-    }
+      return formattedResponse;
+    });
 
     res.json(response);
   } catch (err) {

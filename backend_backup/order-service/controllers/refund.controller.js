@@ -6,9 +6,9 @@ import DeliveryAssignment from "../models/DeliveryAssignment.js";
 import ShippingRate from "../models/ShippingRate.js";
 import sequelize from "../config/db.js";
 import axios from "axios";
-import redis from "../config/redis.js";
 import razorpay from "../config/razorpay.js";
 import { autoAssignDeliveryBoy } from "../services/delivery.service.js";
+
 export const cancelOrderItem = async (req, res) => {
   const t = await sequelize.transaction();
   try {
@@ -62,10 +62,6 @@ export const cancelOrderItem = async (req, res) => {
     } catch (e) {
       console.error("Stock Release Failed");
     }
-
-    await redis.del(`order:${orderId}`);
-    await redis.del("admin:refunds:cancelled");
-    await redis.del(`user:orders:${req.user.id}`);
 
     res.json({
       message: (order.paymentMethod !== "COD" && isRefundDue)
@@ -147,9 +143,6 @@ export const cancelFullOrder = async (req, res) => {
       console.error("Stock Release Failed");
     }
 
-    await redis.del(`order:${orderId}`);
-    await redis.del("admin:refunds:cancelled");
-    await redis.del(`user:orders:${req.user.id}`);
 
     res.json({
       message: (order.paymentMethod !== "COD" && isRefundDue)
@@ -241,9 +234,6 @@ export const requestReturn = async (req, res) => {
     }
 
     await t.commit();
-    await redis.del(`order:${orderId}`);
-    await redis.del("admin:returns");
-    await redis.del(`user:orders:${userId}`);
     res.json({
       message: "Return requested successfully. Refund will be processed after Admin verification.",
     });
@@ -382,26 +372,6 @@ export const updateRefundStatusAdmin = async (req, res) => {
 
     await t.commit();
 
-    // --- 🟢 FIX: FOOLPROOF CACHE CLEARING ---
-    try {
-        // We look up the specific assignment so we can clear the boy's cache even during COMPLETED/CREDITED stages
-        const assignment = await DeliveryAssignment.findOne({
-            where: { orderId, reason: "RETURN_PICKUP", status: { [Op.ne]: "FAILED" } }
-        });
-
-        if (assignment) {
-            await redis.del(`tasks:boy:${assignment.deliveryBoyId}`);
-        } else if (assignedBoyId) {
-            await redis.del(`tasks:boy:${assignedBoyId}`);
-        }
-    } catch (cacheErr) {
-        console.error("Failed to clear delivery boy cache:", cacheErr);
-    }
-
-    await redis.del(`order:${orderId}`);
-    await redis.del("admin:returns");
-    await redis.del("admin:refunds:cancelled");
-    if (targetUserId) await redis.del(`user:orders:${targetUserId}`);
 
     res.json({
       message: `Status updated to ${status}${assignmentMessage}.`,

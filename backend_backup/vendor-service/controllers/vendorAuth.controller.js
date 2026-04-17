@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import Vendor from "../models/Vendor.js";
 import redis from "../config/redis.js"; 
 import { validateVerhoeff } from "../utils/verhoeff.js"; 
-
+import { fetchWithCache, safeDeleteCache } from "../utils/redisWrapper.js";
 export const register = async (req, res) => {
   try {
     const {
@@ -118,15 +118,8 @@ export const register = async (req, res) => {
       status: "PENDING",
     });
 
-    try {
-      if (redis.status === "ready") {
-        // Optional: Check if redis is ready
-        await redis.del("vendors:all");
-      }
-    } catch (cacheErr) {
-      console.error("⚠️ Redis Cache Error (Ignored):", cacheErr.message);
-      // We do NOT return an error here, because the Vendor was successfully created.
-    }
+  await safeDeleteCache("vendors:all");
+
     res.status(201).json({
       message: "Vendor registered successfully. Awaiting admin approval.",
     });
@@ -189,24 +182,16 @@ export const getProfile = async (req, res) => {
   try {
     const vendorId = req.user.id;
 
-    // 🟢 5. Check Cache
     const cacheKey = `vendor:profile:${vendorId}`;
-    const cachedProfile = await redis.get(cacheKey);
-
-    if (cachedProfile) {
-      return res.json(JSON.parse(cachedProfile));
-    }
-
-    // Fetch DB
-    const vendor = await Vendor.findByPk(vendorId, {
-      attributes: { exclude: ["password"] },
+  
+   const vendor = await fetchWithCache(cacheKey, 3600, async () => {
+      return await Vendor.findByPk(vendorId, {
+        attributes: { exclude: ["password"] },
+      });
     });
 
     if (!vendor) return res.status(404).json({ message: "Vendor not found" });
 
-    // 🟢 6. Save to Cache (Expire in 1 hour)
-    // Profile data rarely changes, so 1 hour (3600s) is safe.
-    await redis.set(cacheKey, JSON.stringify(vendor), "EX", 3600);
 
     res.json(vendor);
   } catch (err) {
@@ -225,14 +210,14 @@ export const logout = async (req, res) => {
       return res.status(400).json({ message: "No token provided" });
     }
 
-    // 🟢 1. Add Token to Blacklist
-    // Expire it after 24 hours (86400 seconds) to match JWT expiry
-    await redis.set(`blacklist:${token}`, "true", "EX", 86400);
+    if (redis.status === "ready") {
+      await redis.set(`blacklist:${token}`, "true", "EX", 86400);
+    } else {
+      console.warn("⚠️ Redis is down. Skipping token blacklist during vendor logout.");
+    }
 
-    // 🟢 2. Optional: Clear User Cache immediately
-    // If you cache user profiles, clear it now to be safe
     if (req.user && req.user.id) {
-      await redis.del(`vendor:profile:${req.user.id}`);
+      await safeDeleteCache(`vendor:profile:${req.user.id}`);
     }
 
     res.json({ message: "Logged out successfully" });

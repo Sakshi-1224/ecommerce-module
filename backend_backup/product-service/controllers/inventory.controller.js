@@ -1,21 +1,11 @@
 
 import Product from "../models/Product.js";
 import Category from "../models/Category.js";
-import { uploadImageToMinio } from "../utils/uploadToMinio.js";
-import { Op } from "sequelize";
-import sequelize from "../config/db.js";
-import redis from "../config/redis.js"; // 🟢 Import Redis
-
 
 
 export const getVendorInventory = async (req, res) => {
   try {
-    const cacheKey = `inventory:vendor:${req.user.id}`;
-
-    // 🟢 Redis Cache: 60 Seconds
-    const cachedData = await redis.get(cacheKey);
-    if (cachedData) return res.json(JSON.parse(cachedData));
-
+  
     const products = await Product.findAll({
       where: { vendorId: req.user.id },
       attributes: [
@@ -41,7 +31,6 @@ export const getVendorInventory = async (req, res) => {
       warehouse: p.warehouseStock,
     }));
 
-    await redis.set(cacheKey, JSON.stringify(formatted), "EX", 60);
     res.json(formatted);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -50,12 +39,7 @@ export const getVendorInventory = async (req, res) => {
 
 export const getAllWarehouseInventory = async (req, res) => {
   try {
-    const cacheKey = `inventory:admin`;
-
-    // 🟢 Redis Cache: 60 Seconds
-    const cachedData = await redis.get(cacheKey);
-    if (cachedData) return res.json(JSON.parse(cachedData));
-
+ 
     const products = await Product.findAll({
       attributes: [
         "id",
@@ -86,7 +70,6 @@ export const getAllWarehouseInventory = async (req, res) => {
       warehouse: p.warehouseStock,
     }));
 
-    await redis.set(cacheKey, JSON.stringify(formatted), "EX", 60);
     res.json(formatted);
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch admin inventory" });
@@ -110,7 +93,6 @@ export const transferToWarehouse = async (req, res) => {
     product.warehouseStock += quantity;
     await product.save();
 
-    // 🟢 INVALIDATE CACHE
 
     res.json({ message: "Transfer successful", product });
   } catch (err) {
@@ -132,7 +114,6 @@ export const updateWarehouseStock = async (req, res) => {
     product.warehouseStock = warehouseStock;
     await product.save();
 
-    // 🟢 INVALIDATE CACHE
 
 
     res.json({ message: "Warehouse stock updated", product });

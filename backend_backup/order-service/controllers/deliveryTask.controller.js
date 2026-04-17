@@ -8,12 +8,6 @@ import redis from "../config/redis.js";
 export const getMyTasks = async (req, res) => {
   try {
     const boyId = req.user.id;
-    const cacheKey = `tasks:boy:${boyId}`;
-
-    const cachedData = await redis.get(cacheKey);
-    if (cachedData) {
-      return res.json(JSON.parse(cachedData));
-    }
 
     const allTasks = await DeliveryAssignment.findAll({
       where: {
@@ -119,7 +113,6 @@ export const getMyTasks = async (req, res) => {
     });
 
     const responseData = { active, history };
-    await redis.set(cacheKey, JSON.stringify(responseData), "EX", 600);
 
     res.json(responseData);
   } catch (err) {
@@ -202,15 +195,6 @@ export const updateTaskStatus = async (req, res) => {
         }
         await order.save();
       }
-    }
-
-    await redis.del(`tasks:boy:${boyId}`);
-    await redis.del(`order:${assignment.orderId}`);
-    await redis.del("admin:orders"); 
-    await redis.del("admin:returns"); 
-
-    if (parentOrder && parentOrder.userId) {
-        await redis.del(`user:orders:${parentOrder.userId}`);
     }
 
     res.json({ message: `Task & Items updated to ${status}` });

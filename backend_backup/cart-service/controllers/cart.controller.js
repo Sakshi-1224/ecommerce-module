@@ -1,12 +1,12 @@
 import CartItem from "../models/CartItem.js";
 import axios from "axios";
 import dotenv from "dotenv";
-import redis from "../config/redis.js"; // 🟢 1. Import Redis
+
 
 dotenv.config();
 const PRODUCT_SERVICE_URL = "http://localhost:5002/api/products";
 
-/* ---------------- ADD TO CART ---------------- */
+
 export const addToCart = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -42,9 +42,7 @@ export const addToCart = async (req, res) => {
       await CartItem.create({ userId, productId, quantity });
     }
 
-    // 🟢 2. INVALIDATE CACHE
-    // Cart changed, so the old cached version is wrong. Delete it.
-    await redis.del(`cart:${userId}`);
+   
 
     res.status(201).json({ message: "Item added to cart" });
   } catch (err) {
@@ -80,8 +78,6 @@ export const updateQuantity = async (req, res) => {
     item.quantity = quantity;
     await item.save();
 
-    // 🟢 3. INVALIDATE CACHE
-    await redis.del(`cart:${req.user.id}`);
 
     res.json(item);
   } catch (err) {
@@ -96,12 +92,7 @@ export const getCart = async (req, res) => {
     const { userId } = req.params;
     if (!userId) return res.status(400).json({ message: "User ID is required" });
 
-    // 1. Check Redis Cache
-    const cacheKey = `cart:${userId}`;
-    const cachedCart = await redis.get(cacheKey);
-    if (cachedCart) return res.json(JSON.parse(cachedCart));
 
-    // 2. Fetch Cart Items from DB
     const cartItems = await CartItem.findAll({ where: { userId } });
     
     if (cartItems.length === 0) {
@@ -161,9 +152,6 @@ export const getCart = async (req, res) => {
 
     const responseData = { items: detailedCart, total };
 
-    // 6. Save to Redis
-    await redis.set(cacheKey, JSON.stringify(responseData), "EX", 600);
-
     res.json(responseData);
 
   } catch (err) {
@@ -186,8 +174,7 @@ export const removeFromCart = async (req, res) => {
 
     await item.destroy();
 
-    // 🟢 6. INVALIDATE CACHE
-    await redis.del(`cart:${req.user.id}`);
+  
 
     res.json({ message: "Item removed from cart" });
   } catch (err) {
@@ -203,8 +190,6 @@ export const clearCart = async (req, res) => {
 
     await CartItem.destroy({ where: { userId } });
 
-    // 🟢 7. INVALIDATE CACHE
-    await redis.del(`cart:${userId}`);
 
     res.json({ message: "Cart cleared successfully" });
   } catch (err) {

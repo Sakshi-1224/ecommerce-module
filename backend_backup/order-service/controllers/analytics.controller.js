@@ -8,6 +8,7 @@ import sequelize from "../config/db.js";
 import axios from "axios";
 import redis from "../config/redis.js";
 import razorpay from "../config/razorpay.js";
+import { fetchWithCache } from "../utils/redisWrapper.js";
 
 const getSalesFilter = (vendorId = null, dateFilter = {}) => {
   const where = {
@@ -263,9 +264,6 @@ export const adminVendorSalesReport = async (req, res) => {
 
 export const adminTotalSales = async (req, res) => {
   try {
-    const cacheKey = "report:admin:totalSales";
-    const cached = await redis.get(cacheKey);
-    if (cached) return res.json(JSON.parse(cached));
 
     const salesData = await OrderItem.findAll({
       where: getSalesFilter(null),
@@ -276,8 +274,7 @@ export const adminTotalSales = async (req, res) => {
     const total = salesData[0]?.totalSales || 0;
     const result = { totalSales: total };
 
-    await redis.set(cacheKey, JSON.stringify(result), "EX", 300);
-
+    
     res.json(result);
   } catch (err) {
     res.status(500).json({ message: err.message });

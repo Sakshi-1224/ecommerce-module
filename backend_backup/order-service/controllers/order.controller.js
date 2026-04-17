@@ -93,9 +93,7 @@ export const checkout = async (req, res) => {
       }
     }); // 🟢 Auto-Commits here if no errors
 
-    // 🟢 3. Cache clearing ONLY happens if transaction was successful
-    await redis.del(`user:orders:${req.user.id}`);
-    await redis.del("admin:orders");
+    
 
     res.status(201).json({
       message: "Order placed successfully",
@@ -253,11 +251,6 @@ export const updateOrderStatusAdmin = async (req, res) => {
       }
     });
 
-    // 🟢 Clean caches securely outside of transaction 
-    await redis.del(`order:${req.params.id}`);
-    await redis.del("admin:orders");
-    if (orderUserId) await redis.del(`user:orders:${orderUserId}`);
-    if (autoAssignedBoyId) await redis.del(`tasks:boy:${autoAssignedBoyId}`);
 
     res.json({ message: responseMsg });
   } catch (err) {
@@ -340,11 +333,6 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
       }
     });
 
-    // 🟢 Cache Invalidations executed safely outside transaction
-    await redis.del(`order:${orderId}`);
-    await redis.del("admin:orders");
-    if (orderUserId) await redis.del(`user:orders:${orderUserId}`);
-    if (activeBoyId) await redis.del(`tasks:boy:${activeBoyId}`);
 
     res.json({ message: responseMsg });
   } catch (err) {
@@ -357,35 +345,22 @@ export const getUserOrders = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
-    const userId = req.user.id;
-    const cacheKey = page === 1 ? `user:orders:${userId}` : null;
-    if (cacheKey) {
-      const cached = await redis.get(cacheKey);
-      if (cached) return res.json(JSON.parse(cached));
-    }
-
     const offset = (page - 1) * limit;
 
     const { count, rows } = await Order.findAndCountAll({
-      where: { userId: userId },
+      where: { userId: req.user.id },
       include: OrderItem,
       limit: limit,
       offset: offset,
       order: [["createdAt", "DESC"]],
     });
 
-    const result = {
+    res.json({
       orders: rows,
       totalOrders: count,
       totalPages: Math.ceil(count / limit),
       currentPage: page,
-    };
-
-    if (cacheKey) {
-      await redis.set(cacheKey, JSON.stringify(result), "EX", 300);
-    }
-
-    res.json(result);
+    });
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch orders" });
   }
@@ -393,19 +368,10 @@ export const getUserOrders = async (req, res) => {
 
 export const getOrderById = async (req, res) => {
   try {
-    const orderId = req.params.id;
-    const cacheKey = `order:${orderId}`;
-    const cached = await redis.get(cacheKey);
-    if (cached) return res.json(JSON.parse(cached));
-
     const order = await Order.findOne({
-      where: { id: orderId, userId: req.user.id },
+      where: { id: req.params.id, userId: req.user.id },
       include: OrderItem,
     });
-    if (order) {
-      await redis.set(cacheKey, JSON.stringify(order), "EX", 600);
-    }
-
     res.json(order);
   } catch {
     res.status(500).json({ message: "Failed" });
@@ -426,16 +392,10 @@ export const trackOrder = async (req, res) => {
 
 export const getAllOrdersAdmin = async (req, res) => {
   try {
-    const cacheKey = "admin:orders";
-    const cached = await redis.get(cacheKey);
-    if (cached) return res.json(JSON.parse(cached));
-
     const orders = await Order.findAll({
       include: OrderItem,
       order: [["createdAt", "DESC"]],
     });
-    await redis.set(cacheKey, JSON.stringify(orders), "EX", 300);
-
     res.json(orders);
   } catch {
     res.status(500).json({ message: "Failed" });
@@ -445,14 +405,7 @@ export const getAllOrdersAdmin = async (req, res) => {
 export const getOrderByIdAdmin = async (req, res) => {
   try {
     const orderId = req.params.id;
-    const cacheKey = `order:${orderId}`;
-    const cached = await redis.get(cacheKey);
-    if (cached) {
-      // Note: Admin might need delivery info which user view might not have cached.
-      // If cached data is sufficient, use it. Otherwise, force fetch.
-      // Here, we force fetch because Admin needs DeliveryAssignment data.
-    }
-
+   
     const order = await Order.findByPk(orderId, {
       include: [
         OrderItem,
@@ -462,7 +415,6 @@ export const getOrderByIdAdmin = async (req, res) => {
         },
       ],
     });
-    await redis.set(cacheKey, JSON.stringify(order), "EX", 600);
 
     res.json(order);
   } catch {
@@ -661,11 +613,8 @@ export const adminCreateOrder = async (req, res) => {
       } catch (apiErr) {
         throw new Error(apiErr.response?.data?.message || "Stock reservation failed");
       }
-    }); // 🟢 Auto Commits
+    }); 
 
-    // 🟢 Clear Cache AFTER commit
-    await redis.del(`user:orders:${userId}`);
-    await redis.del("admin:orders");
 
     res.status(201).json({
       message: "Order created successfully on behalf of user",

@@ -1,5 +1,5 @@
 import ShippingRate from "../models/ShippingRate.js"; // 🟢 IMPORT NEW MODEL
-
+import { fetchWithCache, safeDeleteCache } from "../utils/redisWrapper.js";
 // 1. ADD or UPDATE a Shipping Rate
 export const setShippingRate = async (req, res) => {
   try {
@@ -33,6 +33,8 @@ export const setShippingRate = async (req, res) => {
       await rateRecord.save();
     }
 
+await safeDeleteCache("shipping_rates:all");
+
     res.json({
       message: created ? "Shipping Rate Added" : "Shipping Rate Updated",
       data: rateRecord,
@@ -46,15 +48,14 @@ export const setShippingRate = async (req, res) => {
 // 2. GET ALL Shipping Rates (For Admin Dashboard)
 export const getAllShippingRates = async (req, res) => {
   try {
-    const rates = await ShippingRate.findAll({
-      order: [["areaName", "ASC"]], // Sort alphabetically
+    const rates = await fetchWithCache("shipping_rates:all", 86400, async () => {
+      return await ShippingRate.findAll({ order: [["areaName", "ASC"]] });
     });
     res.json(rates);
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch rates" });
   }
 };
-
 // 3. DELETE a Shipping Rate
 export const deleteShippingRate = async (req, res) => {
   try {
@@ -66,6 +67,8 @@ export const deleteShippingRate = async (req, res) => {
     }
 
     await record.destroy();
+
+    await safeDeleteCache("shipping_rates:all");
     res.json({ message: "Shipping Rate deleted successfully" });
   } catch (err) {
     res.status(500).json({ message: "Failed to delete rate" });
@@ -76,7 +79,7 @@ export const deleteShippingRate = async (req, res) => {
 export const getShippingCharge = async (req, res) => {
   try {
     const { area } = req.query;
-    // If no area provided, return 0 (or a default base charge if you have one)
+   
     if (!area) return res.json({ rate: 0 });
 
     const cleanArea = area.trim();
