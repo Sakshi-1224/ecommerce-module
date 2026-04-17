@@ -1,5 +1,7 @@
 {
   "dependencies": {
-    "http-proxy-middleware": "^3.0.5"
+    "bullmq": "^5.74.1",
+    "http-proxy-middleware": "^3.0.5",
+    "ioredis": "^5.10.1"
   }
 }

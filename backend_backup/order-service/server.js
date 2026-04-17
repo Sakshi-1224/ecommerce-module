@@ -6,6 +6,7 @@ import paymentRoutes from "./routes/payment.routes.js";
 import deliveryRoutes from "./routes/delivery.routes.js";
 import defineAssociations from "./models/associations.js";
 import shippingRoutes from "./routes/shipping.routes.js";
+import "./services/sagaQueue.js";
 
 dotenv.config();
 

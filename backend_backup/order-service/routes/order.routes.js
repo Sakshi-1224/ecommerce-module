@@ -14,6 +14,14 @@ import {
   getOrderByIdAdmin,
   getVendorOrders,
 } from "../controllers/order.controller.js";
+import { 
+  checkoutSchema, 
+  adminCreateOrderSchema, 
+  updateOrderStatusSchema, 
+  updateOrderItemStatusSchema, 
+  paginationQuerySchema, 
+  idParamSchema 
+} from "../validators/order.validator.js";
 
 import {
   getAllDeliveryBoys,
@@ -47,13 +55,14 @@ import {
   adminAllVendorsSalesReport,
 } from "../controllers/analytics.controller.js";
 
+import { validate } from "../middleware/validate.middleware.js";
 const router = express.Router();
 
 router.get("/admin/delivery-boys", auth, admin, getAllDeliveryBoys);
 /* ================= USER ================= */
-router.post("/checkout", auth, checkout);
-router.post("/admin/create", auth, admin, adminCreateOrder);
-router.get("/", auth, getUserOrders);
+router.post("/checkout", auth, validate(checkoutSchema), checkout);
+router.post("/admin/create", auth, admin,validate(adminCreateOrderSchema), adminCreateOrder);
+router.get("/", auth,validate(paginationQuerySchema), getUserOrders);
 router.get("/locations", auth, getDeliveryLocations);
 // 🟢 ADMIN: View All Returns
 router.get("/admin/returns/all", auth, admin, getAllReturnOrdersAdmin);
@@ -62,7 +71,7 @@ router.get("/admin/stats", auth, admin, getAdminStats);
 router.get("/vendor/stats", auth, vendor, getVendorStats);
 router.get("/admin/refunds/cancelled", auth, admin, getCancelledRefundOrders);
 
-router.get("/track/:id", auth, trackOrder);
+router.get("/track/:id", auth,validate(idParamSchema), trackOrder);
 
 router.put("/:orderId/cancel-item/:itemId", auth, cancelOrderItem);
 router.put("/:orderId/cancel", auth, cancelFullOrder);
@@ -70,6 +79,7 @@ router.put("/:orderId/cancel", auth, cancelFullOrder);
 /* ================= VENDOR ================= */
 router.get("/vendor/orders", auth, vendor, getVendorOrders);
 router.get("/vendor/sales-report", auth, vendor, vendorSalesReport);
+
 router.put(
   "/vendor/item/:itemId/status",
   auth,
@@ -125,12 +135,13 @@ router.get(
 
 router.get("/admin/:id", auth, admin, getOrderByIdAdmin);
 
-router.put("/admin/:id/status", auth, admin, updateOrderStatusAdmin);
+router.put("/admin/:id/status", auth, admin,validate(updateOrderStatusSchema), updateOrderStatusAdmin);
 
 router.put(
   "/admin/:orderId/item/:itemId/status",
   auth,
   admin,
+  validate(updateOrderItemStatusSchema),
   updateOrderItemStatusAdmin,
 );
 // 🟢 USER
@@ -143,5 +154,5 @@ router.put(
   admin,
   updateRefundStatusAdmin,
 );
-router.get("/:id", auth, getOrderById); // Generic ID route last
+router.get("/:id", auth,validate(idParamSchema), getOrderById); // Generic ID route last
 export default router;
