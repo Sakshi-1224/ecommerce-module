@@ -12,6 +12,14 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use("/api/products", productRoutes);
 
+app.use((err, req, res, next) => {
+  console.error("Unhandled Vendor Service Error:", err.stack);
+  res.status(500).json({
+    message: "An internal server error occurred",
+    error: process.env.NODE_ENV === 'production' ? null : err.message
+  });
+});
+
 sequelize.sync().then(() => {
   console.log("Product DB connected");
   app.listen(5002, () => {

@@ -8,7 +8,6 @@ const redis = new Redis({
   port: process.env.REDIS_PORT || 6379,
   password: process.env.REDIS_PASSWORD || undefined,
   
-  // Retry strategy: prevents infinite hanging for auth checks
   retryStrategy: (times) => {
     const maxDelay = 2000; 
     if (times > 5) {

@@ -8,21 +8,24 @@ dotenv.config();
 
 const app = express();
 
-/* ======================
-   MIDDLEWARE
-====================== */
+
 
 app.use(express.json());
 
-/* ======================
-   ROUTES
-====================== */
+
 app.use("/api/vendor", vendorRoutes);
 app.use("/api/admin",adminVendorRoutes);
+
+app.use((err, req, res, next) => {
+  console.error("Unhandled Vendor Service Error:", err.stack);
+  res.status(500).json({
+    message: "An internal server error occurred",
+    error: process.env.NODE_ENV === 'production' ? null : err.message
+  });
+});
+
 const port=process.env.PORT;
-/* ======================
-   DATABASE & SERVER
-====================== */
+
 sequelize
   .sync()
   .then(() => {

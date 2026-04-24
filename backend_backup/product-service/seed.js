@@ -21,7 +21,50 @@ const seedProducts = async () => {
       where: { name: "Clothing" },
       defaults: { name: "Clothing" },
     });
+const [fresh] = await Category.findOrCreate({
+  where: { name: "Fresh & Daily Essentials" },
+  defaults: { name: "Fresh & Daily Essentials" },
+});
 
+const [snacks] = await Category.findOrCreate({
+  where: { name: "Snacks & Ready-to-Eat" },
+  defaults: { name: "Snacks & Ready-to-Eat" },
+});
+
+const [beverages] = await Category.findOrCreate({
+  where: { name: "Beverages" },
+  defaults: { name: "Beverages" },
+});
+
+const [staples] = await Category.findOrCreate({
+  where: { name: "Staples & Cooking Essentials" },
+  defaults: { name: "Staples & Cooking Essentials" },
+});
+
+const [packaged] = await Category.findOrCreate({
+  where: { name: "Packaged & Branded Foods" },
+  defaults: { name: "Packaged & Branded Foods" },
+});
+
+const [sweets] = await Category.findOrCreate({
+  where: { name: "Sweets & Desserts" },
+  defaults: { name: "Sweets & Desserts" },
+});
+
+const [healthy] = await Category.findOrCreate({
+  where: { name: "Healthy & Organic" },
+  defaults: { name: "Healthy & Organic" },
+});
+
+const [baby] = await Category.findOrCreate({
+  where: { name: "Baby Food" },
+  defaults: { name: "Baby Food" },
+});
+
+const [combos] = await Category.findOrCreate({
+  where: { name: "Combos & Offers" },
+  defaults: { name: "Combos & Offers" },
+});
     // 🟢 1. Fetch real vendors from your API Gateway / Vendor Service
     console.log("🔄 Fetching live vendors from Vendor Service...");
     let realVendorId;

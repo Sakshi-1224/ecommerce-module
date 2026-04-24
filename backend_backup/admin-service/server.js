@@ -14,11 +14,18 @@ app.use(express.json());
 
 app.use("/api/admin", adminRoutes);
 
+app.use((err, req, res, next) => {
+  console.error("Unhandled Application Error:", err.stack);
+  res.status(500).json({
+    message: "An unexpected internal error occurred",
+    error: process.env.NODE_ENV === 'production' ? null : err.message
+  });
+});
+
 const startServer = async () => {
   try {
     await connectDB();
 
-    // 🔥 creates tables
     await sequelize.sync();
     console.log("Models synced successfully");
 

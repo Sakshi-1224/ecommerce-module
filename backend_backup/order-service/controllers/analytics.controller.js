@@ -180,38 +180,65 @@ export const getVendorStats = async (req, res) => {
 
 export const vendorSalesReport = async (req, res) => {
   try {
-    const { type } = req.query;
+    const { type, startDate, endDate } = req.query;
 
     let dateCondition = {};
-    if (type && type !== "all") {
-      let startDate;
+
+   
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      dateCondition = { createdAt: { [Op.between]: [start, end] } };
+    } 
+    else if (type && type !== "all") {
+      let startOfPeriod;
       if (type === "weekly")
-        startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        startOfPeriod = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
       else if (type === "monthly")
-        startDate = new Date(
+        startOfPeriod = new Date(
           new Date().getFullYear(),
           new Date().getMonth(),
           1,
         );
       else if (type === "yearly")
-        startDate = new Date(new Date().getFullYear(), 0, 1);
+        startOfPeriod = new Date(new Date().getFullYear(), 0, 1);
 
-      if (startDate) {
-        dateCondition = { createdAt: { [Op.gte]: startDate } };
+      if (startOfPeriod) {
+        dateCondition = { createdAt: { [Op.gte]: startOfPeriod } };
       }
     }
 
-    // 🟢 FIX: Used getSalesFilter to exclude returns and proper SUM(price * quantity)
-    const salesData = await OrderItem.findAll({
-      where: getSalesFilter(req.user.id, dateCondition),
-      attributes: [
-        [sequelize.literal("COALESCE(SUM(price * quantity), 0)"), "totalSales"],
-      ],
-      raw: true,
+    const filter = getSalesFilter(req.user.id, dateCondition);
+
+    const items = await OrderItem.findAll({
+      where: filter,
+      order: [["createdAt", "DESC"]], // Show newest sales first
     });
 
-    const result = { totalSales: parseFloat(salesData[0]?.totalSales || 0) };
-    res.json(result);
+    let totalSales = 0;
+    
+    const detailedItems = items.map((item) => {
+      const itemTotal = Number(item.price) * Number(item.quantity);
+      totalSales += itemTotal;
+      
+      return {
+        itemId: item.id,
+        orderId: item.orderId,
+        productId: item.productId,
+        quantity: item.quantity,
+        unitPrice: item.price,
+        itemTotal: itemTotal,
+        saleDate: item.createdAt,
+        status: item.status
+      };
+    });
+
+    res.json({
+      totalSales: parseFloat(totalSales.toFixed(2)),
+      totalItemsSold: detailedItems.length,
+      items: detailedItems,
+    });
   } catch (err) {
     console.error("Vendor Sales Report Error:", err);
     res.status(500).json({ message: "Failed to generate report" });

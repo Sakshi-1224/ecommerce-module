@@ -14,6 +14,14 @@ defineAssociations();
 app.use("/api/auth", authRoutes);
 app.use("/api/addresses", addressRoutes);
 
+app.use((err, req, res, next) => {
+  console.error("Unhandled User Service Error:", err.stack);
+  res.status(500).json({
+    message: "An internal server error occurred",
+    error: process.env.NODE_ENV === 'production' ? null : err.message
+  });
+});
+
 const PORT = process.env.PORT || 5001;
 sequelize
   .sync()

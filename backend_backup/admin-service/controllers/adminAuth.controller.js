@@ -1,19 +1,30 @@
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import { z } from "zod";
 import Admin from "../models/Admin.js";
 import redis from "../config/redis.js";
 
+const loginSchema = z.object({
+  phone: z.string().min(10, "Phone must be at least 10 characters"),
+  password: z.string().min(1, "Password is required"),
+});
+
+const dummyHash = "$2b$10$dummyHashThatIsExactly60CharactersLong1234567890123456";
+
 export const adminLogin = async (req, res) => {
   try {
-    const { phone, password } = req.body;
 
-    if (!phone || !password) {
-      return res.status(400).json({ message: "Phone and password are required" });
+    const parseResult = loginSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ 
+        message: "Invalid input", 
+        errors: parseResult.error.errors 
+      });
     }
 
+    const { phone, password } = parseResult.data;
     const attemptsKey = `login_attempts:${phone}`;
     
-    // Check current attempts safely
     if (redis.status === "ready") {
       const attempts = await redis.get(attemptsKey);
       if (attempts && parseInt(attempts) >= 5) {
@@ -29,18 +40,17 @@ export const adminLogin = async (req, res) => {
       if (redis.status === "ready") {
         const pipeline = redis.pipeline();
         pipeline.incr(attemptsKey);
-        pipeline.expire(attemptsKey, 600); // 10 minutes lock
+        pipeline.expire(attemptsKey, 600); 
         await pipeline.exec();
       }
       return res.status(401).json({ message: "Invalid credentials" });
     };
 
-    if (!admin) return await handleFailedLogin();
+    const hashToCompare = admin ? admin.password : dummyHash;
+    const match = await bcrypt.compare(password, hashToCompare);
 
-    const match = await bcrypt.compare(password, admin.password);
-    if (!match) return await handleFailedLogin();
+    if (!admin || !match) return await handleFailedLogin();
 
-    // Reset attempts on successful login
     if (redis.status === "ready") {
       await redis.del(attemptsKey);
     }
@@ -62,7 +72,7 @@ export const adminLogin = async (req, res) => {
       },
     });
   } catch (err) {
-    console.error(err);
+    console.error("Login error:", err);
     res.status(500).json({ message: "Login failed" });
   }
 };

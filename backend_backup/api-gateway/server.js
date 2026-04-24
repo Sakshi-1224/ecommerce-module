@@ -4,6 +4,8 @@ import dotenv from "dotenv";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import helmet from "helmet"; 
 import rateLimit from "express-rate-limit";
+import crypto from "crypto"; // 🟢 For generating Correlation IDs
+
 dotenv.config();
 
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL;
@@ -16,13 +18,10 @@ const VENDOR_SERVICE_ADMIN_URL = process.env.VENDOR_SERVICE_ADMIN_URL;
 const ADDRESS_SERVICE_URL = process.env.ADDRESS_SERVICE_URL;
 
 const app = express();
+
+// 🟢 1. Security Headers
 app.use(helmet());
 
-const allowedOrigins = process.env.ALLOWED_ORIGINS 
-  ? process.env.ALLOWED_ORIGINS.split(',') 
-  : ["http://localhost:5174"]; 
-
-// 🟢 1. BULLETPROOF CORS CONFIGURATION
 const corsOptions = {
   origin: process.env.FRONTEND_URL || "http://localhost:5174", 
   credentials: true,
@@ -31,78 +30,68 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options(/(.*)/, cors(corsOptions));
 
-/* 🚨 CRITICAL ARCHITECTURE CHANGE 🚨
-  We have REMOVED `app.use(express.json())` and the `multer` upload middleware.
-  
-  Why? 
-  An API Gateway should act as a pure pipe. If we parse the JSON or the multipart 
-  images here, it consumes the data stream, which breaks the proxy. By removing them, 
-  the Gateway takes the raw request (including your complex image uploads) and streams 
-  it directly to the Product/User services. Those underlying services will parse the data.
-*/
-
+// 🟢 2. Rate Limiting
 const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 200, // Limit each IP to 200 requests per `window` (15 minutes)
+  windowMs: 15 * 60 * 1000,
+  max: 200, 
   message: { message: "Too many requests from this IP, please try again after 15 minutes" },
-  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  standardHeaders: true, 
+  legacyHeaders: false, 
 });
 
-// Stricter rate limiter specifically for authentication/login endpoints to prevent brute force
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 20, // Limit each IP to 20 login attempts per 15 minutes
+  windowMs: 15 * 60 * 1000, 
+  max: 20, 
   message: { message: "Too many login attempts from this IP, please try again later." }
 });
 
-// Apply global rate limiter
 app.use(globalLimiter);
 
-// Helper function to generate standard proxy configuration
+// 🟢 3. Apply Auth Limiter to specific sensitive paths BEFORE the proxy rules
+app.use("/api/auth/login", authLimiter);
+app.use("/api/auth/register", authLimiter);
+app.use("/api/vendor/login", authLimiter);
+app.use("/api/admin/login", authLimiter);
+
+// 🟢 4. Proxy Configuration with Correlation IDs
 const proxy = (target) => {
   return createProxyMiddleware({
     target,
     changeOrigin: true,
+    proxyTimeout: 10000, 
+    timeout: 10000,      
     
-    // 🟢 1. Add Timeout Settings (e.g., 10 seconds)
-    proxyTimeout: 10000, // Time in ms to wait for the microservice to respond
-    timeout: 10000,      // Time in ms to wait for the incoming client request
+    // Inject Correlation ID for Distributed Tracing
+    onProxyReq: (proxyReq, req, res) => {
+      const correlationId = req.headers['x-correlation-id'] || crypto.randomUUID();
+      proxyReq.setHeader('x-correlation-id', correlationId);
+    },
     
     onError: (err, req, res) => {
       console.error(`[Gateway Error] connecting to ${target}:`, err.message);
       
-      // Prevent crashing if headers were already sent to the client
       if (res.headersSent) return;
 
-      // 🟢 2. Check specifically for Timeout Errors
       if (err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.message.includes('timeout')) {
         return res.status(504).json({ 
           message: "Gateway Timeout: The underlying microservice took too long to respond." 
         });
       }
 
-      // 3. Default fallback for other connection errors (service offline)
       res.status(502).json({ 
         message: "Bad Gateway: Underlying service is down or unreachable." 
       });
     }
   });
 };
+
 // ==========================================
 // ROUTING CONFIGURATION
 // ==========================================
 
-/* ORDER MATTERS HERE: 
-  Because your /api/admin routes point to 3 different microservices, 
-  we must declare the highly specific routes FIRST, before the general catch-all.
-*/
-
-// Specific Admin Routes
 app.use("/api/admin/users", proxy(USER_SERVICE_URL));
 app.use("/api/admin/vendors", proxy(VENDOR_SERVICE_ADMIN_URL));
 
-// General Routes (Catch-alls)
 app.use("/api/admin", proxy(ADMIN_SERVICE_URL));
 app.use("/api/payment", proxy(ORDER_SERVICE_URL));
 app.use("/api/orders", proxy(ORDER_SERVICE_URL));
@@ -112,8 +101,16 @@ app.use("/api/products", proxy(PRODUCT_SERVICE_URL));
 app.use("/api/cart", proxy(CART_SERVICE_URL));
 app.use("/api/vendor", proxy(VENDOR_SERVICE_URL));
 
+// 🟢 5. Gateway Bypasses & Fallbacks (Must be at the very bottom)
+app.use((req, res) => {
+  res.status(404).json({ message: "Gateway Error: Requested endpoint does not exist." });
+});
 
-// Start the server
+app.use((err, req, res, next) => {
+  console.error("Critical Gateway Error:", err.stack);
+  res.status(500).json({ message: "API Gateway encountered an internal error." });
+});
+
 const PORT = process.env.PORT || 5007;
 app.listen(PORT, () => {
   console.log(`🚀 API Gateway running efficiently on port ${PORT}`);
