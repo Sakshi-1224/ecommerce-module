@@ -1,12 +1,9 @@
-
 import Product from "../models/Product.js";
 import Category from "../models/Category.js";
 import { uploadImageToMinio } from "../utils/uploadToMinio.js";
 import { Op } from "sequelize";
 import sequelize from "../config/db.js";
 import redis from "../config/redis.js"; // 🟢 Import Redis
-
-
 
 export const getVendorInventory = async (req, res) => {
   try {
@@ -93,7 +90,6 @@ export const getAllWarehouseInventory = async (req, res) => {
   }
 };
 
-
 export const transferToWarehouse = async (req, res) => {
   try {
     const { productId, quantity } = req.body;
@@ -122,19 +118,32 @@ export const transferToWarehouse = async (req, res) => {
 export const updateWarehouseStock = async (req, res) => {
   try {
     const { productId, warehouseStock } = req.body;
+
+    if (!productId) {
+      return res.status(400).json({
+        message:
+          "Product ID is missing in request. Check if express.json() is enabled.",
+      });
+    }
+
     const product = await Product.findByPk(productId);
     if (!product) return res.status(404).json({ message: "Product not found" });
 
-    if (warehouseStock > product.totalStock)
+    const newWarehouse = parseInt(warehouseStock);
+    const total = parseInt(product.totalStock);
+
+    if (newWarehouse > total) {
       return res
         .status(400)
         .json({ message: "Warehouse stock cannot exceed Total stock" });
+    }
 
-    product.warehouseStock = warehouseStock;
+    product.warehouseStock = newWarehouse;
+
+    const reserved = parseInt(product.reservedStock) || 0;
+    product.availableStock = total - reserved;
+
     await product.save();
-
-    // 🟢 INVALIDATE CACHE
-    await invalidateProductCache(productId, product.vendorId);
 
     res.json({ message: "Warehouse stock updated", product });
   } catch (err) {

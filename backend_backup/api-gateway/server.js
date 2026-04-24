@@ -47,8 +47,12 @@ const proxy = (target) => {
     // Error handling so the gateway doesn't crash if a microservice is offline
     onError: (err, req, res) => {
       console.error(`[Gateway Error] connecting to ${target}:`, err.message);
-      res.status(502).json({ message: "Bad Gateway: Underlying service is down or unreachable." });
-    }
+      res
+        .status(502)
+        .json({
+          message: "Bad Gateway: Underlying service is down or unreachable.",
+        });
+    },
   });
 };
 
@@ -74,7 +78,6 @@ app.use("/api/auth", proxy(USER_SERVICE_URL));
 app.use("/api/products", proxy(PRODUCT_SERVICE_URL));
 app.use("/api/cart", proxy(CART_SERVICE_URL));
 app.use("/api/vendor", proxy(VENDOR_SERVICE_URL));
-
 
 // Start the server
 const PORT = process.env.PORT || 5007;
