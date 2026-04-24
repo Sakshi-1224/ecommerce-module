@@ -1,5 +1,13 @@
 {
+  "name": "backend_backup",
+  "version": "1.0.0",
+  "main": "server.js",
   "dependencies": {
-    "autocannon": "^8.0.0"
+    "autocannon": "^8.0.0",
+    "bullmq": "^5.74.1",
+    "express-rate-limit": "^8.3.2",
+    "helmet": "^8.1.0",
+    "http-proxy-middleware": "^3.0.5",
+    "ioredis": "^5.10.1"
   }
 }
