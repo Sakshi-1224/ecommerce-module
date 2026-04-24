@@ -13,16 +13,16 @@ const seedUser = async () => {
     defineAssociations();
     await sequelize.sync();
 
-    const hashedPassword = await bcrypt.hash("password123", 10);
+    const hashedPassword = await bcrypt.hash("Password@123", 10);
 
     const [user] = await User.findOrCreate({
       where: { email: "customer@test.com" },
       defaults: {
         name: "Test Customer",
         email: "customer@test.com",
-        phone: "1234567890",
+        phone: "9112233449",
         password: hashedPassword,
-         role: "user",
+        role: "user",
       },
     });
 
@@ -31,7 +31,7 @@ const seedUser = async () => {
       defaults: {
         userId: user.id,
         fullName: "Test Customer",
-        phone: "1234567890",
+        phone: "9112233449",
         addressLine1: "123 Test Street",
         area: "Vijay Nagar",
         city: "Indore",
@@ -41,7 +41,9 @@ const seedUser = async () => {
       },
     });
 
-    console.log("✅ User & Address seeded successfully! (customer@test.com / password123)");
+    console.log(
+      "✅ User & Address seeded successfully! (customer@test.com / password123)",
+    );
     process.exit(0);
   } catch (error) {
     console.error("❌ User Seeding Error:", error);
