@@ -3,41 +3,6 @@ import DeliveryBoy from "../models/DeliveryBoy.js";
 import DeliveryAssignment from "../models/DeliveryAssignment.js";
 import { Op } from "sequelize";
 
-export const syncShippingRates = async (areas) => {
-  if (!areas || !Array.isArray(areas)) return;
-  for (const area of areas) {
-    const cleanArea = area.trim();
-    if (!cleanArea) continue;
-    await ShippingRate.findOrCreate({
-      where: { areaName: cleanArea },
-      defaults: { rate: 0 },
-    });
-  }
-};
-
-export const cleanupShippingRates = async (boyId, areasToRemove) => {
-  if (!areasToRemove || areasToRemove.length === 0) return;
-  const otherBoys = await DeliveryBoy.findAll({
-    where: { id: { [Op.ne]: boyId }, active: true },
-    attributes: ["assignedAreas"],
-  });
-
-  const activeAreasSet = new Set();
-  otherBoys.forEach((b) => {
-    if (Array.isArray(b.assignedAreas)) {
-      b.assignedAreas.forEach((area) => activeAreasSet.add(area.trim()));
-    }
-  });
-
-  for (const area of areasToRemove) {
-    const cleanArea = area.trim();
-    if (!activeAreasSet.has(cleanArea)) {
-      console.log(`🗑️ Auto-deleting orphan area: ${cleanArea}`);
-      await ShippingRate.destroy({ where: { areaName: cleanArea } });
-    }
-  }
-};
-
 // 🟢 ADDED: `reason = null` as the 4th parameter
 export const autoAssignDeliveryBoy = async (orderId, area, transaction, reason = null) => {
   try {

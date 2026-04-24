@@ -8,7 +8,6 @@ import sequelize from "../config/db.js";
 import axios from "axios";
 import redis from "../config/redis.js";
 import razorpay from "../config/razorpay.js";
-import { syncShippingRates } from "../services/delivery.service.js";
 import { fetchWithCache, safeDeleteCache } from "../utils/redisWrapper.js";
 
 export const getAllDeliveryBoys = async (req, res) => {
@@ -26,7 +25,18 @@ export const createDeliveryBoy = async (req, res) => {
   try {
     const { name, email, phone, password, maxOrders, assignedAreas } = req.body;
 
-    await syncShippingRates(assignedAreas);
+    if (assignedAreas && assignedAreas.length > 0) {
+      const validAreas = await ShippingRate.findAll({
+        where: { areaName: { [Op.in]: assignedAreas } }
+      });
+      
+      if (validAreas.length !== assignedAreas.length) {
+        return res.status(400).json({ 
+          message: "One or more selected areas do not exist. Please create them in Shipping Rates first." 
+        });
+      }
+    }
+
 
     const newBoy = await DeliveryBoy.create({
       name,
@@ -38,7 +48,7 @@ export const createDeliveryBoy = async (req, res) => {
       active: true,
     });
 
- await safeDeleteCache(["delivery_boys:all", "delivery_locations:all"]);
+    await safeDeleteCache(["delivery_boys:all", "delivery_locations:all"]);
 
     res.status(201).json({
       message: "Delivery Boy Created",
@@ -112,9 +122,6 @@ export const deleteDeliveryBoy = async (req, res) => {
     if (!boy)
       return res.status(404).json({ message: "Delivery boy not found" });
 
-    if (boy.assignedAreas && Array.isArray(boy.assignedAreas)) {
-      await cleanupShippingRates(id, boy.assignedAreas);
-    }
 
     await DeliveryBoy.destroy({ where: { id } });
 
@@ -135,18 +142,22 @@ export const updateDeliveryBoy = async (req, res) => {
     if (!boy) return res.status(404).json({ message: "Boy not found" });
 
     if (assignedAreas) {
-      await syncShippingRates(assignedAreas);
-      const oldAreas = boy.assignedAreas || [];
-      const newAreas = assignedAreas || [];
-      const removedAreas = oldAreas.filter((a) => !newAreas.includes(a));
-
-      if (removedAreas.length > 0) {
-        await cleanupShippingRates(id, removedAreas);
+      // 🟢 NEW LOGIC: Validate areas on update
+      const validAreas = await ShippingRate.findAll({
+        where: { areaName: { [Op.in]: assignedAreas } }
+      });
+      
+      if (validAreas.length !== assignedAreas.length) {
+        return res.status(400).json({ 
+          message: "One or more selected areas do not exist in Shipping Rates." 
+        });
       }
+      
+    
     }
 
     await DeliveryBoy.update(req.body, { where: { id } });
-  await safeDeleteCache(["delivery_boys:all", "delivery_locations:all"]);
+    await safeDeleteCache(["delivery_boys:all", "delivery_locations:all"]);
 
     res.json({ message: "Delivery Boy Updated" });
   } catch (err) {
@@ -170,10 +181,35 @@ export const reassignDeliveryBoy = async (req, res) => {
       return res.status(400).json({ message: "Missing New Delivery Boy ID" });
     }
 
+    const order = await Order.findByPk(orderId, { transaction: t });
+    if (!order) {
+      await t.rollback();
+      return res.status(404).json({ message: "Order not found" });
+    }
+    if (["DELIVERED", "CANCELLED", "RETURNED"].includes(order.status)) {
+      await t.rollback();
+      return res.status(400).json({ message: `Cannot reassign. Order is already ${order.status}` });
+    }
+
+    const newBoy = await DeliveryBoy.findByPk(newDeliveryBoyId, { transaction: t });
+    if (!newBoy) {
+      await t.rollback();
+      return res.status(404).json({ message: "Delivery Boy not found" });
+    }
+    if (!newBoy.active) {
+      await t.rollback();
+      return res.status(400).json({ message: "Cannot assign to an inactive Delivery Boy" });
+    }
+
     const currentAssignment = await DeliveryAssignment.findOne({
       where: { orderId: orderId, status: { [Op.or]: ["ASSIGNED", "PICKED"] } },
       transaction: t,
     });
+
+    if (currentAssignment && currentAssignment.deliveryBoyId === newDeliveryBoyId) {
+      await t.rollback();
+      return res.status(400).json({ message: "Order is already assigned to this Delivery Boy" });
+    }
 
     let previousReason = null;
     let oldBoyId = null;
@@ -182,25 +218,24 @@ export const reassignDeliveryBoy = async (req, res) => {
       oldBoyId = currentAssignment.deliveryBoyId;
       previousReason = currentAssignment.reason;
 
-      if (!previousReason) {
-        const activeReturnItems = await OrderItem.count({
-          where: {
-            orderId: orderId,
-            refundStatus: { [Op.or]: ["APPROVED", "PICKUP_SCHEDULED"] },
-          },
-          transaction: t,
-        });
-
-        if (activeReturnItems > 0) {
-          console.log(
-            `⚠️ Detected missing tag for Order ${orderId}. Auto-correcting to RETURN_PICKUP.`,
-          );
-          previousReason = "RETURN_PICKUP";
-        }
-      }
       currentAssignment.status = "FAILED";
       currentAssignment.reason = "Manual Reassignment by Admin";
       await currentAssignment.save({ transaction: t });
+    }
+
+    if (!previousReason) {
+      const activeReturnItems = await OrderItem.count({
+        where: {
+          orderId: orderId,
+          refundStatus: { [Op.or]: ["APPROVED", "PICKUP_SCHEDULED"] },
+        },
+        transaction: t,
+      });
+
+      if (activeReturnItems > 0) {
+        console.log(`⚠️ Detected return items for Order ${orderId}. Tagging as RETURN_PICKUP.`);
+        previousReason = "RETURN_PICKUP";
+      }
     }
 
     await DeliveryAssignment.create(
@@ -210,18 +245,12 @@ export const reassignDeliveryBoy = async (req, res) => {
         status: "ASSIGNED",
         reason: previousReason,
       },
-      { transaction: t },
+      { transaction: t }
     );
 
     await t.commit();
 
-   await safeDeleteCache([
-  `order:${orderId}`,
-  "admin:orders"
-]);
-    console.log(
-      `✅ Reassigned Order ${orderId} to Boy ${newDeliveryBoyId} with reason: ${previousReason}`,
-    );
+    console.log(`✅ Reassigned Order ${orderId} to Boy ${newDeliveryBoyId} with reason: ${previousReason}`);
     res.json({ message: "Reassignment Successful" });
   } catch (err) {
     if (!t.finished) await t.rollback();

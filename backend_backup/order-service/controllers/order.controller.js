@@ -9,7 +9,6 @@ import sequelize from "../config/db.js";
 import axios from "axios";
 import redis from "../config/redis.js";
 import { rollbackQueue } from "../services/sagaQueue.js";
-import { syncShippingRates } from "../services/delivery.service.js";
 
 const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL;
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL;

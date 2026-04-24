@@ -103,18 +103,32 @@ export const transferToWarehouse = async (req, res) => {
 export const updateWarehouseStock = async (req, res) => {
   try {
     const { productId, warehouseStock } = req.body;
+
+    if (!productId) {
+      return res.status(400).json({
+        message:
+          "Product ID is missing in request. Check if express.json() is enabled.",
+      });
+    }
+
     const product = await Product.findByPk(productId);
     if (!product) return res.status(404).json({ message: "Product not found" });
 
-    if (warehouseStock > product.totalStock)
+    const newWarehouse = parseInt(warehouseStock);
+    const total = parseInt(product.totalStock);
+
+    if (newWarehouse > total) {
       return res
         .status(400)
         .json({ message: "Warehouse stock cannot exceed Total stock" });
+    }
 
-    product.warehouseStock = warehouseStock;
+    product.warehouseStock = newWarehouse;
+
+    const reserved = parseInt(product.reservedStock) || 0;
+    product.availableStock = total - reserved;
+
     await product.save();
-
-
 
     res.json({ message: "Warehouse stock updated", product });
   } catch (err) {

@@ -2,7 +2,8 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { createProxyMiddleware } from "http-proxy-middleware";
-
+import helmet from "helmet"; 
+import rateLimit from "express-rate-limit";
 dotenv.config();
 
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL;
@@ -15,6 +16,11 @@ const VENDOR_SERVICE_ADMIN_URL = process.env.VENDOR_SERVICE_ADMIN_URL;
 const ADDRESS_SERVICE_URL = process.env.ADDRESS_SERVICE_URL;
 
 const app = express();
+app.use(helmet());
+
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',') 
+  : ["http://localhost:5174"]; 
 
 // 🟢 1. BULLETPROOF CORS CONFIGURATION
 const corsOptions = {
@@ -34,6 +40,24 @@ app.options(/(.*)/, cors(corsOptions));
   the Gateway takes the raw request (including your complex image uploads) and streams 
   it directly to the Product/User services. Those underlying services will parse the data.
 */
+
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 200, // Limit each IP to 200 requests per `window` (15 minutes)
+  message: { message: "Too many requests from this IP, please try again after 15 minutes" },
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+});
+
+// Stricter rate limiter specifically for authentication/login endpoints to prevent brute force
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20, // Limit each IP to 20 login attempts per 15 minutes
+  message: { message: "Too many login attempts from this IP, please try again later." }
+});
+
+// Apply global rate limiter
+app.use(globalLimiter);
 
 // Helper function to generate standard proxy configuration
 const proxy = (target) => {

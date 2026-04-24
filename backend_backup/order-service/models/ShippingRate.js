@@ -18,6 +18,11 @@ const ShippingRate = sequelize.define("ShippingRate", {
     type: DataTypes.FLOAT,
     allowNull: false,
     defaultValue: 0.0,
+  } ,
+  isActive: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: true,
   }
 }, {
   tableName: "shipping_rates",
