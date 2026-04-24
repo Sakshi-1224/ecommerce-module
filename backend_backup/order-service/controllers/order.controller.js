@@ -16,10 +16,28 @@ const USER_SERVICE_URL = process.env.USER_SERVICE_URL;
 
 import razorpay from "../config/razorpay.js"; // 🟢 Ensure this is imported at the top!
 
+const VALID_TRANSITIONS = {
+  PENDING: ["PROCESSING", "CANCELLED"],
+  PROCESSING: ["PACKED", "CANCELLED"],
+  PACKED: ["OUT_FOR_DELIVERY", "CANCELLED"],
+  OUT_FOR_DELIVERY: ["DELIVERED", "CANCELLED"],
+  DELIVERED: [], // Terminal
+  CANCELLED: []  // Terminal
+};
+
 export const checkout = async (req, res) => {
   let stockReserved = false;
   const { items, amount, address, paymentMethod } = req.body;
   const selectedArea = address.area ? address.area.trim() : "General";
+
+  // 🟢 NEGATIVE CHECK: Idempotency to prevent double-clicks creating twin orders
+  const idempotencyKey = `checkout_lock_${req.user.id}`;
+  const isLocked = await redis.get(idempotencyKey);
+  if (isLocked) {
+    return res.status(429).json({ message: "Checkout is currently processing. Please wait a moment." });
+  }
+  // Lock checkout for this user for 10 seconds
+  await redis.setex(idempotencyKey, 10, "LOCKED");
 
   try {
     let shippingCharge = 0;
@@ -27,11 +45,10 @@ export const checkout = async (req, res) => {
     let order;
     let razorpayOrderData = null;
 
-    // 🟢 1. Start Managed Transaction
     await sequelize.transaction(async (t) => {
       const rateRecord = await ShippingRate.findOne({
         where: { areaName: selectedArea },
-        transaction: t, // Passed transaction
+        transaction: t,
       });
       
       if (!rateRecord) {
@@ -69,17 +86,19 @@ export const checkout = async (req, res) => {
         );
       }
 
-      // 🟢 2. Product Service Call inside transaction block
       try {
         await axios.post(
           `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/reserve`,
           { items },
-          { headers: { "x-internal-token": process.env.INTERNAL_API_KEY } }
+          { 
+            headers: { "x-internal-token": process.env.INTERNAL_API_KEY },
+            // 🟢 NEGATIVE CHECK: Fail fast after 5s to release MySQL locks
+            timeout: 5000 
+          }
         );
         stockReserved = true; 
       } catch (apiErr) {
-        // Throwing error here will trigger DB rollback instantly
-        throw new Error(apiErr.response?.data?.message || "Stock reservation failed");
+        throw new Error(apiErr.response?.data?.message || "Stock reservation failed or timed out.");
       }
 
       if (paymentMethod === "RAZORPAY") {
@@ -90,9 +109,10 @@ export const checkout = async (req, res) => {
         };
         razorpayOrderData = await razorpay.orders.create(options);
       }
-    }); // 🟢 Auto-Commits here if no errors
+    }); 
 
-    
+    // Release idempotency lock immediately on success
+    await redis.del(idempotencyKey);
 
     res.status(201).json({
       message: "Order placed successfully",
@@ -102,40 +122,34 @@ export const checkout = async (req, res) => {
       razorpayOrder: razorpayOrderData 
     });
 
-  }  catch (err) {
+  } catch (err) {
+    // Release idempotency lock on failure
+    await redis.del(idempotencyKey);
+
     if (stockReserved) {
       try {
         console.warn(`[Saga Rollback] Checkout failed. Attempting immediate stock release...`);
         await axios.post(
           `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/release`,
           { items }, 
-          { headers: { "x-internal-token": process.env.INTERNAL_API_KEY } }
+          { 
+            headers: { "x-internal-token": process.env.INTERNAL_API_KEY },
+            timeout: 5000 // Timeout on rollback as well
+          }
         );
-        console.log(`[Saga Rollback] Phantom stock successfully released.`);
       } catch (rollbackErr) {
         console.error(`🚨 [CRITICAL SAGA FAILURE] Immediate rollback failed. Pushing to BullMQ...`);
-        
-        // 🟢 Push to BullMQ instead of the database!
         await rollbackQueue.add(
-          "release-stock", // Name of the job
-          {
-            items,
-            endpoint: `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/release`
-          }, 
-          {
-            attempts: 10,           // Retry up to 10 times before giving up entirely
-            backoff: {
-              type: 'exponential',  // Wait longer between each failed attempt
-              delay: 5000           // 1st retry: 5s, 2nd: 10s, 3rd: 20s, 4th: 40s...
-            },
-            removeOnComplete: true  // Delete from Redis once successful to save memory
-          }
+          "release-stock", 
+          { items, endpoint: `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/release` }, 
+          { attempts: 10, backoff: { type: 'exponential', delay: 5000 }, removeOnComplete: true }
         );
       }
     }
     res.status(400).json({ message: err.message });
   }
 };
+
 
 export const updateOrderStatusAdmin = async (req, res) => {
   try {
@@ -144,15 +158,20 @@ export const updateOrderStatusAdmin = async (req, res) => {
     let autoAssignedBoyId = null;
     let orderUserId = null;
 
-    // 🟢 Wrap everything in managed transaction
     await sequelize.transaction(async (t) => {
       const order = await Order.findByPk(req.params.id, { 
         include: OrderItem, 
-        transaction: t // 🟢 Add to query
+        transaction: t,
+        lock: t.LOCK.UPDATE 
       });
 
       if (!order) throw new Error("Order not found");
-      orderUserId = order.userId; // Save for cache deletion later
+      orderUserId = order.userId; 
+
+      // 🟢 NEGATIVE CHECK: Enforce strictly valid state transitions
+      if (!VALID_TRANSITIONS[order.status]?.includes(status) && order.status !== status) {
+         throw new Error(`State Transition Error: Cannot change status from ${order.status} to ${status}`);
+      }
 
       if (status === "PACKED") {
         const itemsToShip = [];
@@ -169,16 +188,19 @@ export const updateOrderStatusAdmin = async (req, res) => {
             await axios.post(
               `${process.env.PRODUCT_SERVICE_URL}/inventory/ship`,
               { items: itemsToShip },
-              { headers: { "x-internal-token": process.env.INTERNAL_API_KEY } }
+              { 
+                headers: { "x-internal-token": process.env.INTERNAL_API_KEY },
+                timeout: 5000 // 🟢 Timeout prevents DB transaction from hanging
+              }
             );
           } catch (apiErr) {
-            throw new Error(apiErr.response?.data?.message || "Shipment Sync Failed");
+            throw new Error(apiErr.response?.data?.message || "Shipment Sync Failed or Timed Out");
           }
         }
 
         for (const item of itemsToUpdate) {
           item.status = "PACKED";
-          await item.save({ transaction: t }); // 🟢 Save via transaction
+          await item.save({ transaction: t }); 
         }
 
         order.status = "PACKED";
@@ -192,7 +214,6 @@ export const updateOrderStatusAdmin = async (req, res) => {
           });
 
           if (!existingAssignment) {
-            // 🟢 Pass 't' to your autoAssign function!
             const result = await autoAssignDeliveryBoy(order.id, order.assignedArea, t);
             if (result && result.success) {
               responseMsg += ` & Auto-Assigned to ${result.boy.name}`;
@@ -201,7 +222,6 @@ export const updateOrderStatusAdmin = async (req, res) => {
           }
         }
       }
-
       else if (status === "OUT_FOR_DELIVERY" || status === "DELIVERED") {
         const activeAssignment = await DeliveryAssignment.findOne({
           where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
@@ -240,7 +260,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
           if (activeAssignment) {
             activeAssignment.status = "DELIVERED";
             await activeAssignment.save({ transaction: t });
-            autoAssignedBoyId = activeAssignment.deliveryBoyId; // Save for cache
+            autoAssignedBoyId = activeAssignment.deliveryBoyId; 
           }
         }
       } 
@@ -249,7 +269,6 @@ export const updateOrderStatusAdmin = async (req, res) => {
         await order.save({ transaction: t });
       }
     });
-
 
     res.json({ message: responseMsg });
   } catch (err) {

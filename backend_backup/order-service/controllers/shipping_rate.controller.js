@@ -3,7 +3,7 @@ import { fetchWithCache, safeDeleteCache } from "../utils/redisWrapper.js";
 // 1. ADD or UPDATE a Shipping Rate
 export const setShippingRate = async (req, res) => {
   try {
-    // 🟢 EXTRACT isActive FROM BODY
+    
     const { areaName, rate, isActive } = req.body;
 
     if (!areaName || rate === undefined) {
@@ -31,7 +31,6 @@ export const setShippingRate = async (req, res) => {
       await rateRecord.save();
     }
 
-    // 🟢 Clear both caches
     await safeDeleteCache(["shipping_rates:all", "shipping_rates:active"]);
 
     res.json({
@@ -44,7 +43,7 @@ export const setShippingRate = async (req, res) => {
   }
 };
 
-// 2. GET ALL Shipping Rates (For Admin Dashboard)
+
 export const getAllShippingRates = async (req, res) => {
   try {
     const rates = await fetchWithCache("shipping_rates:all", 86400, async () => {
@@ -56,7 +55,7 @@ export const getAllShippingRates = async (req, res) => {
   }
 };
 
-//for users
+
 export const getActiveShippingRates = async (req, res) => {
   try {
     const rates = await fetchWithCache("shipping_rates:active", 86400, async () => {
@@ -105,12 +104,11 @@ export const deleteShippingRate = async (req, res) => {
       return res.status(404).json({ message: "Rate not found" });
     }
 
-    // 🟢 NEW LOGIC: Prevent deletion if any Delivery Boy is assigned to this area
+    
     const allBoys = await DeliveryBoy.findAll({
       attributes: ["id", "name", "assignedAreas"],
     });
 
-    // Check if the areaName exists in any boy's JSON array of assignedAreas
     const assignedBoys = allBoys.filter(boy => 
       boy.assignedAreas && boy.assignedAreas.includes(record.areaName)
     );
@@ -132,7 +130,7 @@ export const deleteShippingRate = async (req, res) => {
   }
 };
 
-// 🟢 4. GET RATE FOR USER (Public/Protected)
+
 export const getShippingCharge = async (req, res) => {
   try {
     const { area } = req.query;

@@ -12,7 +12,6 @@ const orderItemSchema = z.object({
   price: z.number().positive("Price must be strictly greater than 0"),
 });
 
-// Defines the address structure. .passthrough() allows extra fields without crashing
 const addressSchema = z.object({
   area: z.string().trim().min(1, "Area is required for delivery calculation"),
   street: z.string().trim().optional(),
@@ -21,9 +20,7 @@ const addressSchema = z.object({
   phone: z.string().trim().optional(),
 }).passthrough();
 
-// Defines acceptable statuses across the app
 const validStatuses = ["PENDING", "PROCESSING", "PACKED", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"];
-
 
 // ==========================================
 // 2. ROUTE-SPECIFIC VALIDATION SCHEMAS
@@ -35,7 +32,16 @@ const validStatuses = ["PENDING", "PROCESSING", "PACKED", "OUT_FOR_DELIVERY", "D
  */
 export const checkoutSchema = z.object({
   body: z.object({
-    items: z.array(orderItemSchema).min(1, "Cart cannot be empty. Please add items to checkout."),
+    items: z.array(orderItemSchema)
+      .min(1, "Cart cannot be empty. Please add items to checkout.")
+      // 🟢 NEGATIVE CHECK: Prevent duplicate products to avoid inventory bypass
+      .refine(
+        (items) => {
+          const productIds = items.map((item) => item.productId);
+          return new Set(productIds).size === productIds.length;
+        },
+        { message: "Duplicate products found. Please consolidate quantities into a single item." }
+      ),
     amount: z.number().positive("Total amount must be greater than 0"),
     address: addressSchema,
     paymentMethod: z.enum(["COD", "RAZORPAY"], {
@@ -51,10 +57,18 @@ export const checkoutSchema = z.object({
 export const adminCreateOrderSchema = z.object({
   body: z.object({
     userId: z.number().int().positive("User ID is required and must be valid"),
-    items: z.array(orderItemSchema).min(1, "Cart cannot be empty."),
+    items: z.array(orderItemSchema)
+      .min(1, "Cart cannot be empty.")
+      // 🟢 NEGATIVE CHECK: Enforce uniqueness here as well
+      .refine(
+        (items) => {
+          const productIds = items.map((item) => item.productId);
+          return new Set(productIds).size === productIds.length;
+        },
+        { message: "Duplicate products found." }
+      ),
     amount: z.number().positive("Total amount must be greater than 0"),
     address: addressSchema,
-    // Admin might default to COD if not provided
     paymentMethod: z.enum(["COD", "RAZORPAY"]).optional().default("COD"), 
   }),
 });
@@ -65,7 +79,7 @@ export const adminCreateOrderSchema = z.object({
  */
 export const updateOrderStatusSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/, "Order ID must be a numeric string"), // Ensures the URL param is a number
+    id: z.string().regex(/^\d+$/, "Order ID must be a numeric string"),
   }),
   body: z.object({
     status: z.enum(validStatuses, {
@@ -96,17 +110,11 @@ export const updateOrderItemStatusSchema = z.object({
  */
 export const paginationQuerySchema = z.object({
   query: z.object({
-    // Since query params are always strings in Express, we validate they are numbers, 
-    // then Zod transforms them into actual Integers before they hit your controller!
     page: z.string().regex(/^\d+$/, "Page must be a number").transform(Number).optional(),
     limit: z.string().regex(/^\d+$/, "Limit must be a number").transform(Number).optional(),
   }).optional(),
 });
 
-/**
- * Generic Validation for Routes that just need an ID parameter
- * Routes: GET /:id, GET /admin/:id, GET /track/:id
- */
 export const idParamSchema = z.object({
   params: z.object({
     id: z.string().regex(/^\d+$/, "ID must be a numeric string"),
