@@ -1,5 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
+import cookieParser from "cookie-parser"; // Added
+import csrf from "csurf"; // Added
 
 import sequelize from "./config/db.js";
 import vendorRoutes from "./routes/vendor.routes.js";
@@ -11,13 +13,25 @@ const app = express();
 
 
 app.use(express.json());
+app.use(cookieParser()); 
 
+const csrfProtection = csrf({ cookie: true });
 
-app.use("/api/vendor", vendorRoutes);
-app.use("/api/admin",adminVendorRoutes);
+app.get("/api/csrf-token", csrfProtection, (req, res) => {
+  res.json({ csrfToken: req.csrfToken() });
+});
+
+app.use("/api/vendor",csrfProtection, vendorRoutes);
+app.use("/api/admin",csrfProtection,adminVendorRoutes);
+
 
 app.use((err, req, res, next) => {
-  console.error("Unhandled Vendor Service Error:", err.stack);
+  // Catch CSRF token errors specifically
+  if (err.code === 'EBADCSRFTOKEN') {
+    return res.status(403).json({ message: "Invalid CSRF token" });
+  }
+  
+  console.error("Unhandled User Service Error:", err.stack);
   res.status(500).json({
     message: "An internal server error occurred",
     error: process.env.NODE_ENV === 'production' ? null : err.message
@@ -38,3 +52,20 @@ sequelize
   .catch(err => {
     console.error("Vendor DB connection failed:", err);
   });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  

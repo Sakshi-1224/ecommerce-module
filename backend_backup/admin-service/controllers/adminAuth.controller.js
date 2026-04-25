@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import { z } from "zod";
 import Admin from "../models/Admin.js";
 import redis from "../config/redis.js";
-
+import { sendTokenCookie, clearTokenCookie } from "../utils/cookie.util.js";
 const loginSchema = z.object({
   phone: z.string().min(10, "Phone must be at least 10 characters"),
   password: z.string().min(1, "Password is required"),
@@ -23,6 +23,14 @@ export const adminLogin = async (req, res) => {
     }
 
     const { phone, password } = parseResult.data;
+
+    if (redis.status !== "ready") {
+      console.error("CRITICAL: Redis is down. Blocking User login to prevent brute-force attacks.");
+      return res.status(503).json({ 
+        message: "Authentication service is temporarily unavailable. Please try again later." 
+      });
+    }
+    
     const attemptsKey = `login_attempts:${phone}`;
     
     if (redis.status === "ready") {
@@ -61,8 +69,10 @@ export const adminLogin = async (req, res) => {
       { expiresIn: "30d" }
     );
 
+    sendTokenCookie(res, token);
+
     res.json({
-      token,
+      message: "Admin login successful",
       user: {
         id: admin.id,
         name: admin.name,
@@ -79,10 +89,7 @@ export const adminLogin = async (req, res) => {
 
 export const adminLogout = async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    const token = authHeader && authHeader.startsWith("Bearer ")
-      ? authHeader.split(" ")[1]
-      : authHeader;
+  const token = req.cookies.jwt;
 
     if (!token) return res.status(400).json({ message: "No token provided" });
 
@@ -90,9 +97,11 @@ export const adminLogout = async (req, res) => {
       // 30 days (2592000 seconds)
       await redis.set(`blacklist:${token}`, "true", "EX", 2592000);
       await redis.del("admin:dashboard:stats");
-      // Optional: use unlink for faster non-blocking deletion
       await redis.unlink("orders:admin:all"); 
     }
+
+    // 🟢 Clear the cookie
+    clearTokenCookie(res);
 
     res.json({ message: "Admin logged out successfully" });
   } catch (err) {

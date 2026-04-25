@@ -4,7 +4,9 @@ import dotenv from "dotenv";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import helmet from "helmet"; 
 import rateLimit from "express-rate-limit";
-import crypto from "crypto"; // 🟢 For generating Correlation IDs
+import { RedisStore } from "rate-limit-redis"; 
+import redis from "./config/redis.js";         
+import crypto from "crypto"; 
 
 dotenv.config();
 
@@ -19,7 +21,7 @@ const ADDRESS_SERVICE_URL = process.env.ADDRESS_SERVICE_URL;
 
 const app = express();
 
-// 🟢 1. Security Headers
+// 1. Security Headers
 app.use(helmet());
 
 const corsOptions = {
@@ -30,30 +32,39 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options(/(.*)/, cors(corsOptions));
 
-// 🟢 2. Rate Limiting
+// 🟢 2. Rate Limiting with Redis Store
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 200, 
   message: { message: "Too many requests from this IP, please try again after 15 minutes" },
   standardHeaders: true, 
   legacyHeaders: false, 
+  store: new RedisStore({
+    // Pass the ioredis call method to the store
+    sendCommand: (...args) => redis.call(...args),
+  }),
 });
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, 
   max: 20, 
-  message: { message: "Too many login attempts from this IP, please try again later." }
+  message: { message: "Too many login attempts from this IP, please try again later." },
+  store: new RedisStore({
+    sendCommand: (...args) => redis.call(...args),
+    // Optional: Add a prefix to easily distinguish auth limits from global limits in your Redis database
+    prefix: "rl_auth:", 
+  }),
 });
 
 app.use(globalLimiter);
 
-// 🟢 3. Apply Auth Limiter to specific sensitive paths BEFORE the proxy rules
+// 3. Apply Auth Limiter to specific sensitive paths BEFORE the proxy rules
 app.use("/api/auth/login", authLimiter);
 app.use("/api/auth/register", authLimiter);
 app.use("/api/vendor/login", authLimiter);
 app.use("/api/admin/login", authLimiter);
 
-// 🟢 4. Proxy Configuration with Correlation IDs
+// 4. Proxy Configuration with Correlation IDs
 const proxy = (target) => {
   return createProxyMiddleware({
     target,
@@ -85,9 +96,6 @@ const proxy = (target) => {
   });
 };
 
-// ==========================================
-// ROUTING CONFIGURATION
-// ==========================================
 
 app.use("/api/admin/users", proxy(USER_SERVICE_URL));
 app.use("/api/admin/vendors", proxy(VENDOR_SERVICE_ADMIN_URL));
@@ -101,7 +109,6 @@ app.use("/api/products", proxy(PRODUCT_SERVICE_URL));
 app.use("/api/cart", proxy(CART_SERVICE_URL));
 app.use("/api/vendor", proxy(VENDOR_SERVICE_URL));
 
-// 🟢 5. Gateway Bypasses & Fallbacks (Must be at the very bottom)
 app.use((req, res) => {
   res.status(404).json({ message: "Gateway Error: Requested endpoint does not exist." });
 });

@@ -1,16 +1,11 @@
 import jwt from "jsonwebtoken";
 import redis from "../config/redis.js"; 
 
-const auth = async (req, res, next) => {
-  const authHeader = req.headers.authorization;
+const authMiddleware = async (req, res, next) => {
+  const token = req.cookies.jwt;
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "Invalid or missing Authorization header format" });
-  }
-
-  const token = authHeader.split(" ")[1];
   if (!token) {
-    return res.status(401).json({ message: "Token missing from header" });
+    return res.status(401).json({ message: "Authentication required. Please log in." });
   }
 
   try {
@@ -24,11 +19,12 @@ const auth = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded; 
+    req.user = decoded;
+    
     next();
-  } catch {
-    res.status(401).json({ message: "Invalid token" });
+  } catch (err) {
+    res.status(401).json({ message: "Invalid or expired token" });
   }
 };
 
-export default auth;
+export default authMiddleware;

@@ -5,6 +5,7 @@ import User from "../models/User.js";
 import minioClient, { initBucket } from "../config/minioClient.js";
 import redis from "../config/redis.js";
 import Address from "../models/Address.js";
+import { sendTokenCookie, clearTokenCookie } from "../utils/cookie.util.js";
 
 const BUCKET_NAME = "user-profiles";
 initBucket(BUCKET_NAME);
@@ -69,9 +70,10 @@ export const register = async (req, res) => {
       { expiresIn: "7d" }
     );
 
+    sendTokenCookie(res, token);
+
     res.status(201).json({
       message: "User registered successfully",
-      token,
       user: {
         id: user.id, name: user.name, phone: user.phone,
         email: user.email, role: user.role,
@@ -93,6 +95,14 @@ export const login = async (req, res) => {
     }
 
     const { phone, password } = parseResult.data;
+
+    if (redis.status !== "ready") {
+      console.error("CRITICAL: Redis is down. Blocking User login to prevent brute-force attacks.");
+      return res.status(503).json({ 
+        message: "Authentication service is temporarily unavailable. Please try again later." 
+      });
+    }
+    
     const attemptsKey = `user_login_attempts:${phone}`;
 
     // 2. Redis Brute-Force Protection
@@ -124,14 +134,16 @@ export const login = async (req, res) => {
     // Reset attempts
     if (redis.status === "ready") await redis.del(attemptsKey);
 
-    const token = jwt.sign(
+   const token = jwt.sign(
       { id: user.id, name: user.name, phone: user.phone, email: user.email, role: user.role },
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
 
-    res.json({
-      token,
+    sendTokenCookie(res, token);
+
+   res.json({
+      message: "Login successful",
       user: {
         id: user.id, name: user.name, phone: user.phone,
         email: user.email, profilePic: user.profilePic, role: user.role
@@ -145,25 +157,23 @@ export const login = async (req, res) => {
 
 export const logout = async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(" ")[1];
+  const token = req.cookies.jwt; 
+    
     if (token) {
       const key = `blacklist:${token}`;
-      
-      // 🟢 Fail-Open Strategy: Only blacklist if Redis is alive
       if (redis.status === "ready") {
-        await redis.set(key, "true", "EX", 604800); // 7 days
-        console.log(`🚫 Token blacklisted: ${token.substring(0, 10)}...`);
-      } else {
-        console.warn("⚠️ Redis is down. Token could not be blacklisted, but proceeding with logout.");
+        await redis.set(key, "true", "EX", 604800); 
       }
     }
+    
+    clearTokenCookie(res);
+    
     res.json({ message: "Logout successful" });
   } catch (err) {
     console.error(err);
-    res.status(500).json({
-      message: "Internal server error",
-    });
+    res.status(500).json({ message: "Internal server error" });
   }
+  
 };
 
 /* ======================================================

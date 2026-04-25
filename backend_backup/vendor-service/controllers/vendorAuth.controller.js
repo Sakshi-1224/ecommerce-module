@@ -5,7 +5,7 @@ import Vendor from "../models/Vendor.js";
 import redis from "../config/redis.js"; 
 import { validateVerhoeff } from "../utils/verhoeff.js"; 
 import { fetchWithCache, safeDeleteCache } from "../utils/redisWrapper.js";
-
+import { sendTokenCookie, clearTokenCookie } from "../utils/cookie.util.js";
 
 const registerSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -85,6 +85,14 @@ export const login = async (req, res) => {
     }
 
     const { phone, password } = parseResult.data;
+    
+if (redis.status !== "ready") {
+      console.error("CRITICAL: Redis is down. Blocking User login to prevent brute-force attacks.");
+      return res.status(503).json({ 
+        message: "Authentication service is temporarily unavailable. Please try again later." 
+      });
+    }
+
     const attemptsKey = `vendor_login_attempts:${phone}`;
 
 
@@ -123,7 +131,10 @@ export const login = async (req, res) => {
       { expiresIn: "1d" }
     );
 
-    res.json({ token });
+sendTokenCookie(res, token);
+
+   res.json({ message: "Login successful" });
+
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ message: "Login failed" });
@@ -155,7 +166,7 @@ export const getProfile = async (req, res) => {
 
 export const logout = async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(" ")[1];
+    const token = req.cookies.jwt;
 
     if (!token) {
       return res.status(400).json({ message: "No token provided" });
@@ -170,6 +181,9 @@ export const logout = async (req, res) => {
     if (req.user && req.user.id) {
       await safeDeleteCache(`vendor:profile:${req.user.id}`);
     }
+
+    // 🟢 Clear the cookie
+    clearTokenCookie(res);
 
     res.json({ message: "Logged out successfully" });
   } catch (err) {
