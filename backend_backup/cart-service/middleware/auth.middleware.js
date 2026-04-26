@@ -1,15 +1,20 @@
 import jwt from "jsonwebtoken";
-import redis from "../config/redis.js"; // 🟢 Import Redis
+import redis from "../config/redis.js"; 
 
 const authMiddleware = async (req, res, next) => {
-  const token = req.headers.authorization?.split(" ")[1];
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "Invalid or missing Authorization header format" });
+  }
+
+  const token = authHeader.split(" ")[1];
 
   if (!token) {
-    return res.status(401).json({ message: "Token missing" });
+    return res.status(401).json({ message: "Token missing from header" });
   }
 
   try {
-    // 🟢 1. Check Redis Blacklist (Only if Redis is healthy)
     if (redis.status === "ready") {
       const isBlacklisted = await redis.get(`blacklist:${token}`);
       
@@ -22,7 +27,6 @@ const authMiddleware = async (req, res, next) => {
       console.warn("⚠️ Redis is down, skipping token blacklist check.");
     }
 
-    // 2. Verify Token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded;
     

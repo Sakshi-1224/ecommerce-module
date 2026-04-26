@@ -1,19 +1,38 @@
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import { z } from "zod";
 import Admin from "../models/Admin.js";
 import redis from "../config/redis.js";
+import { sendTokenCookie, clearTokenCookie } from "../utils/cookie.util.js";
+const loginSchema = z.object({
+  phone: z.string().min(10, "Phone must be at least 10 characters"),
+  password: z.string().min(1, "Password is required"),
+});
+
+const dummyHash = "$2b$10$dummyHashThatIsExactly60CharactersLong1234567890123456";
 
 export const adminLogin = async (req, res) => {
   try {
-    const { phone, password } = req.body;
 
-    if (!phone || !password) {
-      return res.status(400).json({ message: "Phone and password are required" });
+    const parseResult = loginSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ 
+        message: "Invalid input", 
+        errors: parseResult.error.errors 
+      });
     }
 
+    const { phone, password } = parseResult.data;
+
+    if (redis.status !== "ready") {
+      console.error("CRITICAL: Redis is down. Blocking User login to prevent brute-force attacks.");
+      return res.status(503).json({ 
+        message: "Authentication service is temporarily unavailable. Please try again later." 
+      });
+    }
+    
     const attemptsKey = `login_attempts:${phone}`;
     
-    // Check current attempts safely
     if (redis.status === "ready") {
       const attempts = await redis.get(attemptsKey);
       if (attempts && parseInt(attempts) >= 5) {
@@ -29,18 +48,17 @@ export const adminLogin = async (req, res) => {
       if (redis.status === "ready") {
         const pipeline = redis.pipeline();
         pipeline.incr(attemptsKey);
-        pipeline.expire(attemptsKey, 600); // 10 minutes lock
+        pipeline.expire(attemptsKey, 600); 
         await pipeline.exec();
       }
       return res.status(401).json({ message: "Invalid credentials" });
     };
 
-    if (!admin) return await handleFailedLogin();
+    const hashToCompare = admin ? admin.password : dummyHash;
+    const match = await bcrypt.compare(password, hashToCompare);
 
-    const match = await bcrypt.compare(password, admin.password);
-    if (!match) return await handleFailedLogin();
+    if (!admin || !match) return await handleFailedLogin();
 
-    // Reset attempts on successful login
     if (redis.status === "ready") {
       await redis.del(attemptsKey);
     }
@@ -51,8 +69,10 @@ export const adminLogin = async (req, res) => {
       { expiresIn: "30d" }
     );
 
+    sendTokenCookie(res, token);
+
     res.json({
-      token,
+      message: "Admin login successful",
       user: {
         id: admin.id,
         name: admin.name,
@@ -62,17 +82,14 @@ export const adminLogin = async (req, res) => {
       },
     });
   } catch (err) {
-    console.error(err);
+    console.error("Login error:", err);
     res.status(500).json({ message: "Login failed" });
   }
 };
 
 export const adminLogout = async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    const token = authHeader && authHeader.startsWith("Bearer ")
-      ? authHeader.split(" ")[1]
-      : authHeader;
+  const token = req.cookies.jwt;
 
     if (!token) return res.status(400).json({ message: "No token provided" });
 
@@ -80,9 +97,11 @@ export const adminLogout = async (req, res) => {
       // 30 days (2592000 seconds)
       await redis.set(`blacklist:${token}`, "true", "EX", 2592000);
       await redis.del("admin:dashboard:stats");
-      // Optional: use unlink for faster non-blocking deletion
       await redis.unlink("orders:admin:all"); 
     }
+
+    // 🟢 Clear the cookie
+    clearTokenCookie(res);
 
     res.json({ message: "Admin logged out successfully" });
   } catch (err) {

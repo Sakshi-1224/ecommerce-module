@@ -1,13 +1,14 @@
 import jwt from "jsonwebtoken";
-import redis from "../config/redis.js";
+import redis from "../config/redis.js"; 
 
 const authMiddleware = async (req, res, next) => {
-  const token = req.headers.authorization?.split(" ")[1];
+  const token = req.cookies.jwt;
 
-  if (!token) return res.status(401).json({ message: "Token missing" });
+  if (!token) {
+    return res.status(401).json({ message: "Authentication required. Please log in." });
+  }
 
   try {
-    // Only check blacklist if Redis is available
     if (redis.status === "ready") {
       const isBlacklisted = await redis.get(`blacklist:${token}`);
       if (isBlacklisted) {
@@ -18,14 +19,11 @@ const authMiddleware = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    if (decoded.role !== "admin") {
-      return res.status(403).json({ message: "Admin only" });
-    }
-
-    req.admin = decoded;
+    req.user = decoded;
+    
     next();
   } catch (err) {
-    res.status(401).json({ message: "Invalid token" });
+    res.status(401).json({ message: "Invalid or expired token" });
   }
 };
 

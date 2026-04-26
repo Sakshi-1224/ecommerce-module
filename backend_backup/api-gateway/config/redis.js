@@ -1,3 +1,5 @@
+// api-gateway/config/redis.js
+
 import Redis from "ioredis";
 import dotenv from "dotenv";
 
@@ -8,6 +10,7 @@ const redis = new Redis({
   port: process.env.REDIS_PORT || 6379,
   password: process.env.REDIS_PASSWORD || undefined,
   
+  // Retry strategy: prevents the gateway from hanging if Redis is down
   retryStrategy: (times) => {
     const maxDelay = 2000; 
     if (times > 5) {
@@ -19,8 +22,7 @@ const redis = new Redis({
   maxRetriesPerRequest: 3, 
 });
 
-redis.on("connect", () => console.log("✅ Redis Connected (Cart Service - Auth Only)"));
+redis.on("connect", () => console.log("✅ Redis Connected (API Gateway)"));
 redis.on("error", (err) => console.error("❌ Redis Error:", err.message));
-redis.on("ready", () => console.log("🚀 Redis Ready for Auth Blacklist Checks"));
 
 export default redis;

@@ -1,18 +1,30 @@
+import { z } from "zod";
 import Product from "../models/Product.js";
-import Category from "../models/Category.js";
-import { uploadImageToMinio } from "../utils/uploadToMinio.js";
-import { Op } from "sequelize";
 import sequelize from "../config/db.js";
 
+
+const syncPayloadSchema = z.object({
+  items: z.array(z.object({
+    productId: z.number().int().positive(),
+    quantity: z.number().int().positive("Quantity must be greater than 0")
+  })).min(1, "Items array cannot be empty")
+});
+
 export const reserveStock = async (req, res) => {
+  // 1. Zod Validation before starting transaction
+  const parseResult = syncPayloadSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    return res.status(400).json({ message: "Invalid payload", errors: parseResult.error.errors });
+  }
+
+  const { items } = parseResult.data;
   const t = await sequelize.transaction(); 
 
   try {
-    const { items } = req.body; 
-
     for (const item of items) {
       const product = await Product.findByPk(item.productId, {
         transaction: t,
+        lock: t.LOCK.UPDATE 
       });
 
       if (!product) throw new Error(`Product ${item.productId} not found`);

@@ -30,7 +30,16 @@ app.use("/api/orders/payment", paymentRoutes);
 app.use("/api/orders/delivery", deliveryRoutes);
 app.use("/api/orders/shipping", shippingRoutes);
 app.use("/api/orders", orderRoutes);
-sequelize.sync().then(() => {
+
+app.use((err, req, res, next) => {
+  console.error("Unhandled Order Service Error:", err.stack);
+  res.status(500).json({
+    message: "An internal server error occurred",
+    error: process.env.NODE_ENV === 'production' ? null : err.message
+  });
+});
+
+sequelize.sync({force:true}).then(() => {
   app.listen(process.env.PORT, () =>
     console.log(`Order Service running on ${process.env.PORT}`)
   );

@@ -1,166 +1,129 @@
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import { z } from "zod";
 import Vendor from "../models/Vendor.js";
 import redis from "../config/redis.js"; 
 import { validateVerhoeff } from "../utils/verhoeff.js"; 
 import { fetchWithCache, safeDeleteCache } from "../utils/redisWrapper.js";
+import { sendTokenCookie, clearTokenCookie } from "../utils/cookie.util.js";
+
+const registerSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+  email: z.string().email("Invalid email format"),
+  phone: z.string().regex(/^\d{10}$/, "Phone number must be 10 digits"),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+  businessName: z.string().min(1, "Business name is required"),
+  businessType: z.string().min(1, "Business type is required"),
+  yearsInBusiness: z.number().int().nonnegative("Years in business cannot be negative"),
+  businessAddress: z.string().min(1, "Business address is required"),
+  aadharNumber: z.string().regex(/^\d{12}$/, "Aadhaar number must be exactly 12 digits"),
+  panNumber: z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/, "Invalid PAN number format"),
+  gstNumber: z.string().regex(/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/, "Invalid GST number format").optional().or(z.literal('')),
+  bankAccountHolderName: z.string().min(1, "Account holder name is required"),
+  bankAccountNumber: z.string().min(1, "Account number is required"),
+  bankIFSC: z.string().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, "Invalid IFSC code"),
+  bankName: z.string().min(1, "Bank name is required"),
+});
+
+const loginSchema = z.object({
+  phone: z.string().regex(/^\d{10}$/, "Phone number must be exactly 10 digits"),
+  password: z.string().min(1, "Password is required"),
+});
+
+
+const dummyHash = "$2b$10$dummyHashThatIsExactly60CharactersLong1234567890123456";
+
 export const register = async (req, res) => {
   try {
-    const {
-      name,
-      email,
-      phone,
-      password,
-      businessName,
-      businessType,
-      yearsInBusiness,
-      businessAddress,
-      aadharNumber,
-      panNumber,
-      gstNumber,
-      bankAccountHolderName,
-      bankAccountNumber,
-      bankIFSC,
-      bankName,
-    } = req.body;
-
-    /* ---------------- NEGATIVE CHECKS ---------------- */
-    if (
-      !name ||
-      !email ||
-      !phone ||
-      !password ||
-      !businessName ||
-      !businessType ||
-      !yearsInBusiness ||
-      !businessAddress ||
-      !aadharNumber ||
-      !panNumber ||
-      !bankAccountHolderName ||
-      !bankAccountNumber ||
-      !bankIFSC ||
-      !bankName
-    ) {
-      return res
-        .status(400)
-        .json({ message: "All required fields must be provided" });
+  
+    const parseResult = registerSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ 
+        message: "Validation failed", 
+        errors: parseResult.error.errors 
+      });
     }
 
-    /* ---------------- FORMAT VALIDATIONS ---------------- */
-    if (!/^\d{10}$/.test(phone))
-      return res
-        .status(400)
-        .json({ message: "Phone number must be 10 digits" });
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
-      return res.status(400).json({ message: "Invalid email format" });
+    const data = parseResult.data;
 
-    // 1. Basic Aadhaar Length Check
-    if (!/^\d{12}$/.test(aadharNumber)) {
-      return res
-        .status(400)
-        .json({ message: "Aadhaar number must be 12 digits" });
+    if (!validateVerhoeff(data.aadharNumber)) {
+      return res.status(400).json({ message: "Invalid Aadhaar Number (Checksum failed)" });
     }
 
-    // 2. Verhoeff Algorithm Check (The new implementation)
-    if (!validateVerhoeff(aadharNumber)) {
-      return res
-        .status(400)
-        .json({ message: "Invalid Aadhaar Number (Checksum failed)" });
-    }
 
-    if (!/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(panNumber))
-      return res.status(400).json({ message: "Invalid PAN number format" });
-    if (
-      gstNumber &&
-      !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(
-        gstNumber
-      )
-    ) {
-      return res.status(400).json({ message: "Invalid GST number format" });
-    }
-    if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(bankIFSC))
-      return res.status(400).json({ message: "Invalid IFSC code" });
-    if (yearsInBusiness < 0)
-      return res
-        .status(400)
-        .json({ message: "Years in business cannot be negative" });
+    const [existingPhone, existingEmail] = await Promise.all([
+      Vendor.findOne({ where: { phone: data.phone } }),
+      Vendor.findOne({ where: { email: data.email } })
+    ]);
 
-    const existingVendor = await Vendor.findOne({ where: { phone } });
-    if (existingVendor) {
-      return res
-        .status(409)
-        .json({ message: "Vendor already registered with this phone number" });
-    }
+    if (existingPhone) return res.status(409).json({ message: "Vendor already registered with this phone number" });
+    if (existingEmail) return res.status(409).json({ message: "Vendor already registered with this email" });
 
-    /* ---------------- DUPLICATE CHECKS ---------------- */
-    // 1. Check Phone
-    const existingPhone = await Vendor.findOne({ where: { phone } });
-    if (existingPhone) {
-      return res
-        .status(409)
-        .json({ message: "Vendor already registered with this phone number" });
-    }
-
-    // 🟢 2. CHECK EMAIL (This was missing!)
-    const existingEmail = await Vendor.findOne({ where: { email } });
-    if (existingEmail) {
-      return res
-        .status(409)
-        .json({ message: "Vendor already registered with this email" });
-    }
-
-    /* ---------------- CREATE VENDOR ---------------- */
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(data.password, 10);
 
     await Vendor.create({
-      ...req.body,
+      ...data,
       password: hashedPassword,
       status: "PENDING",
     });
 
-  await safeDeleteCache("vendors:all");
+    await safeDeleteCache("vendors:all");
 
-    res.status(201).json({
-      message: "Vendor registered successfully. Awaiting admin approval.",
-    });
+    res.status(201).json({ message: "Vendor registered successfully. Awaiting admin approval." });
   } catch (err) {
-    console.error(err);
+    console.error("Registration error:", err);
     res.status(500).json({ message: "Vendor registration failed" });
   }
 };
 
-/* ======================================================
-   LOGIN (🟢 Rate Limited with Redis)
-====================================================== */
 export const login = async (req, res) => {
   try {
-    const { phone, password } = req.body;
 
-    if (!phone || !password)
-      return res
-        .status(400)
-        .json({ message: "Phone and password are required" });
-    if (!/^\d{10}$/.test(phone))
-      return res
-        .status(400)
-        .json({ message: "Phone number must be exactly 10 digits" });
+    const parseResult = loginSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ message: "Invalid input", errors: parseResult.error.errors });
+    }
+
+    const { phone, password } = parseResult.data;
+    
+if (redis.status !== "ready") {
+      console.error("CRITICAL: Redis is down. Blocking User login to prevent brute-force attacks.");
+      return res.status(503).json({ 
+        message: "Authentication service is temporarily unavailable. Please try again later." 
+      });
+    }
+
+    const attemptsKey = `vendor_login_attempts:${phone}`;
+
+
+    if (redis.status === "ready") {
+      const attempts = await redis.get(attemptsKey);
+      if (attempts && parseInt(attempts) >= 5) {
+        return res.status(429).json({ message: "Too many failed attempts. Account locked for 10 minutes." });
+      }
+    }
 
     const vendor = await Vendor.findOne({ where: { phone } });
 
-     if (!vendor || vendor.status !== "APPROVED") {
-      return res
-         .status(401)
-       .json({ message: "Invalid credentials or Vendor not approved" }) ;
-     }
+    const handleFailedLogin = async () => {
+      if (redis.status === "ready") {
+        const pipeline = redis.pipeline();
+        pipeline.incr(attemptsKey);
+        pipeline.expire(attemptsKey, 600); 
+        await pipeline.exec();
+      }
 
-    const ok = await bcrypt.compare(password, vendor.password);
-    if (!ok) {
-      return res
-         .status(401)
-       .json({ message: "Invalid credentials or Vendor not approved" } );
+      return res.status(401).json({ message: "Invalid credentials or Vendor not approved" });
+    };
+
+    const hashToCompare = (vendor && vendor.status === "APPROVED") ? vendor.password : dummyHash;
+    const ok = await bcrypt.compare(password, hashToCompare);
+
+    if (!vendor || vendor.status !== "APPROVED" || !ok) {
+      return await handleFailedLogin();
     }
 
- 
+    if (redis.status === "ready") await redis.del(attemptsKey);
 
     const token = jwt.sign(
       { id: vendor.id, role: "vendor" },
@@ -168,16 +131,17 @@ export const login = async (req, res) => {
       { expiresIn: "1d" }
     );
 
-    res.json({ token });
+sendTokenCookie(res, token);
+
+   res.json({ message: "Login successful" });
+
   } catch (err) {
-    console.error(err);
+    console.error("Login error:", err);
     res.status(500).json({ message: "Login failed" });
   }
 };
 
-/* ======================================================
-   GET PROFILE (🟢 Cached with Redis)
-====================================================== */
+
 export const getProfile = async (req, res) => {
   try {
     const vendorId = req.user.id;
@@ -199,12 +163,10 @@ export const getProfile = async (req, res) => {
   }
 };
 
-/* ======================================================
-   LOGOUT (🟢 Blacklist Token)
-====================================================== */
+
 export const logout = async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(" ")[1];
+    const token = req.cookies.jwt;
 
     if (!token) {
       return res.status(400).json({ message: "No token provided" });
@@ -219,6 +181,9 @@ export const logout = async (req, res) => {
     if (req.user && req.user.id) {
       await safeDeleteCache(`vendor:profile:${req.user.id}`);
     }
+
+    // 🟢 Clear the cookie
+    clearTokenCookie(res);
 
     res.json({ message: "Logged out successfully" });
   } catch (err) {

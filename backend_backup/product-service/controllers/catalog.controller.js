@@ -5,6 +5,18 @@ import { Op } from "sequelize";
 import sequelize from "../config/db.js";
 import redis from "../config/redis.js"; // 🟢 Import Redis
 import { fetchWithCache } from "../utils/redisWrapper.js";
+import { z } from "zod";
+
+
+const catalogQuerySchema = z.object({
+  search: z.string().optional(),
+  category: z.string().optional(),
+  sort: z.enum(["price_low", "price_high", "newest"]).default("newest"),
+  minPrice: z.coerce.number().min(0).optional(),
+  maxPrice: z.coerce.number().min(0).optional(),
+  limit: z.coerce.number().min(1).max(100).default(50), // Cap at 100 max
+  page: z.coerce.number().min(1).default(1)
+});
 
 export const getProductsBatch = async (req, res) => {
   try {
@@ -34,17 +46,19 @@ export const getProductsBatch = async (req, res) => {
 
 export const getProducts = async (req, res) => {
   try {
-    const { category, sort, search, minPrice, maxPrice } = req.query;
-    
-    // Normalize the query string to prevent duplicate caches for different key orders
-    const normalizedQuery = new URLSearchParams(req.query).toString();
-    const cacheKey = `products:search:${normalizedQuery}`;
+    const parseResult = catalogQuerySchema.safeParse(req.query);
+    if (!parseResult.success) {
+      return res.status(400).json({ message: "Invalid query parameters" });
+    }
 
-    // 🟢 Redis Cache: 60 Seconds
+    const { category, sort, search, minPrice, maxPrice, limit, page } = parseResult.data;
+    
+    // Normalize safely
+    const cacheKey = `products:search:${category || 'all'}:${sort}:${search || ''}:${minPrice || 0}:${maxPrice || 'max'}:${limit}:${page}`;
+
     const products = await fetchWithCache(cacheKey, 60, async () => {
       let whereCondition = {};
 
-      // 🔍 SEARCH
       if (search) {
         whereCondition[Op.or] = [
           { name: { [Op.like]: `%${search}%` } },
@@ -52,19 +66,19 @@ export const getProducts = async (req, res) => {
         ];
       }
 
-      // 💰 PRICE
-      if (minPrice || maxPrice) {
+      if (minPrice !== undefined || maxPrice !== undefined) {
         whereCondition.price = {};
-        if (minPrice) whereCondition.price[Op.gte] = Number(minPrice);
-        if (maxPrice) whereCondition.price[Op.lte] = Number(maxPrice);
+        if (minPrice !== undefined) whereCondition.price[Op.gte] = minPrice;
+        if (maxPrice !== undefined) whereCondition.price[Op.lte] = maxPrice;
       }
 
-      // ↕️ SORT
       let orderCondition = [["createdAt", "DESC"]];
       if (sort === "price_low") orderCondition = [["price", "ASC"]];
       if (sort === "price_high") orderCondition = [["price", "DESC"]];
 
-      return await Product.findAll({
+      const offset = (page - 1) * limit;
+
+      return await Product.findAndCountAll({ // Use findAndCountAll for pagination
         where: whereCondition,
         include: [
           {
@@ -75,6 +89,8 @@ export const getProducts = async (req, res) => {
           },
         ],
         order: orderCondition,
+        limit,
+        offset
       });
     });
 

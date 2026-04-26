@@ -1,32 +1,48 @@
 import CartItem from "../models/CartItem.js";
 import axios from "axios";
 import dotenv from "dotenv";
+import { z } from "zod";
 
 dotenv.config();
-const PRODUCT_SERVICE_URL = "http://localhost:5002/api/products";
+const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL || "http://localhost:5002/api/products";
+
+// 🟢 Zod Schemas
+const addToCartSchema = z.object({
+  productId: z.union([z.string(), z.number()], { required_error: "Product ID is required" }),
+  quantity: z.number().int().positive("Quantity must be a positive integer").default(1),
+});
+
+const updateQuantitySchema = z.object({
+  quantity: z.number().int().positive("Quantity must be a positive integer"),
+});
+
+// 🟢 Reusable Axios Config for Timeouts
+const axiosConfig = { timeout: 4000 }; // Fail fast after 4 seconds
 
 export const addToCart = async (req, res) => {
   try {
-    const userId = req.user.id;
-    const { productId, quantity = 1 } = req.body;
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ message: "Unauthorized: User ID missing" });
 
-    // Validate request body
-    if (!userId)
-      return res.status(400).json({ message: "User ID is required" });
-    if (!productId)
-      return res.status(400).json({ message: "Product ID is required" });
-    if (!Number.isInteger(quantity) || quantity <= 0) {
-      return res
-        .status(400)
-        .json({ message: "Quantity must be a positive integer" });
+    // 1. Zod Validation
+    const parseResult = addToCartSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ message: "Invalid input", errors: parseResult.error.errors });
     }
 
-    // Fetch single product (Note: You could cache this too, but we prioritize accuracy for stock checks)
-    const { data: product } = await axios.get(
-      `${PRODUCT_SERVICE_URL}/${productId}`,
-    );
+    const { productId, quantity } = parseResult.data;
 
-    if (!product) return res.status(404).json({ message: "Product not found" });
+    // 2. Timeout-Protected Inter-Service Call
+    let product;
+    try {
+      const response = await axios.get(`${PRODUCT_SERVICE_URL}/${productId}`, axiosConfig);
+      product = response.data;
+    } catch (error) {
+      if (error.code === 'ECONNABORTED' || error.response?.status >= 500) {
+        return res.status(503).json({ message: "Product service is currently unavailable. Try again later." });
+      }
+      return res.status(404).json({ message: "Product not found" });
+    }
 
     // Stock Check
     const currentStock = product.availableStock ?? product.stock ?? 0;
@@ -50,7 +66,7 @@ export const addToCart = async (req, res) => {
 
     res.status(201).json({ message: "Item added to cart" });
   } catch (err) {
-    console.error(err.message);
+    console.error("Add to cart error:", err.message);
     res.status(500).json({ message: "Failed to add to cart" });
   }
 };
@@ -59,13 +75,13 @@ export const addToCart = async (req, res) => {
 export const updateQuantity = async (req, res) => {
   try {
     const { id } = req.params;
-    const { quantity } = req.body;
-
-    if (!Number.isInteger(quantity) || quantity <= 0) {
-      return res
-        .status(400)
-        .json({ message: "Quantity must be a positive integer" });
+    
+    // 1. Zod Validation
+    const parseResult = updateQuantitySchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ message: "Invalid input", errors: parseResult.error.errors });
     }
+    const { quantity } = parseResult.data;
 
     const item = await CartItem.findByPk(id);
     if (!item) return res.status(404).json({ message: "Cart item not found" });
@@ -74,9 +90,15 @@ export const updateQuantity = async (req, res) => {
       return res.status(403).json({ message: "Unauthorized cart access" });
     }
 
-    const { data: product } = await axios.get(
-      `${PRODUCT_SERVICE_URL}/${item.productId}`,
-    );
+    // 2. Timeout-Protected Call
+    let product;
+    try {
+      const response = await axios.get(`${PRODUCT_SERVICE_URL}/${item.productId}`, axiosConfig);
+      product = response.data;
+    } catch (error) {
+      return res.status(503).json({ message: "Unable to verify stock at this time." });
+    }
+    
     const currentStock = product.availableStock ?? product.stock ?? 0;
 
     if (quantity > currentStock) {
@@ -90,16 +112,15 @@ export const updateQuantity = async (req, res) => {
 
     res.json(item);
   } catch (err) {
-    console.error(err.message);
+    console.error("Update quantity error:", err.message);
     res.status(500).json({ message: "Failed to update quantity" });
   }
 };
 
 export const getCart = async (req, res) => {
   try {
-    const { userId } = req.params;
-    if (!userId)
-      return res.status(400).json({ message: "User ID is required" });
+    const userId = req.params.userId; // Assuming route has :userId, or use req.user.id
+    if (!userId) return res.status(400).json({ message: "User ID is required" });
 
     const cartItems = await CartItem.findAll({ where: { userId } });
 
@@ -107,10 +128,9 @@ export const getCart = async (req, res) => {
       return res.json({ items: [], total: 0 });
     }
 
-    // 🟢 3. Extract Unique Product IDs
-    const productIds = [...new Set(cartItems.map((item) => item.productId))];
-
+    const productIds = [...new Set(cartItems.map(item => item.productId))];
     let productsMap = {};
+
     try {
       const { data: products } = await axios.get(
         `${PRODUCT_SERVICE_URL}/batch`,
@@ -133,7 +153,6 @@ export const getCart = async (req, res) => {
         .json({ message: "Failed to load product details" });
     }
 
-    // 🟢 5. Merge Data
     let total = 0;
     const detailedCart = [];
 
