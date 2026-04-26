@@ -31,8 +31,8 @@ const seedProducts = async () => {
       const VENDOR_SERVICE_ADMIN_URL = process.env.VENDOR_SERVICE_ADMIN_URL;
 
       const loginResponse = await axios.post(`${ADMIN_SERVICE_URL}/login`, {
-        phone: "9876543210",
-        password: "adminpassword",
+        phone: "9999999999",
+        password: "Admin@123",
       });
 
       const adminToken = loginResponse.data.token;

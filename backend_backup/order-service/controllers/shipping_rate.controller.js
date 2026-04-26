@@ -1,5 +1,7 @@
 import ShippingRate from "../models/ShippingRate.js"; // 🟢 IMPORT NEW MODEL
 import { fetchWithCache, safeDeleteCache } from "../utils/redisWrapper.js";
+import DeliveryBoy from "../models/DeliveryBoy.js";
+
 // 1. ADD or UPDATE a Shipping Rate
 export const setShippingRate = async (req, res) => {
   try {
@@ -7,14 +9,18 @@ export const setShippingRate = async (req, res) => {
     const { areaName, rate, isActive } = req.body;
 
     if (!areaName || rate === undefined) {
-      return res.status(400).json({ message: "Area Name and Rate are required." });
+      return res
+        .status(400)
+        .json({ message: "Area Name and Rate are required." });
     }
 
     const cleanArea = areaName.trim();
     const cleanRate = parseFloat(rate);
 
     if (isNaN(cleanRate) || cleanRate < 0) {
-      return res.status(400).json({ message: "Rate must be a positive number." });
+      return res
+        .status(400)
+        .json({ message: "Rate must be a positive number." });
     }
 
     const defaults = { rate: cleanRate };
@@ -47,9 +53,13 @@ export const setShippingRate = async (req, res) => {
 // 2. GET ALL Shipping Rates (For Admin Dashboard)
 export const getAllShippingRates = async (req, res) => {
   try {
-    const rates = await fetchWithCache("shipping_rates:all", 86400, async () => {
-      return await ShippingRate.findAll({ order: [["areaName", "ASC"]] });
-    });
+    const rates = await fetchWithCache(
+      "shipping_rates:all",
+      86400,
+      async () => {
+        return await ShippingRate.findAll({ order: [["areaName", "ASC"]] });
+      },
+    );
     res.json(rates);
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch rates" });
@@ -59,12 +69,16 @@ export const getAllShippingRates = async (req, res) => {
 //for users
 export const getActiveShippingRates = async (req, res) => {
   try {
-    const rates = await fetchWithCache("shipping_rates:active", 86400, async () => {
-      return await ShippingRate.findAll({ 
-        where: { isActive: true },
-        order: [["areaName", "ASC"]] 
-      });
-    });
+    const rates = await fetchWithCache(
+      "shipping_rates:active",
+      86400,
+      async () => {
+        return await ShippingRate.findAll({
+          where: { isActive: true },
+          order: [["areaName", "ASC"]],
+        });
+      },
+    );
     res.json(rates);
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch active rates" });
@@ -73,22 +87,21 @@ export const getActiveShippingRates = async (req, res) => {
 
 export const toggleShippingAreaStatus = async (req, res) => {
   try {
-    const { id } = req.params; 
+    const { id } = req.params;
 
     const record = await ShippingRate.findByPk(id);
     if (!record) {
       return res.status(404).json({ message: "Rate not found" });
     }
 
-
     record.isActive = !record.isActive;
     await record.save();
 
     await safeDeleteCache(["shipping_rates:all", "shipping_rates:active"]);
-    
-    res.json({ 
-      message: `Shipping Area is now ${record.isActive ? 'Active' : 'Inactive'}`,
-      data: record
+
+    res.json({
+      message: `Shipping Area is now ${record.isActive ? "Active" : "Inactive"}`,
+      data: record,
     });
   } catch (err) {
     res.status(500).json({ message: "Failed to toggle status" });
@@ -111,14 +124,14 @@ export const deleteShippingRate = async (req, res) => {
     });
 
     // Check if the areaName exists in any boy's JSON array of assignedAreas
-    const assignedBoys = allBoys.filter(boy => 
-      boy.assignedAreas && boy.assignedAreas.includes(record.areaName)
+    const assignedBoys = allBoys.filter(
+      (boy) => boy.assignedAreas && boy.assignedAreas.includes(record.areaName),
     );
 
     if (assignedBoys.length > 0) {
-      const boyNames = assignedBoys.map(b => b.name).join(", ");
-      return res.status(400).json({ 
-        message: `Cannot delete. '${record.areaName}' is currently assigned to: ${boyNames}. Please update their areas first.` 
+      const boyNames = assignedBoys.map((b) => b.name).join(", ");
+      return res.status(400).json({
+        message: `Cannot delete. '${record.areaName}' is currently assigned to: ${boyNames}. Please update their areas first.`,
       });
     }
 
@@ -136,7 +149,7 @@ export const deleteShippingRate = async (req, res) => {
 export const getShippingCharge = async (req, res) => {
   try {
     const { area } = req.query;
-   
+
     if (!area) return res.json({ rate: 0 });
 
     const cleanArea = area.trim();
