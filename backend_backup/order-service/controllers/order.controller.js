@@ -13,7 +13,6 @@ import { rollbackQueue } from "../services/sagaQueue.js";
 const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL;
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL;
 
-
 import razorpay from "../config/razorpay.js"; // 🟢 Ensure this is imported at the top!
 
 const VALID_TRANSITIONS = {
@@ -50,9 +49,11 @@ export const checkout = async (req, res) => {
         where: { areaName: selectedArea },
         transaction: t,
       });
-      
+
       if (!rateRecord) {
-        throw new Error(`Sorry, we currently do not deliver to '${selectedArea}'. Please choose another address.`);
+        throw new Error(
+          `Sorry, we currently do not deliver to '${selectedArea}'. Please choose another address.`,
+        );
       }
 
       shippingCharge = parseFloat(rateRecord.rate);
@@ -65,12 +66,12 @@ export const checkout = async (req, res) => {
           shippingCharge: shippingCharge,
           address,
           assignedArea: selectedArea,
-          paymentMethod: paymentMethod, 
+          paymentMethod: paymentMethod,
           payment: false,
           status: "PROCESSING",
           orderDate: new Date(),
         },
-        { transaction: t } 
+        { transaction: t },
       );
 
       for (const item of items) {
@@ -82,7 +83,7 @@ export const checkout = async (req, res) => {
             quantity: item.quantity,
             price: item.price,
           },
-          { transaction: t } 
+          { transaction: t },
         );
       }
 
@@ -96,16 +97,16 @@ export const checkout = async (req, res) => {
             timeout: 5000 
           }
         );
-        stockReserved = true; 
+        stockReserved = true;
       } catch (apiErr) {
         throw new Error(apiErr.response?.data?.message || "Stock reservation failed or timed out.");
       }
 
       if (paymentMethod === "RAZORPAY") {
         const options = {
-            amount: Math.round(finalPayableAmount * 100),
-            currency: "INR",
-            receipt: `receipt_order_${order.id}`
+          amount: Math.round(finalPayableAmount * 100),
+          currency: "INR",
+          receipt: `receipt_order_${order.id}`,
         };
         razorpayOrderData = await razorpay.orders.create(options);
       }
@@ -119,7 +120,7 @@ export const checkout = async (req, res) => {
       orderId: order.id,
       shippingCharge: shippingCharge,
       payableAmount: finalPayableAmount,
-      razorpayOrder: razorpayOrderData 
+      razorpayOrder: razorpayOrderData,
     });
 
   } catch (err) {
@@ -128,7 +129,9 @@ export const checkout = async (req, res) => {
 
     if (stockReserved) {
       try {
-        console.warn(`[Saga Rollback] Checkout failed. Attempting immediate stock release...`);
+        console.warn(
+          `[Saga Rollback] Checkout failed. Attempting immediate stock release...`,
+        );
         await axios.post(
           `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/release`,
           { items }, 
@@ -138,11 +141,25 @@ export const checkout = async (req, res) => {
           }
         );
       } catch (rollbackErr) {
-        console.error(`🚨 [CRITICAL SAGA FAILURE] Immediate rollback failed. Pushing to BullMQ...`);
+        console.error(
+          `🚨 [CRITICAL SAGA FAILURE] Immediate rollback failed. Pushing to BullMQ...`,
+        );
+
+        // 🟢 Push to BullMQ instead of the database!
         await rollbackQueue.add(
-          "release-stock", 
-          { items, endpoint: `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/release` }, 
-          { attempts: 10, backoff: { type: 'exponential', delay: 5000 }, removeOnComplete: true }
+          "release-stock", // Name of the job
+          {
+            items,
+            endpoint: `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/release`,
+          },
+          {
+            attempts: 10, // Retry up to 10 times before giving up entirely
+            backoff: {
+              type: "exponential", // Wait longer between each failed attempt
+              delay: 5000, // 1st retry: 5s, 2nd: 10s, 3rd: 20s, 4th: 40s...
+            },
+            removeOnComplete: true, // Delete from Redis once successful to save memory
+          },
         );
       }
     }
@@ -179,7 +196,10 @@ export const updateOrderStatusAdmin = async (req, res) => {
 
         for (const item of order.OrderItems) {
           if (item.status === "CANCELLED" || item.status === "PACKED") continue;
-          itemsToShip.push({ productId: item.productId, quantity: item.quantity });
+          itemsToShip.push({
+            productId: item.productId,
+            quantity: item.quantity,
+          });
           itemsToUpdate.push(item);
         }
 
@@ -204,32 +224,38 @@ export const updateOrderStatusAdmin = async (req, res) => {
         }
 
         order.status = "PACKED";
-        await order.save({ transaction: t }); 
+        await order.save({ transaction: t });
         responseMsg = "Order packed & Stock Deducted";
 
         if (order.assignedArea) {
           const existingAssignment = await DeliveryAssignment.findOne({
             where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
-            transaction: t 
+            transaction: t,
           });
 
           if (!existingAssignment) {
-            const result = await autoAssignDeliveryBoy(order.id, order.assignedArea, t);
+            // 🟢 Pass 't' to your autoAssign function!
+            const result = await autoAssignDeliveryBoy(
+              order.id,
+              order.assignedArea,
+              t,
+            );
             if (result && result.success) {
               responseMsg += ` & Auto-Assigned to ${result.boy.name}`;
               autoAssignedBoyId = result.boy.id;
             }
           }
         }
-      }
-      else if (status === "OUT_FOR_DELIVERY" || status === "DELIVERED") {
+      } else if (status === "OUT_FOR_DELIVERY" || status === "DELIVERED") {
         const activeAssignment = await DeliveryAssignment.findOne({
           where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
-          transaction: t
+          transaction: t,
         });
 
         if (!activeAssignment) {
-          throw new Error(`Cannot mark as ${status}. No Delivery Boy assigned yet!`);
+          throw new Error(
+            `Cannot mark as ${status}. No Delivery Boy assigned yet!`,
+          );
         }
 
         if (status === "OUT_FOR_DELIVERY") {
@@ -241,8 +267,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
               await item.save({ transaction: t });
             }
           }
-        } 
-        else if (status === "DELIVERED") {
+        } else if (status === "DELIVERED") {
           order.status = "DELIVERED";
           order.payment = true;
           if (order.paymentMethod === "COD" && order.codPaymentMode !== "QR") {
@@ -263,8 +288,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
             autoAssignedBoyId = activeAssignment.deliveryBoyId; 
           }
         }
-      } 
-      else {
+      } else {
         order.status = status;
         await order.save({ transaction: t });
       }
@@ -289,32 +313,40 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
     await sequelize.transaction(async (t) => {
       const item = await OrderItem.findOne({
         where: { id: itemId, orderId: orderId },
-        transaction: t // 🟢 Add to query
+        transaction: t, // 🟢 Add to query
       });
 
       if (!item) throw new Error("Item not found");
 
-      if (status === "PACKED" && (item.status === "PENDING" || item.status === "PROCESSING")) {
+      if (
+        status === "PACKED" &&
+        (item.status === "PENDING" || item.status === "PROCESSING")
+      ) {
         try {
           await axios.post(
             `${process.env.PRODUCT_SERVICE_URL}/inventory/ship`,
             { items: [{ productId: item.productId, quantity: item.quantity }] },
-            { headers: { "x-internal-token": process.env.INTERNAL_API_KEY } }
+            { headers: { "x-internal-token": process.env.INTERNAL_API_KEY } },
           );
         } catch (apiErr) {
-          throw new Error(apiErr.response?.data?.message || "Shipment Sync Failed");
+          throw new Error(
+            apiErr.response?.data?.message || "Shipment Sync Failed",
+          );
         }
       }
 
       item.status = status;
       await item.save({ transaction: t }); // 🟢 Save via transaction
 
-      const allItems = await OrderItem.findAll({ where: { orderId }, transaction: t });
+      const allItems = await OrderItem.findAll({
+        where: { orderId },
+        transaction: t,
+      });
       const activeItems = allItems.filter((i) => i.status !== "CANCELLED");
       const allMatch = activeItems.every((i) => i.status === status);
 
       const order = await Order.findByPk(orderId, { transaction: t });
-      orderUserId = order.userId; // Save for Cache 
+      orderUserId = order.userId; // Save for Cache
 
       if (allMatch && activeItems.length > 0) {
         if (status === "PACKED") {
@@ -323,12 +355,12 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
           if (["OUT_FOR_DELIVERY", "DELIVERED"].includes(status)) {
             const hasBoy = await DeliveryAssignment.findOne({
               where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
-              transaction: t
+              transaction: t,
             });
             if (!hasBoy) {
               // Graceful abort of the parent order update, but item still updates
               responseMsg = `Item updated to ${status}, but Parent Order not updated (No Delivery Boy assigned).`;
-              return; 
+              return;
             }
           }
 
@@ -338,7 +370,7 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
             const assignment = await DeliveryAssignment.findOne({
               where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
               order: [["createdAt", "DESC"]],
-              transaction: t
+              transaction: t,
             });
             if (assignment) {
               assignment.status = "DELIVERED";
@@ -350,7 +382,6 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
         }
       }
     });
-
 
     res.json({ message: responseMsg });
   } catch (err) {
@@ -423,12 +454,16 @@ export const getAllOrdersAdmin = async (req, res) => {
 export const getOrderByIdAdmin = async (req, res) => {
   try {
     const orderId = req.params.id;
-   
+
     const order = await Order.findByPk(orderId, {
       include: [
         OrderItem,
         {
           model: DeliveryAssignment,
+          where: {
+            status: { [Op.notIn]: ["FAILED", "REASSIGNED", "CANCELLED"] },
+          },
+          required: false,
           include: [DeliveryBoy],
         },
       ],
@@ -573,9 +608,11 @@ const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
 export const adminCreateOrder = async (req, res) => {
   try {
     const { userId, items, amount, address, paymentMethod } = req.body;
-    
+
     if (!userId) {
-      return res.status(400).json({ message: "User ID is required for Admin-created orders." });
+      return res
+        .status(400)
+        .json({ message: "User ID is required for Admin-created orders." });
     }
 
     const selectedArea = address.area || "General";
@@ -591,7 +628,7 @@ export const adminCreateOrder = async (req, res) => {
 
       if (rateRecord) shippingCharge = parseFloat(rateRecord.rate);
 
-      const itemsTotal = parseFloat(amount); 
+      const itemsTotal = parseFloat(amount);
       const finalPayableAmount = itemsTotal + shippingCharge;
 
       order = await Order.create(
@@ -606,7 +643,7 @@ export const adminCreateOrder = async (req, res) => {
           status: "PROCESSING",
           orderDate: new Date(),
         },
-        { transaction: t }
+        { transaction: t },
       );
 
       for (const item of items) {
@@ -618,7 +655,7 @@ export const adminCreateOrder = async (req, res) => {
             quantity: item.quantity,
             price: item.price,
           },
-          { transaction: t }
+          { transaction: t },
         );
       }
 
@@ -629,10 +666,11 @@ export const adminCreateOrder = async (req, res) => {
           { headers: { "x-internal-token": process.env.INTERNAL_API_KEY } },
         );
       } catch (apiErr) {
-        throw new Error(apiErr.response?.data?.message || "Stock reservation failed");
+        throw new Error(
+          apiErr.response?.data?.message || "Stock reservation failed",
+        );
       }
-    }); 
-
+    });
 
     res.status(201).json({
       message: "Order created successfully on behalf of user",

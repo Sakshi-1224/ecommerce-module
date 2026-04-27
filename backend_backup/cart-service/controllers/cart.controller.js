@@ -54,7 +54,9 @@ export const addToCart = async (req, res) => {
 
     if (existing) {
       if (existing.quantity + quantity > currentStock) {
-        return res.status(400).json({ message: "Cannot add more than available stock" });
+        return res
+          .status(400)
+          .json({ message: "Cannot add more than available stock" });
       }
       existing.quantity += quantity;
       await existing.save();
@@ -100,7 +102,9 @@ export const updateQuantity = async (req, res) => {
     const currentStock = product.availableStock ?? product.stock ?? 0;
 
     if (quantity > currentStock) {
-      return res.status(400).json({ message: "Requested quantity exceeds stock" });
+      return res
+        .status(400)
+        .json({ message: "Requested quantity exceeds stock" });
     }
 
     item.quantity = quantity;
@@ -119,57 +123,74 @@ export const getCart = async (req, res) => {
     if (!userId) return res.status(400).json({ message: "User ID is required" });
 
     const cartItems = await CartItem.findAll({ where: { userId } });
-    
+
     if (cartItems.length === 0) {
-        return res.json({ items: [], total: 0 });
+      return res.json({ items: [], total: 0 });
     }
 
     const productIds = [...new Set(cartItems.map(item => item.productId))];
     let productsMap = {};
 
     try {
-        // 2. Timeout-Protected Batch Call
-        const { data: products } = await axios.get(`${PRODUCT_SERVICE_URL}/batch`, {
-            params: { ids: productIds.join(",") },
-            ...axiosConfig 
-        });
+      const { data: products } = await axios.get(
+        `${PRODUCT_SERVICE_URL}/batch`,
+        {
+          params: { ids: productIds.join(",") },
+          headers: {
+            "x-internal-token": process.env.INTERNAL_API_KEY,
+          },
+        },
+      );
 
-        products.forEach(p => { productsMap[p.id] = p; });
+      products.forEach((p) => {
+        productsMap[p.id] = p;
+      });
     } catch (err) {
-        console.error("Failed to batch fetch products:", err.message);
-        return res.status(503).json({ message: "Product catalog is temporarily unavailable." });
+      console.error("Failed to batch fetch products:", err.message);
+      // If batch fetch fails, we might return empty or error out
+      return res
+        .status(500)
+        .json({ message: "Failed to load product details" });
     }
 
     let total = 0;
     const detailedCart = [];
 
     for (const item of cartItems) {
-        const product = productsMap[item.productId];
-        if (!product) continue;
+      const product = productsMap[item.productId];
 
-        const subtotal = product.price * item.quantity;
-        total += subtotal;
+      // Skip if product no longer exists (deleted)
+      if (!product) continue;
 
-        detailedCart.push({
-            id: item.id,
-            cartItemId: item.id,
-            quantity: item.quantity,
-            userId: item.userId,
-            productId: item.productId,
-            price: product.price,
-            Product: {
-                id: product.id,
-                name: product.name,
-                imageUrl: product.images && product.images.length > 0 ? product.images[0] : null, 
-                price: product.price,
-                category: product.Category ? product.Category.name : null, 
-                availableStock: product.availableStock ?? product.stock ?? 0,
-                vendorId: product.vendorId,
-            },
-        });
+      const subtotal = product.price * item.quantity;
+      total += subtotal;
+
+      detailedCart.push({
+        id: item.id,
+        cartItemId: item.id,
+        quantity: item.quantity,
+        userId: item.userId,
+        productId: item.productId,
+        price: product.price,
+        Product: {
+          id: product.id,
+          name: product.name,
+          // Handle image array from batch response
+          imageUrl:
+            product.images && product.images.length > 0
+              ? product.images[0]
+              : null,
+          price: product.price,
+          category: product.Category ? product.Category.name : null,
+          availableStock: product.availableStock ?? product.stock ?? 0,
+          vendorId: product.vendorId,
+        },
+      });
     }
 
-    res.json({ items: detailedCart, total });
+    const responseData = { items: detailedCart, total };
+
+    res.json(responseData);
   } catch (err) {
     console.error("Get cart error:", err);
     res.status(500).json({ message: "Failed to fetch cart" });
@@ -190,8 +211,6 @@ export const removeFromCart = async (req, res) => {
 
     await item.destroy();
 
-  
-
     res.json({ message: "Item removed from cart" });
   } catch (err) {
     console.error(err.message);
@@ -205,7 +224,6 @@ export const clearCart = async (req, res) => {
     const userId = req.user.id;
 
     await CartItem.destroy({ where: { userId } });
-
 
     res.json({ message: "Cart cleared successfully" });
   } catch (err) {

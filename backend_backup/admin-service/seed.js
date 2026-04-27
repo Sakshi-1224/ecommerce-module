@@ -18,7 +18,7 @@ const seedAdmin = async () => {
         name: "Super Admin",
         email: "admin@test.com",
         password: hashedPassword,
-        phone: "9876543210",
+        phone: "9999999999",
       },
     });
 

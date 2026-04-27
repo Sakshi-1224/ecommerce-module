@@ -8,6 +8,7 @@ import sequelize from "../config/db.js";
 import axios from "axios";
 import razorpay from "../config/razorpay.js";
 import { autoAssignDeliveryBoy } from "../services/delivery.service.js";
+import { processAutomaticRefund } from "../services/refund.service.js";
 
 export const cancelOrderItem = async (req, res) => {
   const t = await sequelize.transaction();
@@ -55,18 +56,19 @@ export const cancelOrderItem = async (req, res) => {
       await axios.post(
         `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/release`,
         { items: [{ productId: item.productId, quantity: item.quantity }] },
-         {
-        headers: { "x-internal-token": process.env.INTERNAL_API_KEY } // 🟢 ADD THIS HERE
-      } ,
+        {
+          headers: { "x-internal-token": process.env.INTERNAL_API_KEY }, // 🟢 ADD THIS HERE
+        },
       );
     } catch (e) {
       console.error("Stock Release Failed");
     }
 
     res.json({
-      message: (order.paymentMethod !== "COD" && isRefundDue)
-        ? "Item cancelled. Refund requested and pending Admin approval."
-        : "Item cancelled successfully.",
+      message:
+        order.paymentMethod !== "COD" && isRefundDue
+          ? "Item cancelled. Refund requested and pending Admin approval."
+          : "Item cancelled successfully.",
     });
   } catch (err) {
     if (!t.finished) await t.rollback();
@@ -74,12 +76,11 @@ export const cancelOrderItem = async (req, res) => {
   }
 };
 
-
 export const cancelFullOrder = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { orderId } = req.params;
-    const { reason } = req.body; 
+    const { reason } = req.body;
 
     const order = await Order.findByPk(orderId, {
       include: OrderItem,
@@ -110,7 +111,7 @@ export const cancelFullOrder = async (req, res) => {
     const itemsToRelease = [];
     for (const item of itemsToCancel) {
       item.status = "CANCELLED";
-      item.returnReason = reason || "Customer Cancelled"; 
+      item.returnReason = reason || "Customer Cancelled";
 
       // NEW LOGIC: Require admin approval for prepaid refunds
       if (order.paymentMethod !== "COD" && isRefundDue) {
@@ -136,18 +137,18 @@ export const cancelFullOrder = async (req, res) => {
         `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/release`,
         { items: itemsToRelease },
         {
-        headers: { "x-internal-token": process.env.INTERNAL_API_KEY } // 🟢 ADD THIS HERE
-      },
+          headers: { "x-internal-token": process.env.INTERNAL_API_KEY }, // 🟢 ADD THIS HERE
+        },
       );
     } catch (e) {
       console.error("Stock Release Failed");
     }
 
-
     res.json({
-      message: (order.paymentMethod !== "COD" && isRefundDue)
-        ? "Order cancelled. Refund requested and pending Admin approval."
-        : "Order cancelled successfully.",
+      message:
+        order.paymentMethod !== "COD" && isRefundDue
+          ? "Order cancelled. Refund requested and pending Admin approval."
+          : "Order cancelled successfully.",
     });
   } catch (err) {
     if (!t.finished) await t.rollback();
@@ -162,7 +163,7 @@ export const requestReturn = async (req, res) => {
     // 🟢 FIX 1: Extract refundMethod and bankDetails here
     const { reason, refundMethod, bankDetails } = req.body;
     const userId = req.user.id;
-    
+
     const item = await OrderItem.findOne({
       where: { id: itemId, orderId },
       include: [{ model: Order, where: { userId } }],
@@ -181,7 +182,7 @@ export const requestReturn = async (req, res) => {
       await t.rollback();
       return res.status(400).json({ message: "Return already active." });
     }
-    
+
     const today = new Date();
     const orderDate = new Date(item.Order.orderDate);
 
@@ -196,22 +197,35 @@ export const requestReturn = async (req, res) => {
     }
 
     const parentOrder = await Order.findByPk(orderId, { transaction: t });
-    
+
     // --- UPDATED LOGIC: Isolate 'CASH' payments from 'QR' and Online ---
-    if (parentOrder.paymentMethod === "COD" && parentOrder.codPaymentMode === "CASH") {
-      if (!refundMethod || !["BANK_TRANSFER", "WAREHOUSE_COLLECT"].includes(refundMethod)) {
+    if (
+      parentOrder.paymentMethod === "COD" &&
+      parentOrder.codPaymentMode === "CASH"
+    ) {
+      if (
+        !refundMethod ||
+        !["BANK_TRANSFER", "WAREHOUSE_COLLECT"].includes(refundMethod)
+      ) {
         await t.rollback();
-        return res.status(400).json({ message: "For Cash payments, please select a valid refund method (BANK_TRANSFER or WAREHOUSE_COLLECT)." });
+        return res
+          .status(400)
+          .json({
+            message:
+              "For Cash payments, please select a valid refund method (BANK_TRANSFER or WAREHOUSE_COLLECT).",
+          });
       }
       if (refundMethod === "BANK_TRANSFER" && !bankDetails) {
         await t.rollback();
-        return res.status(400).json({ message: "Bank details are required for BANK_TRANSFER." });
+        return res
+          .status(400)
+          .json({ message: "Bank details are required for BANK_TRANSFER." });
       }
       item.refundMethod = refundMethod;
       item.bankDetails = bankDetails;
     } else {
       // Applies to standard Online Payments AND COD payments made via QR
-      item.refundMethod = "ORIGINAL_SOURCE"; 
+      item.refundMethod = "ORIGINAL_SOURCE";
     }
 
     // 🟢 FIX 2: Group all item updates together and save once
@@ -235,14 +249,14 @@ export const requestReturn = async (req, res) => {
 
     await t.commit();
     res.json({
-      message: "Return requested successfully. Refund will be processed after Admin verification.",
+      message:
+        "Return requested successfully. Refund will be processed after Admin verification.",
     });
   } catch (err) {
     if (!t.finished) await t.rollback();
     res.status(500).json({ message: err.message });
   }
 };
-
 
 export const updateRefundStatusAdmin = async (req, res) => {
   const t = await sequelize.transaction();
@@ -264,107 +278,141 @@ export const updateRefundStatusAdmin = async (req, res) => {
     let targetUserId = null;
     let assignmentMessage = "";
     let assignedBoyId = null;
-    let assignedBoyName = null; 
+    let assignedBoyName = null;
 
     // --- CREDITED LOGIC (Online & Cash Management) ---
     if (status === "CREDITED") {
       const order = await Order.findByPk(item.orderId, { transaction: t });
-        
+
       if (order && order.userId) {
         targetUserId = order.userId;
         const refundAmount = parseFloat(item.price) * parseInt(item.quantity);
-        
+
         // 🟢 AUTOMATIC REFUND (For Online Payments & COD-QR)
-        if (item.refundMethod === "ORIGINAL_SOURCE" && order.razorpayPaymentId) {
-            try {
-                console.log(`💰 Initiating Auto-Refund of ₹${refundAmount} via Razorpay...`);
-                await razorpay.payments.refund(order.razorpayPaymentId, {
-                    amount: refundAmount * 100 
-                });
-                console.log(`✅ Refund successful to customer's original source!`);
-            } catch (razorpayErr) {
-                console.error("Razorpay Refund Failed:", razorpayErr);
-                await t.rollback();
-                return res.status(500).json({ message: "Payment Gateway Refund Failed. Try again." });
-            }
-        } 
+        if (
+          item.refundMethod === "ORIGINAL_SOURCE" &&
+          order.razorpayPaymentId
+        ) {
+          try {
+            console.log(
+              `💰 Initiating Auto-Refund of ₹${refundAmount} via Razorpay...`,
+            );
+            await razorpay.payments.refund(order.razorpayPaymentId, {
+              amount: refundAmount * 100,
+            });
+            console.log(`✅ Refund successful to customer's original source!`);
+          } catch (razorpayErr) {
+            console.error("Razorpay Refund Failed:", razorpayErr);
+            await t.rollback();
+            return res
+              .status(500)
+              .json({ message: "Payment Gateway Refund Failed. Try again." });
+          }
+        }
         // 🟢 CASH REFUNDS (Strictly for physical cash)
-        else if (order.paymentMethod === "COD" && order.codPaymentMode === "CASH") {
-            if (item.refundMethod === "BANK_TRANSFER") {
-                console.log(`🏦 Admin processed bank transfer of ₹${refundAmount}. Bank Details:`, item.bankDetails);
-            } else if (item.refundMethod === "WAREHOUSE_COLLECT") {
-                console.log(`🏢 Cash Refund of ₹${refundAmount} was collected physically at the warehouse.`);
-            }
+        else if (
+          order.paymentMethod === "COD" &&
+          order.codPaymentMode === "CASH"
+        ) {
+          if (item.refundMethod === "BANK_TRANSFER") {
+            console.log(
+              `🏦 Admin processed bank transfer of ₹${refundAmount}. Bank Details:`,
+              item.bankDetails,
+            );
+          } else if (item.refundMethod === "WAREHOUSE_COLLECT") {
+            console.log(
+              `🏢 Cash Refund of ₹${refundAmount} was collected physically at the warehouse.`,
+            );
+          }
         }
       }
       item.refundStatus = "CREDITED";
       await item.save({ transaction: t });
     }
-    
+
     // --- APPROVED LOGIC (Auto-Assign Delivery Boy or Warehouse Drop) ---
     else if (status === "APPROVED") {
       item.refundStatus = "APPROVED";
       if (returnDropMethod) {
-          item.returnDropMethod = returnDropMethod;
+        item.returnDropMethod = returnDropMethod;
       }
 
       if (item.status === "DELIVERED") {
-        const order = await Order.findByPk(item.orderId, { transaction: t, lock: true });
+        const order = await Order.findByPk(item.orderId, {
+          transaction: t,
+          lock: true,
+        });
 
         if (order) {
           targetUserId = order.userId;
 
           if (returnDropMethod === "WAREHOUSE_DROP") {
-              assignmentMessage = " (Customer will drop off item at the Warehouse)";
-              assignedBoyName = "Warehouse Drop-off";
+            assignmentMessage =
+              " (Customer will drop off item at the Warehouse)";
+            assignedBoyName = "Warehouse Drop-off";
           } else {
-              // Call existing auto-assigner and pass "RETURN_PICKUP"
-              const assignResult = await autoAssignDeliveryBoy(order.id, order.assignedArea, t, "RETURN_PICKUP");
+            // Call existing auto-assigner and pass "RETURN_PICKUP"
+            const assignResult = await autoAssignDeliveryBoy(
+              order.id,
+              order.assignedArea,
+              t,
+              "RETURN_PICKUP",
+            );
 
-              if (assignResult.success) {
-                  assignedBoyId = assignResult.boy.id;
-                  assignedBoyName = assignResult.boy.name;
-                  assignmentMessage = ` & Auto-Assigned to ${assignedBoyName}`;
-              } else {
-                  assignmentMessage = ` (Auto-Assign Failed: ${assignResult.message})`;
-              }
+            if (assignResult.success) {
+              assignedBoyId = assignResult.boy.id;
+              assignedBoyName = assignResult.boy.name;
+              assignmentMessage = ` & Auto-Assigned to ${assignedBoyName}`;
+            } else {
+              assignmentMessage = ` (Auto-Assign Failed: ${assignResult.message})`;
+            }
           }
         }
       }
       await item.save({ transaction: t });
     }
-    
+
     // --- COMPLETED LOGIC (Stock Restoration) ---
     else if (status === "COMPLETED") {
       if (item.refundStatus === "COMPLETED") {
         await t.rollback();
-        return res.status(400).json({ message: "Item is already verified and restocked." });
+        return res
+          .status(400)
+          .json({ message: "Item is already verified and restocked." });
       }
 
       try {
         await axios.post(
           `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/releaseafterreturn`,
           { items: [{ productId: item.productId, quantity: item.quantity }] },
-         {
-        headers: { "x-internal-token": process.env.INTERNAL_API_KEY } // 🟢 ADD THIS HERE
-      }
+          {
+            headers: { "x-internal-token": process.env.INTERNAL_API_KEY }, // 🟢 ADD THIS HERE
+          },
         );
         console.log(`📦 Stock Restored for Verified Return Item #${item.id}`);
       } catch (apiErr) {
-        throw new Error(apiErr.response?.data?.message || "Stock Restoration Failed");
+        throw new Error(
+          apiErr.response?.data?.message || "Stock Restoration Failed",
+        );
       }
 
-      const order = await Order.findByPk(item.orderId, { attributes: ["userId"], transaction: t });
+      const order = await Order.findByPk(item.orderId, {
+        attributes: ["userId"],
+        transaction: t,
+      });
       if (order) targetUserId = order.userId;
 
       item.refundStatus = "COMPLETED";
       await item.save({ transaction: t });
       assignmentMessage = " (Stock Updated)";
-    } 
-    
+    }
+
     // --- ANY OTHER STATUS ---
     else {
-      const order = await Order.findByPk(item.orderId, { attributes: ["userId"], transaction: t });
+      const order = await Order.findByPk(item.orderId, {
+        attributes: ["userId"],
+        transaction: t,
+      });
       if (order) targetUserId = order.userId;
       item.refundStatus = status;
       await item.save({ transaction: t });
@@ -372,10 +420,9 @@ export const updateRefundStatusAdmin = async (req, res) => {
 
     await t.commit();
 
-
     res.json({
       message: `Status updated to ${status}${assignmentMessage}.`,
-      pickupBoy: assignedBoyName, 
+      pickupBoy: assignedBoyName,
     });
   } catch (err) {
     if (!t.finished) await t.rollback();
@@ -394,14 +441,24 @@ export const getCancelledRefundOrders = async (req, res) => {
       include: [
         {
           model: Order,
-          required: true, 
+          required: true,
           where: {
-            paymentMethod: { [Op.ne]: "COD" } // Only show prepaid orders needing actual refunds
+            paymentMethod: { [Op.ne]: "COD" }, // Only show prepaid orders needing actual refunds
           },
-          attributes: ["id", "userId", "address", "paymentMethod", "payment", "amount"],
+          attributes: [
+            "id",
+            "userId",
+            "address",
+            "paymentMethod",
+            "payment",
+            "amount",
+          ],
         },
       ],
-      order: [["updatedAt", "DESC"], ["id", "DESC"]],
+      order: [
+        ["updatedAt", "DESC"],
+        ["id", "DESC"],
+      ],
     });
 
     const productIds = [...new Set(rows.map((i) => i.productId))];
@@ -409,11 +466,13 @@ export const getCancelledRefundOrders = async (req, res) => {
 
     if (productIds.length > 0) {
       try {
-        const { data } = await axios.get(`${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/batch`, {
-          params: { ids: productIds.join(",") },   
-        headers: { "x-internal-token": process.env.INTERNAL_API_KEY } // 🟢 ADD THIS HERE
-      
-        });
+        const { data } = await axios.get(
+          `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/batch`,
+          {
+            params: { ids: productIds.join(",") },
+            headers: { "x-internal-token": process.env.INTERNAL_API_KEY }, // 🟢 ADD THIS HERE
+          },
+        );
         data.forEach((p) => (productMap[p.id] = p));
       } catch (e) {
         console.error("Product fetch failed", e.message);
@@ -436,7 +495,6 @@ export const getCancelledRefundOrders = async (req, res) => {
   }
 };
 
-
 export const getAllReturnOrdersAdmin = async (req, res) => {
   try {
     const { count, rows } = await OrderItem.findAndCountAll({
@@ -447,7 +505,15 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
       include: [
         {
           model: Order,
-          attributes: ["id", "userId", "address", "date", "createdAt", "paymentMethod", "codPaymentMode"],
+          attributes: [
+            "id",
+            "userId",
+            "address",
+            "date",
+            "createdAt",
+            "paymentMethod",
+            "codPaymentMode",
+          ],
           // 🟢 FIX 1: Removed the buggy nested DeliveryAssignment include from here
         },
       ],
@@ -477,8 +543,8 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
         const response = await axios.get(
           `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/batch?ids=${idsStr}`,
           {
-        headers: { "x-internal-token": process.env.INTERNAL_API_KEY } // 🟢 ADD THIS HERE
-      }
+            headers: { "x-internal-token": process.env.INTERNAL_API_KEY }, // 🟢 ADD THIS HERE
+          },
         );
         response.data.forEach((p) => {
           productMap[p.id] = p;
@@ -491,26 +557,28 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
     // --- 🟢 FIX 3: Manually fetch ONLY active Return Tasks directly from the DB ---
     let returnTasks = [];
     if (orderIds.size > 0) {
-        returnTasks = await DeliveryAssignment.findAll({
-            where: {
-                orderId: { [Op.in]: Array.from(orderIds) },
-                reason: "RETURN_PICKUP",
-                status: { [Op.ne]: "FAILED" } // Ignores Raju's cancelled task
-            },
-            include: [{ model: DeliveryBoy, attributes: ["name", "phone"] }],
-            order: [["createdAt", "DESC"]] // Gets the newest one
-        });
+      returnTasks = await DeliveryAssignment.findAll({
+        where: {
+          orderId: { [Op.in]: Array.from(orderIds) },
+          reason: "RETURN_PICKUP",
+          status: { [Op.ne]: "FAILED" }, // Ignores Raju's cancelled task
+        },
+        include: [{ model: DeliveryBoy, attributes: ["name", "phone"] }],
+        order: [["createdAt", "DESC"]], // Gets the newest one
+      });
     }
 
     const formattedReturns = uniqueRows.map((item) => {
       // 🟢 FIX 4: Instantly match the correct return task (Shyam) for this specific order
-      const pickupTask = returnTasks.find(task => task.orderId === item.orderId);
+      const pickupTask = returnTasks.find(
+        (task) => task.orderId === item.orderId,
+      );
 
       let boyName = "Pending Assignment";
       if (item.returnDropMethod === "WAREHOUSE_DROP") {
-          boyName = "Warehouse Drop-off";
+        boyName = "Warehouse Drop-off";
       } else if (pickupTask && pickupTask.DeliveryBoy) {
-          boyName = pickupTask.DeliveryBoy.name;
+        boyName = pickupTask.DeliveryBoy.name;
       }
 
       const product = productMap[item.productId];
@@ -525,7 +593,7 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
         quantity: item.quantity,
         amountToRefund: item.price,
         status: item.refundStatus,
-        refundMethod: item.refundMethod, 
+        refundMethod: item.refundMethod,
         bankDetails: item.bankDetails,
         paymentMethod: item.Order.paymentMethod,
         codPaymentMode: item.Order.codPaymentMode,
