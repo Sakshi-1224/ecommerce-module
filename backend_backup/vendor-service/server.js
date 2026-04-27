@@ -10,35 +10,32 @@ dotenv.config();
 
 const app = express();
 
-
-
 app.use(express.json());
-app.use(cookieParser()); 
+app.use(cookieParser());
 
 const csrfProtection = csrf({ cookie: true });
 
-app.get("/api/csrf-token", csrfProtection, (req, res) => {
+app.get("/api/vendor/csrf-token", csrfProtection, (req, res) => {
   res.json({ csrfToken: req.csrfToken() });
 });
 
-app.use("/api/vendor",csrfProtection, vendorRoutes);
-app.use("/api/admin",csrfProtection,adminVendorRoutes);
-
+app.use("/api/vendor", csrfProtection, vendorRoutes);
+app.use("/api/admin", csrfProtection, adminVendorRoutes);
 
 app.use((err, req, res, next) => {
   // Catch CSRF token errors specifically
-  if (err.code === 'EBADCSRFTOKEN') {
+  if (err.code === "EBADCSRFTOKEN") {
     return res.status(403).json({ message: "Invalid CSRF token" });
   }
-  
+
   console.error("Unhandled User Service Error:", err.stack);
   res.status(500).json({
     message: "An internal server error occurred",
-    error: process.env.NODE_ENV === 'production' ? null : err.message
+    error: process.env.NODE_ENV === "production" ? null : err.message,
   });
 });
 
-const port=process.env.PORT;
+const port = process.env.PORT;
 
 sequelize
   .sync()
@@ -49,23 +46,6 @@ sequelize
       console.log(`Vendor Service running on port ${port}`);
     });
   })
-  .catch(err => {
+  .catch((err) => {
     console.error("Vendor DB connection failed:", err);
   });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  

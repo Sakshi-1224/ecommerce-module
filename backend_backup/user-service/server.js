@@ -20,7 +20,7 @@ const csrfProtection = csrf({ cookie: true });
 defineAssociations();
 
 // Provide a route for the React frontend to fetch the CSRF token
-app.get("/api/csrf-token", csrfProtection, (req, res) => {
+app.get("/api/auth/csrf-token", csrfProtection, (req, res) => {
   res.json({ csrfToken: req.csrfToken() });
 });
 
@@ -30,14 +30,14 @@ app.use("/api/addresses", csrfProtection, addressRoutes);
 
 app.use((err, req, res, next) => {
   // Catch CSRF token errors specifically
-  if (err.code === 'EBADCSRFTOKEN') {
+  if (err.code === "EBADCSRFTOKEN") {
     return res.status(403).json({ message: "Invalid CSRF token" });
   }
-  
+
   console.error("Unhandled User Service Error:", err.stack);
   res.status(500).json({
     message: "An internal server error occurred",
-    error: process.env.NODE_ENV === 'production' ? null : err.message
+    error: process.env.NODE_ENV === "production" ? null : err.message,
   });
 });
 
