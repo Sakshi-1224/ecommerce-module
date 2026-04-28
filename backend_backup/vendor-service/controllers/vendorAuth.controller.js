@@ -2,8 +2,8 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 import Vendor from "../models/Vendor.js";
-import redis from "../config/redis.js"; 
-import { validateVerhoeff } from "../utils/verhoeff.js"; 
+import redis from "../config/redis.js";
+import { validateVerhoeff } from "../utils/verhoeff.js";
 import { fetchWithCache, safeDeleteCache } from "../utils/redisWrapper.js";
 import { sendTokenCookie, clearTokenCookie } from "../utils/cookie.util.js";
 
@@ -14,11 +14,25 @@ const registerSchema = z.object({
   password: z.string().min(6, "Password must be at least 6 characters"),
   businessName: z.string().min(1, "Business name is required"),
   businessType: z.string().min(1, "Business type is required"),
-  yearsInBusiness: z.number().int().nonnegative("Years in business cannot be negative"),
+  yearsInBusiness: z
+    .number()
+    .int()
+    .nonnegative("Years in business cannot be negative"),
   businessAddress: z.string().min(1, "Business address is required"),
-  aadharNumber: z.string().regex(/^\d{12}$/, "Aadhaar number must be exactly 12 digits"),
-  panNumber: z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/, "Invalid PAN number format"),
-  gstNumber: z.string().regex(/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/, "Invalid GST number format").optional().or(z.literal('')),
+  aadharNumber: z
+    .string()
+    .regex(/^\d{12}$/, "Aadhaar number must be exactly 12 digits"),
+  panNumber: z
+    .string()
+    .regex(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/, "Invalid PAN number format"),
+  gstNumber: z
+    .string()
+    .regex(
+      /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/,
+      "Invalid GST number format",
+    )
+    .optional()
+    .or(z.literal("")),
   bankAccountHolderName: z.string().min(1, "Account holder name is required"),
   bankAccountNumber: z.string().min(1, "Account number is required"),
   bankIFSC: z.string().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, "Invalid IFSC code"),
@@ -30,34 +44,40 @@ const loginSchema = z.object({
   password: z.string().min(1, "Password is required"),
 });
 
-
-const dummyHash = "$2b$10$dummyHashThatIsExactly60CharactersLong1234567890123456";
+const dummyHash =
+  "$2b$10$dummyHashThatIsExactly60CharactersLong1234567890123456";
 
 export const register = async (req, res) => {
   try {
-  
     const parseResult = registerSchema.safeParse(req.body);
     if (!parseResult.success) {
-      return res.status(400).json({ 
-        message: "Validation failed", 
-        errors: parseResult.error.errors 
+      return res.status(400).json({
+        message: "Validation failed",
+        errors: parseResult.error.errors,
       });
     }
 
     const data = parseResult.data;
 
     if (!validateVerhoeff(data.aadharNumber)) {
-      return res.status(400).json({ message: "Invalid Aadhaar Number (Checksum failed)" });
+      return res
+        .status(400)
+        .json({ message: "Invalid Aadhaar Number (Checksum failed)" });
     }
-
 
     const [existingPhone, existingEmail] = await Promise.all([
       Vendor.findOne({ where: { phone: data.phone } }),
-      Vendor.findOne({ where: { email: data.email } })
+      Vendor.findOne({ where: { email: data.email } }),
     ]);
 
-    if (existingPhone) return res.status(409).json({ message: "Vendor already registered with this phone number" });
-    if (existingEmail) return res.status(409).json({ message: "Vendor already registered with this email" });
+    if (existingPhone)
+      return res
+        .status(409)
+        .json({ message: "Vendor already registered with this phone number" });
+    if (existingEmail)
+      return res
+        .status(409)
+        .json({ message: "Vendor already registered with this email" });
 
     const hashedPassword = await bcrypt.hash(data.password, 10);
 
@@ -69,7 +89,9 @@ export const register = async (req, res) => {
 
     await safeDeleteCache("vendors:all");
 
-    res.status(201).json({ message: "Vendor registered successfully. Awaiting admin approval." });
+    res.status(201).json({
+      message: "Vendor registered successfully. Awaiting admin approval.",
+    });
   } catch (err) {
     console.error("Registration error:", err);
     res.status(500).json({ message: "Vendor registration failed" });
@@ -78,28 +100,33 @@ export const register = async (req, res) => {
 
 export const login = async (req, res) => {
   try {
-
     const parseResult = loginSchema.safeParse(req.body);
     if (!parseResult.success) {
-      return res.status(400).json({ message: "Invalid input", errors: parseResult.error.errors });
+      return res
+        .status(400)
+        .json({ message: "Invalid input", errors: parseResult.error.errors });
     }
 
     const { phone, password } = parseResult.data;
-    
-if (redis.status !== "ready") {
-      console.error("CRITICAL: Redis is down. Blocking User login to prevent brute-force attacks.");
-      return res.status(503).json({ 
-        message: "Authentication service is temporarily unavailable. Please try again later." 
+
+    if (redis.status !== "ready") {
+      console.error(
+        "CRITICAL: Redis is down. Blocking User login to prevent brute-force attacks.",
+      );
+      return res.status(503).json({
+        message:
+          "Authentication service is temporarily unavailable. Please try again later.",
       });
     }
 
     const attemptsKey = `vendor_login_attempts:${phone}`;
 
-
     if (redis.status === "ready") {
       const attempts = await redis.get(attemptsKey);
       if (attempts && parseInt(attempts) >= 5) {
-        return res.status(429).json({ message: "Too many failed attempts. Account locked for 10 minutes." });
+        return res.status(429).json({
+          message: "Too many failed attempts. Account locked for 10 minutes.",
+        });
       }
     }
 
@@ -109,14 +136,17 @@ if (redis.status !== "ready") {
       if (redis.status === "ready") {
         const pipeline = redis.pipeline();
         pipeline.incr(attemptsKey);
-        pipeline.expire(attemptsKey, 600); 
+        pipeline.expire(attemptsKey, 600);
         await pipeline.exec();
       }
 
-      return res.status(401).json({ message: "Invalid credentials or Vendor not approved" });
+      return res
+        .status(401)
+        .json({ message: "Invalid credentials or Vendor not approved" });
     };
 
-    const hashToCompare = (vendor && vendor.status === "APPROVED") ? vendor.password : dummyHash;
+    const hashToCompare =
+      vendor && vendor.status === "APPROVED" ? vendor.password : dummyHash;
     const ok = await bcrypt.compare(password, hashToCompare);
 
     if (!vendor || vendor.status !== "APPROVED" || !ok) {
@@ -128,27 +158,25 @@ if (redis.status !== "ready") {
     const token = jwt.sign(
       { id: vendor.id, role: "vendor" },
       process.env.JWT_SECRET,
-      { expiresIn: "1d" }
+      { expiresIn: "1d" },
     );
 
-sendTokenCookie(res, token);
+    sendTokenCookie(res, token);
 
-   res.json({ message: "Login successful" });
-
+    res.json({ message: "Login successful", token });
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ message: "Login failed" });
   }
 };
 
-
 export const getProfile = async (req, res) => {
   try {
     const vendorId = req.user.id;
 
     const cacheKey = `vendor:profile:${vendorId}`;
-  
-   const vendor = await fetchWithCache(cacheKey, 3600, async () => {
+
+    const vendor = await fetchWithCache(cacheKey, 3600, async () => {
       return await Vendor.findByPk(vendorId, {
         attributes: { exclude: ["password"] },
       });
@@ -156,13 +184,11 @@ export const getProfile = async (req, res) => {
 
     if (!vendor) return res.status(404).json({ message: "Vendor not found" });
 
-
     res.json(vendor);
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch profile" });
   }
 };
-
 
 export const logout = async (req, res) => {
   try {
@@ -175,7 +201,9 @@ export const logout = async (req, res) => {
     if (redis.status === "ready") {
       await redis.set(`blacklist:${token}`, "true", "EX", 86400);
     } else {
-      console.warn("⚠️ Redis is down. Skipping token blacklist during vendor logout.");
+      console.warn(
+        "⚠️ Redis is down. Skipping token blacklist during vendor logout.",
+      );
     }
 
     if (req.user && req.user.id) {

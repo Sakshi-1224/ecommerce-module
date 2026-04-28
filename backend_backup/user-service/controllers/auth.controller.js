@@ -10,14 +10,17 @@ import { sendTokenCookie, clearTokenCookie } from "../utils/cookie.util.js";
 const BUCKET_NAME = "user-profiles";
 initBucket(BUCKET_NAME);
 
-
 const registerSchema = z.object({
   name: z.string().min(1, "Name is required"),
   email: z.string().email("Invalid email format"),
   phone: z.string().regex(/^\d{10}$/, "Phone number must be exactly 10 digits"),
-  password: z.string()
+  password: z
+    .string()
     .min(6, "Password must be at least 6 characters long")
-    .regex(/(?=.*[A-Z])(?=.*\d)/, "Password must contain at least one number and one uppercase letter"),
+    .regex(
+      /(?=.*[A-Z])(?=.*\d)/,
+      "Password must contain at least one number and one uppercase letter",
+    ),
 });
 
 const loginSchema = z.object({
@@ -35,31 +38,43 @@ const changePasswordSchema = z.object({
   newPassword: z.string().min(6, "New password must be at least 6 characters"),
 });
 
-
-const dummyHash = "$2b$10$dummyHashThatIsExactly60CharactersLong1234567890123456";
+const dummyHash =
+  "$2b$10$dummyHashThatIsExactly60CharactersLong1234567890123456";
 
 export const register = async (req, res) => {
   try {
-    
     const parseResult = registerSchema.safeParse(req.body);
     if (!parseResult.success) {
-      return res.status(400).json({ message: "Validation failed", errors: parseResult.error.errors });
+      return res
+        .status(400)
+        .json({
+          message: "Validation failed",
+          errors: parseResult.error.errors,
+        });
     }
 
     const { name, email, phone, password } = parseResult.data;
 
     const [existingPhone, existingEmail] = await Promise.all([
       User.findOne({ where: { phone } }),
-      User.findOne({ where: { email } })
+      User.findOne({ where: { email } }),
     ]);
 
-    if (existingPhone) return res.status(400).json({ message: "User already exists with this phone" });
-    if (existingEmail) return res.status(400).json({ message: "User already exists with this email" });
+    if (existingPhone)
+      return res
+        .status(400)
+        .json({ message: "User already exists with this phone" });
+    if (existingEmail)
+      return res
+        .status(400)
+        .json({ message: "User already exists with this email" });
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const user = await User.create({
-      name, email, phone,
+      name,
+      email,
+      phone,
       password: hashedPassword,
       role: "user",
     });
@@ -67,7 +82,7 @@ export const register = async (req, res) => {
     const token = jwt.sign(
       { id: user.id, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: "7d" }
+      { expiresIn: "7d" },
     );
 
     sendTokenCookie(res, token);
@@ -75,9 +90,13 @@ export const register = async (req, res) => {
     res.status(201).json({
       message: "User registered successfully",
       user: {
-        id: user.id, name: user.name, phone: user.phone,
-        email: user.email, role: user.role,
-        walletBalance: user.walletBalance, profilePic: user.profilePic,
+        id: user.id,
+        name: user.name,
+        phone: user.phone,
+        email: user.email,
+        role: user.role,
+        walletBalance: user.walletBalance,
+        profilePic: user.profilePic,
       },
     });
   } catch (err) {
@@ -91,25 +110,34 @@ export const login = async (req, res) => {
     // 1. Zod Validation
     const parseResult = loginSchema.safeParse(req.body);
     if (!parseResult.success) {
-      return res.status(400).json({ message: "Invalid input", errors: parseResult.error.errors });
+      return res
+        .status(400)
+        .json({ message: "Invalid input", errors: parseResult.error.errors });
     }
 
     const { phone, password } = parseResult.data;
 
     if (redis.status !== "ready") {
-      console.error("CRITICAL: Redis is down. Blocking User login to prevent brute-force attacks.");
-      return res.status(503).json({ 
-        message: "Authentication service is temporarily unavailable. Please try again later." 
+      console.error(
+        "CRITICAL: Redis is down. Blocking User login to prevent brute-force attacks.",
+      );
+      return res.status(503).json({
+        message:
+          "Authentication service is temporarily unavailable. Please try again later.",
       });
     }
-    
+
     const attemptsKey = `user_login_attempts:${phone}`;
 
     // 2. Redis Brute-Force Protection
     if (redis.status === "ready") {
       const attempts = await redis.get(attemptsKey);
       if (attempts && parseInt(attempts) >= 5) {
-        return res.status(429).json({ message: "Too many failed attempts. Account locked for 10 minutes." });
+        return res
+          .status(429)
+          .json({
+            message: "Too many failed attempts. Account locked for 10 minutes.",
+          });
       }
     }
 
@@ -119,7 +147,7 @@ export const login = async (req, res) => {
       if (redis.status === "ready") {
         const pipeline = redis.pipeline();
         pipeline.incr(attemptsKey);
-        pipeline.expire(attemptsKey, 600); 
+        pipeline.expire(attemptsKey, 600);
         await pipeline.exec();
       }
       return res.status(401).json({ message: "Invalid credentials" });
@@ -134,19 +162,30 @@ export const login = async (req, res) => {
     // Reset attempts
     if (redis.status === "ready") await redis.del(attemptsKey);
 
-   const token = jwt.sign(
-      { id: user.id, name: user.name, phone: user.phone, email: user.email, role: user.role },
+    const token = jwt.sign(
+      {
+        id: user.id,
+        name: user.name,
+        phone: user.phone,
+        email: user.email,
+        role: user.role,
+      },
       process.env.JWT_SECRET,
-      { expiresIn: "7d" }
+      { expiresIn: "7d" },
     );
 
     sendTokenCookie(res, token);
 
-   res.json({
+    res.json({
       message: "Login successful",
+      token,
       user: {
-        id: user.id, name: user.name, phone: user.phone,
-        email: user.email, profilePic: user.profilePic, role: user.role
+        id: user.id,
+        name: user.name,
+        phone: user.phone,
+        email: user.email,
+        profilePic: user.profilePic,
+        role: user.role,
       },
     });
   } catch (err) {
@@ -157,23 +196,22 @@ export const login = async (req, res) => {
 
 export const logout = async (req, res) => {
   try {
-  const token = req.cookies.jwt; 
-    
+    const token = req.cookies.jwt;
+
     if (token) {
       const key = `blacklist:${token}`;
       if (redis.status === "ready") {
-        await redis.set(key, "true", "EX", 604800); 
+        await redis.set(key, "true", "EX", 604800);
       }
     }
-    
+
     clearTokenCookie(res);
-    
+
     res.json({ message: "Logout successful" });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Internal server error" });
   }
-  
 };
 
 /* ======================================================
@@ -197,7 +235,7 @@ export const me = async (req, res) => {
       email: user.email,
       phone: user.phone,
       role: user.role,
-      profilePic: user.profilePic
+      profilePic: user.profilePic,
     });
   } catch (err) {
     console.error(err);
@@ -209,18 +247,24 @@ export const changePassword = async (req, res) => {
   try {
     const parseResult = changePasswordSchema.safeParse(req.body);
     if (!parseResult.success) {
-      return res.status(400).json({ message: "Validation failed", errors: parseResult.error.errors });
+      return res
+        .status(400)
+        .json({
+          message: "Validation failed",
+          errors: parseResult.error.errors,
+        });
     }
 
     const { oldPassword, newPassword } = parseResult.data;
     const user = await User.findByPk(req.user.id);
-    
+
     // Timing attack mitigation here too
     const hashToCompare = user ? user.password : dummyHash;
     const isMatch = await bcrypt.compare(oldPassword, hashToCompare);
 
     if (!user) return res.status(404).json({ message: "User not found" });
-    if (!isMatch) return res.status(400).json({ message: "Old password is incorrect" });
+    if (!isMatch)
+      return res.status(400).json({ message: "Old password is incorrect" });
 
     user.password = await bcrypt.hash(newPassword, 10);
     await user.save();
@@ -248,7 +292,12 @@ export const updateProfile = async (req, res) => {
   try {
     const parseResult = updateProfileSchema.safeParse(req.body);
     if (!parseResult.success) {
-      return res.status(400).json({ message: "Validation failed", errors: parseResult.error.errors });
+      return res
+        .status(400)
+        .json({
+          message: "Validation failed",
+          errors: parseResult.error.errors,
+        });
     }
 
     const { name, email } = parseResult.data;
@@ -259,7 +308,8 @@ export const updateProfile = async (req, res) => {
     if (name) user.name = name;
     if (email && email !== user.email) {
       const exists = await User.findOne({ where: { email } });
-      if (exists) return res.status(400).json({ message: "Email already in use" });
+      if (exists)
+        return res.status(400).json({ message: "Email already in use" });
       user.email = email;
     }
 
@@ -267,7 +317,11 @@ export const updateProfile = async (req, res) => {
       const file = req.file;
       const fileName = `${Date.now()}-${file.originalname.replace(/\s+/g, "-")}`;
       await minioClient.putObject(
-        BUCKET_NAME, fileName, file.buffer, file.size, { "Content-Type": file.mimetype }
+        BUCKET_NAME,
+        fileName,
+        file.buffer,
+        file.size,
+        { "Content-Type": file.mimetype },
       );
       user.profilePic = `http://localhost:9000/${BUCKET_NAME}/${fileName}`;
     }
@@ -276,7 +330,14 @@ export const updateProfile = async (req, res) => {
 
     res.json({
       message: "Profile updated successfully",
-      user: { id: user.id, name: user.name, email: user.email, phone: user.phone, profilePic: user.profilePic, role: user.role },
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        profilePic: user.profilePic,
+        role: user.role,
+      },
     });
   } catch (error) {
     console.error("Update Profile Error:", error);

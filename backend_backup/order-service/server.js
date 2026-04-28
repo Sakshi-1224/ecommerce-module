@@ -21,7 +21,7 @@ app.use(
         req.rawBody = buf.toString();
       }
     },
-  })
+  }),
 );
 // 👇 RUN ASSOCIATIONS HERE
 defineAssociations();
@@ -35,12 +35,12 @@ app.use((err, req, res, next) => {
   console.error("Unhandled Order Service Error:", err.stack);
   res.status(500).json({
     message: "An internal server error occurred",
-    error: process.env.NODE_ENV === 'production' ? null : err.message
+    error: process.env.NODE_ENV === "production" ? null : err.message,
   });
 });
 
-sequelize.sync({force:true}).then(() => {
+sequelize.sync({ alter: true }).then(() => {
   app.listen(process.env.PORT, () =>
-    console.log(`Order Service running on ${process.env.PORT}`)
+    console.log(`Order Service running on ${process.env.PORT}`),
   );
 });

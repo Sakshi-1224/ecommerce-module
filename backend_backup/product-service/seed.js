@@ -6,6 +6,19 @@ import axios from "axios"; // 🟢 ADDED: Import axios to talk to the Vendor ser
 
 dotenv.config();
 
+const extractJwtCookie = (setCookieHeader) => {
+  if (!setCookieHeader) return null;
+  const cookies = Array.isArray(setCookieHeader)
+    ? setCookieHeader
+    : [setCookieHeader];
+
+  const jwtSetCookie = cookies.find(
+    (c) => typeof c === "string" && c.startsWith("jwt="),
+  );
+  if (!jwtSetCookie) return null;
+  return jwtSetCookie.split(";")[0]?.trim() || null; // "jwt=<token>"
+};
+
 const seedProducts = async () => {
   try {
     await sequelize.authenticate();
@@ -21,98 +34,118 @@ const seedProducts = async () => {
       where: { name: "Clothing" },
       defaults: { name: "Clothing" },
     });
-const [fresh] = await Category.findOrCreate({
-  where: { name: "Fresh & Daily Essentials" },
-  defaults: { name: "Fresh & Daily Essentials" },
-});
+    const [fresh] = await Category.findOrCreate({
+      where: { name: "Fresh & Daily Essentials" },
+      defaults: { name: "Fresh & Daily Essentials" },
+    });
 
-const [snacks] = await Category.findOrCreate({
-  where: { name: "Snacks & Ready-to-Eat" },
-  defaults: { name: "Snacks & Ready-to-Eat" },
-});
+    const [snacks] = await Category.findOrCreate({
+      where: { name: "Snacks & Ready-to-Eat" },
+      defaults: { name: "Snacks & Ready-to-Eat" },
+    });
 
-const [beverages] = await Category.findOrCreate({
-  where: { name: "Beverages" },
-  defaults: { name: "Beverages" },
-});
+    const [beverages] = await Category.findOrCreate({
+      where: { name: "Beverages" },
+      defaults: { name: "Beverages" },
+    });
 
-const [staples] = await Category.findOrCreate({
-  where: { name: "Staples & Cooking Essentials" },
-  defaults: { name: "Staples & Cooking Essentials" },
-});
+    const [staples] = await Category.findOrCreate({
+      where: { name: "Staples & Cooking Essentials" },
+      defaults: { name: "Staples & Cooking Essentials" },
+    });
 
-const [packaged] = await Category.findOrCreate({
-  where: { name: "Packaged & Branded Foods" },
-  defaults: { name: "Packaged & Branded Foods" },
-});
+    const [packaged] = await Category.findOrCreate({
+      where: { name: "Packaged & Branded Foods" },
+      defaults: { name: "Packaged & Branded Foods" },
+    });
 
-const [sweets] = await Category.findOrCreate({
-  where: { name: "Sweets & Desserts" },
-  defaults: { name: "Sweets & Desserts" },
-});
+    const [sweets] = await Category.findOrCreate({
+      where: { name: "Sweets & Desserts" },
+      defaults: { name: "Sweets & Desserts" },
+    });
 
-const [healthy] = await Category.findOrCreate({
-  where: { name: "Healthy & Organic" },
-  defaults: { name: "Healthy & Organic" },
-});
+    const [healthy] = await Category.findOrCreate({
+      where: { name: "Healthy & Organic" },
+      defaults: { name: "Healthy & Organic" },
+    });
 
-const [baby] = await Category.findOrCreate({
-  where: { name: "Baby Food" },
-  defaults: { name: "Baby Food" },
-});
+    const [baby] = await Category.findOrCreate({
+      where: { name: "Baby Food" },
+      defaults: { name: "Baby Food" },
+    });
 
-const [combos] = await Category.findOrCreate({
-  where: { name: "Combos & Offers" },
-  defaults: { name: "Combos & Offers" },
-});
+    const [combos] = await Category.findOrCreate({
+      where: { name: "Combos & Offers" },
+      defaults: { name: "Combos & Offers" },
+    });
     // 🟢 1. Fetch real vendors from your API Gateway / Vendor Service
     console.log("🔄 Fetching live vendors from Vendor Service...");
     let realVendorId;
 
-    try {
-      const ADMIN_SERVICE_URL = process.env.ADMIN_SERVICE_URL;
-      const VENDOR_SERVICE_ADMIN_URL = process.env.VENDOR_SERVICE_ADMIN_URL;
+    // Allow bypassing cross-service auth for local/dev
+    if (process.env.SEED_VENDOR_ID) {
+      realVendorId = process.env.SEED_VENDOR_ID;
+      console.log(`✅ Using SEED_VENDOR_ID=${realVendorId}`);
+    } else {
+      try {
+        const ADMIN_SERVICE_URL = process.env.ADMIN_SERVICE_URL;
+        const VENDOR_SERVICE_ADMIN_URL = process.env.VENDOR_SERVICE_ADMIN_URL;
 
-      const loginResponse = await axios.post(`${ADMIN_SERVICE_URL}/login`, {
-        phone: "9999999999",
-        password: "Admin@123",
-      });
+        if (!ADMIN_SERVICE_URL || !VENDOR_SERVICE_ADMIN_URL) {
+          throw new Error(
+            "Missing ADMIN_SERVICE_URL or VENDOR_SERVICE_ADMIN_URL in product-service/.env",
+          );
+        }
 
-      const adminToken = loginResponse.data.token;
-      console.log("✅ Admin logged in! Fetching vendors...");
+        const loginResponse = await axios.post(`${ADMIN_SERVICE_URL}/login`, {
+          phone: "9999999999",
+          password: "Admin@123",
+        });
 
-      const vendorResponse = await axios.get(
-        `${VENDOR_SERVICE_ADMIN_URL}/vendors`,
-        {
-          headers: {
-            Authorization: `Bearer ${adminToken}`,
+        // admin-service sets the JWT as an HttpOnly cookie named "jwt"
+        const jwtCookie = extractJwtCookie(
+          loginResponse.headers?.["set-cookie"],
+        );
+        if (!jwtCookie) {
+          throw new Error(
+            "Admin login succeeded but no jwt cookie was set (check cookie settings / proxy / http vs https)",
+          );
+        }
+        console.log("✅ Admin logged in! Fetching vendors...");
+
+        const vendorResponse = await axios.get(
+          `${VENDOR_SERVICE_ADMIN_URL}/vendors`,
+          {
+            headers: {
+              Cookie: jwtCookie,
+            },
           },
-        },
-      );
+        );
 
-      const vendors = vendorResponse.data.vendors || vendorResponse.data;
+        const vendors = vendorResponse.data.vendors || vendorResponse.data;
 
-      if (!vendors || vendors.length === 0) {
+        if (!vendors || vendors.length === 0) {
+          console.error(
+            "❌ No vendors exist! Run 'npm run seed' in vendor-service first.",
+          );
+          process.exit(1);
+        }
+
+        realVendorId = vendors[0].id;
+        console.log(`✅ Success! Found Vendor ID ${realVendorId}.`);
+      } catch (apiErr) {
+        console.error("❌ Failed to fetch vendors.");
+        const status = apiErr.response?.status;
+        const message = apiErr.response?.data?.message || apiErr.message;
         console.error(
-          "❌ No vendors exist! Run 'npm run seed' in vendor-service first.",
+          "Error Details:",
+          status ? `${status} ${message}` : message,
+        );
+        console.error(
+          "Tip: start admin-service (5005) + vendor-service (5006), or set SEED_VENDOR_ID in product-service/.env",
         );
         process.exit(1);
       }
-
-      realVendorId = vendors[0].id;
-      console.log(`✅ Success! Found Vendor ID ${realVendorId}.`);
-    } catch (apiErr) {
-      console.error("❌ Failed to fetch vendors.");
-      const status = apiErr.response?.status;
-      const message = apiErr.response?.data?.message || apiErr.message;
-      console.error(
-        "Error Details:",
-        status ? `${status} ${message}` : message,
-      );
-      console.error(
-        "Tip: start admin-service (5005) + vendor-service (5006), or set SEED_VENDOR_ID in product-service/.env",
-      );
-      process.exit(1);
     }
 
     await Product.destroy({ where: {} });
