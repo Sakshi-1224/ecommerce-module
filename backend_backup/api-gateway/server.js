@@ -2,11 +2,11 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { createProxyMiddleware } from "http-proxy-middleware";
-import helmet from "helmet"; 
+import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import { RedisStore } from "rate-limit-redis"; 
-import redis from "./config/redis.js";         
-import crypto from "crypto"; 
+import { RedisStore } from "rate-limit-redis";
+import redis from "./config/redis.js";
+import crypto from "crypto";
 
 dotenv.config();
 
@@ -25,7 +25,7 @@ const app = express();
 app.use(helmet());
 
 const corsOptions = {
-  origin: process.env.FRONTEND_URL || "http://localhost:5174", 
+  origin: process.env.FRONTEND_URL || "http://localhost:5174",
   credentials: true,
 };
 
@@ -35,24 +35,31 @@ app.options(/(.*)/, cors(corsOptions));
 // 🟢 2. Rate Limiting with Redis Store
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200, 
-  message: { message: "Too many requests from this IP, please try again after 15 minutes" },
-  standardHeaders: true, 
-  legacyHeaders: false, 
+  max: 200,
+  message: {
+    message:
+      "Too many requests from this IP, please try again after 15 minutes",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
   store: new RedisStore({
-    // Pass the ioredis call method to the store
     sendCommand: (...args) => redis.call(...args),
   }),
 });
 
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, 
-  max: 20, 
-  message: { message: "Too many login attempts from this IP, please try again later." },
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  skipSuccessfulRequests: true,
+  requestWasSuccessful: (req, res) => {
+    return res.statusCode < 400;
+  },
+  message: {
+    message: "Too many login attempts from this IP, please try again later.",
+  },
   store: new RedisStore({
     sendCommand: (...args) => redis.call(...args),
-    // Optional: Add a prefix to easily distinguish auth limits from global limits in your Redis database
-    prefix: "rl_auth:", 
+    prefix: "rl_auth:",
   }),
 });
 
@@ -69,33 +76,38 @@ const proxy = (target) => {
   return createProxyMiddleware({
     target,
     changeOrigin: true,
-    proxyTimeout: 10000, 
-    timeout: 10000,      
-    
+    proxyTimeout: 10000,
+    timeout: 10000,
+
     // Inject Correlation ID for Distributed Tracing
     onProxyReq: (proxyReq, req, res) => {
-      const correlationId = req.headers['x-correlation-id'] || crypto.randomUUID();
-      proxyReq.setHeader('x-correlation-id', correlationId);
+      const correlationId =
+        req.headers["x-correlation-id"] || crypto.randomUUID();
+      proxyReq.setHeader("x-correlation-id", correlationId);
     },
-    
+
     onError: (err, req, res) => {
       console.error(`[Gateway Error] connecting to ${target}:`, err.message);
-      
+
       if (res.headersSent) return;
 
-      if (err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.message.includes('timeout')) {
-        return res.status(504).json({ 
-          message: "Gateway Timeout: The underlying microservice took too long to respond." 
+      if (
+        err.code === "ECONNRESET" ||
+        err.code === "ETIMEDOUT" ||
+        err.message.includes("timeout")
+      ) {
+        return res.status(504).json({
+          message:
+            "Gateway Timeout: The underlying microservice took too long to respond.",
         });
       }
 
-      res.status(502).json({ 
-        message: "Bad Gateway: Underlying service is down or unreachable." 
+      res.status(502).json({
+        message: "Bad Gateway: Underlying service is down or unreachable.",
       });
-    }
+    },
   });
 };
-
 
 app.use("/api/admin/users", proxy(USER_SERVICE_URL));
 app.use("/api/admin/vendors", proxy(VENDOR_SERVICE_ADMIN_URL));
@@ -110,12 +122,16 @@ app.use("/api/cart", proxy(CART_SERVICE_URL));
 app.use("/api/vendor", proxy(VENDOR_SERVICE_URL));
 
 app.use((req, res) => {
-  res.status(404).json({ message: "Gateway Error: Requested endpoint does not exist." });
+  res
+    .status(404)
+    .json({ message: "Gateway Error: Requested endpoint does not exist." });
 });
 
 app.use((err, req, res, next) => {
   console.error("Critical Gateway Error:", err.stack);
-  res.status(500).json({ message: "API Gateway encountered an internal error." });
+  res
+    .status(500)
+    .json({ message: "API Gateway encountered an internal error." });
 });
 
 const PORT = process.env.PORT || 5007;
