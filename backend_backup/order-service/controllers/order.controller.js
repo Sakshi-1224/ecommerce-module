@@ -18,10 +18,17 @@ import razorpay from "../config/razorpay.js"; // 🟢 Ensure this is imported at
 const VALID_TRANSITIONS = {
   PENDING: ["PROCESSING", "CANCELLED"],
   PROCESSING: ["PACKED", "CANCELLED"],
+  PARTIALLY_CANCELLED: [
+    "PROCESSING",
+    "PACKED",
+    "OUT_FOR_DELIVERY",
+    "DELIVERED",
+    "CANCELLED",
+  ],
   PACKED: ["OUT_FOR_DELIVERY", "CANCELLED"],
   OUT_FOR_DELIVERY: ["DELIVERED", "CANCELLED"],
   DELIVERED: [], // Terminal
-  CANCELLED: []  // Terminal
+  CANCELLED: [], // Terminal
 };
 
 export const checkout = async (req, res) => {
@@ -33,7 +40,11 @@ export const checkout = async (req, res) => {
   const idempotencyKey = `checkout_lock_${req.user.id}`;
   const isLocked = await redis.get(idempotencyKey);
   if (isLocked) {
-    return res.status(429).json({ message: "Checkout is currently processing. Please wait a moment." });
+    return res
+      .status(429)
+      .json({
+        message: "Checkout is currently processing. Please wait a moment.",
+      });
   }
   // Lock checkout for this user for 10 seconds
   await redis.setex(idempotencyKey, 10, "LOCKED");
@@ -91,15 +102,18 @@ export const checkout = async (req, res) => {
         await axios.post(
           `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/reserve`,
           { items },
-          { 
+          {
             headers: { "x-internal-token": process.env.INTERNAL_API_KEY },
             // 🟢 NEGATIVE CHECK: Fail fast after 5s to release MySQL locks
-            timeout: 5000 
-          }
+            timeout: 5000,
+          },
         );
         stockReserved = true;
       } catch (apiErr) {
-        throw new Error(apiErr.response?.data?.message || "Stock reservation failed or timed out.");
+        throw new Error(
+          apiErr.response?.data?.message ||
+            "Stock reservation failed or timed out.",
+        );
       }
 
       if (paymentMethod === "RAZORPAY") {
@@ -110,7 +124,7 @@ export const checkout = async (req, res) => {
         };
         razorpayOrderData = await razorpay.orders.create(options);
       }
-    }); 
+    });
 
     // Release idempotency lock immediately on success
     await redis.del(idempotencyKey);
@@ -122,7 +136,6 @@ export const checkout = async (req, res) => {
       payableAmount: finalPayableAmount,
       razorpayOrder: razorpayOrderData,
     });
-
   } catch (err) {
     // Release idempotency lock on failure
     await redis.del(idempotencyKey);
@@ -134,11 +147,11 @@ export const checkout = async (req, res) => {
         );
         await axios.post(
           `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/release`,
-          { items }, 
-          { 
+          { items },
+          {
             headers: { "x-internal-token": process.env.INTERNAL_API_KEY },
-            timeout: 5000 // Timeout on rollback as well
-          }
+            timeout: 5000, // Timeout on rollback as well
+          },
         );
       } catch (rollbackErr) {
         console.error(
@@ -167,7 +180,6 @@ export const checkout = async (req, res) => {
   }
 };
 
-
 export const updateOrderStatusAdmin = async (req, res) => {
   try {
     const { status } = req.body;
@@ -176,18 +188,23 @@ export const updateOrderStatusAdmin = async (req, res) => {
     let orderUserId = null;
 
     await sequelize.transaction(async (t) => {
-      const order = await Order.findByPk(req.params.id, { 
-        include: OrderItem, 
+      const order = await Order.findByPk(req.params.id, {
+        include: OrderItem,
         transaction: t,
-        lock: t.LOCK.UPDATE 
+        lock: t.LOCK.UPDATE,
       });
 
       if (!order) throw new Error("Order not found");
-      orderUserId = order.userId; 
+      orderUserId = order.userId;
 
       // 🟢 NEGATIVE CHECK: Enforce strictly valid state transitions
-      if (!VALID_TRANSITIONS[order.status]?.includes(status) && order.status !== status) {
-         throw new Error(`State Transition Error: Cannot change status from ${order.status} to ${status}`);
+      if (
+        !VALID_TRANSITIONS[order.status]?.includes(status) &&
+        order.status !== status
+      ) {
+        throw new Error(
+          `State Transition Error: Cannot change status from ${order.status} to ${status}`,
+        );
       }
 
       if (status === "PACKED") {
@@ -208,19 +225,22 @@ export const updateOrderStatusAdmin = async (req, res) => {
             await axios.post(
               `${process.env.PRODUCT_SERVICE_URL}/inventory/ship`,
               { items: itemsToShip },
-              { 
+              {
                 headers: { "x-internal-token": process.env.INTERNAL_API_KEY },
-                timeout: 5000 // 🟢 Timeout prevents DB transaction from hanging
-              }
+                timeout: 5000, // 🟢 Timeout prevents DB transaction from hanging
+              },
             );
           } catch (apiErr) {
-            throw new Error(apiErr.response?.data?.message || "Shipment Sync Failed or Timed Out");
+            throw new Error(
+              apiErr.response?.data?.message ||
+                "Shipment Sync Failed or Timed Out",
+            );
           }
         }
 
         for (const item of itemsToUpdate) {
           item.status = "PACKED";
-          await item.save({ transaction: t }); 
+          await item.save({ transaction: t });
         }
 
         order.status = "PACKED";
@@ -285,7 +305,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
           if (activeAssignment) {
             activeAssignment.status = "DELIVERED";
             await activeAssignment.save({ transaction: t });
-            autoAssignedBoyId = activeAssignment.deliveryBoyId; 
+            autoAssignedBoyId = activeAssignment.deliveryBoyId;
           }
         }
       } else {
