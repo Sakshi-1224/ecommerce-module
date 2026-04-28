@@ -79,3 +79,58 @@ export const logoutDeliveryBoy = async (req, res) => {
     res.status(500).json({ message: "Logout Failed" });
   }
 };
+
+
+// 🟢 Get Delivery Boy Profile
+export const getProfile = async (req, res) => {
+  try {
+    const boyId = req.user.id;
+    
+    // Exclude password from the profile payload
+    const boy = await DeliveryBoy.findByPk(boyId, {
+      attributes: { exclude: ["password"] }
+    });
+
+    if (!boy) {
+      return res.status(404).json({ message: "Delivery boy not found" });
+    }
+
+    res.json({ profile: boy });
+  } catch (err) {
+    console.error("Get Delivery Profile Error:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// 🟢 Change Delivery Boy Password
+export const changePassword = async (req, res) => {
+  try {
+    const { oldPassword, newPassword } = req.body;
+    
+    if (!oldPassword || !newPassword) {
+      return res.status(400).json({ message: "Old and new passwords are required" });
+    }
+
+    const boyId = req.user.id;
+    const boy = await DeliveryBoy.findByPk(boyId);
+
+    if (!boy) {
+      return res.status(404).json({ message: "Delivery boy not found" });
+    }
+
+    // Verify old password
+    const isMatch = await bcrypt.compare(oldPassword, boy.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Invalid old password" });
+    }
+
+    // The 'beforeUpdate' hook in models/DeliveryBoy.js will automatically hash this
+    boy.password = newPassword; 
+    await boy.save();
+
+    res.json({ message: "Password updated successfully" });
+  } catch (err) {
+    console.error("Change Delivery Password Error:", err);
+    res.status(500).json({ message: err.message });
+  }
+};

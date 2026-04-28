@@ -219,3 +219,40 @@ export const logout = async (req, res) => {
     res.status(500).json({ message: "Logout failed" });
   }
 };
+
+
+
+export const changePassword = async (req, res) => {
+  try {
+    const { oldPassword, newPassword } = req.body;
+    
+    if (!oldPassword || !newPassword) {
+      return res.status(400).json({ error: "Old and new passwords are required" });
+    }
+
+    const vendorId = req.user.id;
+    const vendor = await Vendor.findByPk(vendorId);
+
+    if (!vendor) {
+      return res.status(404).json({ error: "Vendor not found" });
+    }
+
+    // Check if the old password matches
+    const isMatch = await bcrypt.compare(oldPassword, vendor.password);
+    if (!isMatch) {
+      return res.status(400).json({ error: "Invalid old password" });
+    }
+
+    // Hash the new password and save
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    vendor.password = hashedPassword;
+    await vendor.save();
+
+    res.json({ message: "Password updated successfully" });
+  } catch (error) {
+    console.error("Change Password Error:", error);
+    res.status(500).json({ error: "Server error during password change" });
+  }
+};

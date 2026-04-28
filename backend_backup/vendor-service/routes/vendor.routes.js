@@ -7,6 +7,7 @@ import {
   login,
   getProfile,
 logout,
+changePassword
 } from "../controllers/vendorAuth.controller.js";
 
 
@@ -22,6 +23,6 @@ router.post("/logout", auth, logout);
    PROFILE
 ======================= */
 router.get("/me", auth, vendor, getProfile);
-
+router.put("/change-password", auth, vendor, changePassword);
 
 export default router;
