@@ -13,7 +13,7 @@ import { rollbackQueue } from "../services/sagaQueue.js";
 const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL;
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL;
 
-import razorpay from "../config/razorpay.js"; // 🟢 Ensure this is imported at the top!
+import razorpay from "../config/razorpay.js"; 
 
 const VALID_TRANSITIONS = {
   PENDING: ["PROCESSING", "CANCELLED"],
@@ -36,7 +36,6 @@ export const checkout = async (req, res) => {
   const { items, amount, address, paymentMethod } = req.body;
   const selectedArea = address.area ? address.area.trim() : "General";
 
-  // 🟢 NEGATIVE CHECK: Idempotency to prevent double-clicks creating twin orders
   const idempotencyKey = `checkout_lock_${req.user.id}`;
   const isLocked = await redis.get(idempotencyKey);
   if (isLocked) {
@@ -46,7 +45,7 @@ export const checkout = async (req, res) => {
         message: "Checkout is currently processing. Please wait a moment.",
       });
   }
-  // Lock checkout for this user for 10 seconds
+
   await redis.setex(idempotencyKey, 10, "LOCKED");
 
   try {
