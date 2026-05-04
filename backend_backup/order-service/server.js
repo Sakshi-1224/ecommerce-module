@@ -15,15 +15,14 @@ const app = express();
 app.use(
   express.json({
     verify: (req, res, buf) => {
-      // 🟢 Intercept the raw body stream and save it as a string
-      // We only do this for the webhook route to save memory
+      
       if (req.originalUrl.includes("/webhook")) {
         req.rawBody = buf.toString();
       }
     },
   }),
 );
-// 👇 RUN ASSOCIATIONS HERE
+
 defineAssociations();
 
 app.use("/api/orders/payment", paymentRoutes);

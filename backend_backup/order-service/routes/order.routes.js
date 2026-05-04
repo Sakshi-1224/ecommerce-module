@@ -59,12 +59,12 @@ import { validate } from "../middleware/validate.middleware.js";
 const router = express.Router();
 
 router.get("/admin/delivery-boys", auth, admin, getAllDeliveryBoys);
-/* ================= USER ================= */
+
 router.post("/checkout", auth, validate(checkoutSchema), checkout);
 router.post("/admin/create", auth, admin,validate(adminCreateOrderSchema), adminCreateOrder);
 router.get("/", auth,validate(paginationQuerySchema), getUserOrders);
 router.get("/locations", auth, getDeliveryLocations);
-// 🟢 ADMIN: View All Returns
+
 router.get("/admin/returns/all", auth, admin, getAllReturnOrdersAdmin);
 
 router.get("/admin/stats", auth, admin, getAdminStats);
@@ -76,7 +76,6 @@ router.get("/track/:id", auth,validate(idParamSchema), trackOrder);
 router.put("/:orderId/cancel-item/:itemId", auth, cancelOrderItem);
 router.put("/:orderId/cancel", auth, cancelFullOrder);
 
-/* ================= VENDOR ================= */
 router.get("/vendor/orders", auth, vendor, getVendorOrders);
 router.get("/vendor/sales-report", auth, vendor, vendorSalesReport);
 
@@ -87,7 +86,6 @@ router.put(
   updateOrderItemStatusAdmin,
 );
 
-/* ================= ADMIN: RECONCILIATION ================= */
 router.get("/admin/reconciliation/cod", auth, admin, getCODReconciliation);
 router.get(
   "/admin/delivery-boys/:id/cash-status",
@@ -97,10 +95,9 @@ router.get(
 );
 router.post("/admin/reconciliation/settle", auth, admin, settleCOD);
 
-/* ================= ADMIN: SALES REPORTS ================= */
 router.get("/admin/sales/total", auth, admin, adminTotalSales);
 router.get("/admin/sales/vendors", auth, admin, adminAllVendorsSalesReport);
-// 🟢 The specific route you requested:
+
 router.get(
   "/admin/sales/vendor/:vendorId",
   auth,
@@ -108,7 +105,6 @@ router.get(
   adminVendorSalesReport,
 );
 
-/* ================= ADMIN: DELIVERY ================= */
 router.post("/admin/delivery-boys", auth, admin, createDeliveryBoy);
 router.put("/admin/delivery-boys/:id", auth, admin, updateDeliveryBoy);
 router.delete("/admin/delivery-boys/:id", auth, admin, deleteDeliveryBoy);
@@ -131,7 +127,7 @@ router.get(
   admin,
   getDeliveryBoyOrders,
 );
-/* ================= ADMIN: ORDER MANAGEMENT ================= */
+
 
 router.get("/admin/:id", auth, admin, getOrderByIdAdmin);
 
@@ -144,10 +140,9 @@ router.put(
   validate(updateOrderItemStatusSchema),
   updateOrderItemStatusAdmin,
 );
-// 🟢 USER
+
 router.post("/:orderId/items/:itemId/return", auth, requestReturn);
 
-// 🟢 ADMIN
 router.put(
   "/admin/:orderId/items/:itemId/return-status",
   auth,

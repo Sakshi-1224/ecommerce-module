@@ -3,7 +3,7 @@ import Category from "../models/Category.js";
 import { uploadImageToMinio } from "../utils/uploadToMinio.js";
 import { Op } from "sequelize";
 import sequelize from "../config/db.js";
-import redis from "../config/redis.js"; // 🟢 Import Redis
+import redis from "../config/redis.js"; 
 import { fetchWithCache } from "../utils/redisWrapper.js";
 import { z } from "zod";
 
@@ -14,7 +14,7 @@ const catalogQuerySchema = z.object({
   sort: z.enum(["price_low", "price_high", "newest"]).default("newest"),
   minPrice: z.coerce.number().min(0).optional(),
   maxPrice: z.coerce.number().min(0).optional(),
-  limit: z.coerce.number().min(1).max(100).default(50), // Cap at 100 max
+  limit: z.coerce.number().min(1).max(100).default(50), 
   page: z.coerce.number().min(1).default(1)
 });
 
@@ -28,7 +28,6 @@ export const getProductsBatch = async (req, res) => {
 
     const cacheKey = `products:batch:${ids}`;
 
-    // 🟢 Redis Cache: 60 Seconds
     const products = await fetchWithCache(cacheKey, 60, async () => {
       return await Product.findAll({
         where: { id: { [Op.in]: idArray } },
@@ -53,7 +52,6 @@ export const getProducts = async (req, res) => {
 
     const { category, sort, search, minPrice, maxPrice, limit, page } = parseResult.data;
     
-    // Normalize safely
     const cacheKey = `products:search:${category || 'all'}:${sort}:${search || ''}:${minPrice || 0}:${maxPrice || 'max'}:${limit}:${page}`;
 
     const products = await fetchWithCache(cacheKey, 60, async () => {
@@ -78,7 +76,7 @@ export const getProducts = async (req, res) => {
 
       const offset = (page - 1) * limit;
 
-      return await Product.findAndCountAll({ // Use findAndCountAll for pagination
+      return await Product.findAndCountAll({ 
         where: whereCondition,
         include: [
           {
@@ -106,7 +104,6 @@ export const getSingleProduct = async (req, res) => {
     const { id } = req.params;
     const cacheKey = `product:${id}`;
 
-    // 🟢 Redis Cache: 1 Hour
     const product = await fetchWithCache(cacheKey, 3600, async () => {
       return await Product.findByPk(id, {
         include: { model: Category },
@@ -125,7 +122,6 @@ export const getAllCategories = async (req, res) => {
   try {
     const cacheKey = "categories:all";
 
-    // 🟢 Redis Cache: 24 Hours (Categories change rarely)
     const categories = await fetchWithCache(cacheKey, 86400, async () => {
       return await Category.findAll();
     });

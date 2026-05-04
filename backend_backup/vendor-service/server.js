@@ -1,7 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
-import cookieParser from "cookie-parser"; // Added
-import csrf from "csurf"; // Added
+import cookieParser from "cookie-parser"; 
+import csrf from "csurf"; 
 
 import sequelize from "./config/db.js";
 import vendorRoutes from "./routes/vendor.routes.js";
@@ -23,7 +23,7 @@ app.use("/api/vendor", csrfProtection, vendorRoutes);
 app.use("/api/admin", csrfProtection, adminVendorRoutes);
 
 app.use((err, req, res, next) => {
-  // Catch CSRF token errors specifically
+  
   if (err.code === "EBADCSRFTOKEN") {
     return res.status(403).json({ message: "Invalid CSRF token" });
   }

@@ -18,7 +18,7 @@ export const getMyTasks = async (req, res) => {
         {
           model: Order,
           attributes: ["id", "amount", "address", "status", "paymentMethod", "payment", "codPaymentMode", "createdAt", "updatedAt"],
-          // 🟢 FIX 1: Correctly nested OrderItem model to get the items and their refundMethod
+          
           include: [
             {
               model: OrderItem,
@@ -85,18 +85,16 @@ export const getMyTasks = async (req, res) => {
           Product: productMap[item.productId] || { name: "Unknown", imageUrl: "" } 
       }));
 
-      // 🟢 FIX 2: Restored the amountToCollect calculation so it doesn't crash
       const amountToCollect = (!isReturn && task.Order.paymentMethod === "COD" && !task.Order.payment) ? task.Order.amount : 0;
-      
-      // 🟢 FIX 3: Forced cashToRefund to 0 because Admin handles the money for COD returns via Bank/Warehouse
+    
       const cashToRefund = 0;
 
       const formattedTask = {
         assignmentId: task.id,
         status: task.status,
         type: type,
-        cashToCollect: amountToCollect, // Collect from customer for deliveries
-        cashToRefund: cashToRefund,     // Always 0 for returns now
+        cashToCollect: amountToCollect, 
+        cashToRefund: cashToRefund,    
         amount: task.Order.amount,
         paymentMethod: task.Order.paymentMethod,
         orderId: task.Order.id,
@@ -169,10 +167,10 @@ export const updateTaskStatus = async (req, res) => {
           }
         } else if (status === "DELIVERED") {
           
-          // 🟢 Handle Delivery Payment Logic
+          
           if (order.paymentMethod === "COD") {
             if (codPaymentMode === "QR") {
-              // Only require manual UTR if the webhook hasn't updated it yet
+              
               if (!utrNumber && order.payment === false) {
                 return res.status(400).json({ message: "UTR number is required for manual QR payment verification" });
               }
@@ -184,7 +182,7 @@ export const updateTaskStatus = async (req, res) => {
           }
 
           order.status = "DELIVERED";
-          order.payment = true; // Mark as paid!
+          order.payment = true; 
           
           for (const item of order.OrderItems) {
              if (item.status !== "CANCELLED" && item.refundStatus === "NONE") {

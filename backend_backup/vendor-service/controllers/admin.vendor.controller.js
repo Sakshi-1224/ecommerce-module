@@ -1,13 +1,11 @@
 import Vendor from "../models/Vendor.js";
-import redis from "../config/redis.js"; // 🟢 1. Import Redis
+import redis from "../config/redis.js"; 
 import { fetchWithCache, safeDeleteCache } from "../utils/redisWrapper.js";
 
-/* ---------------- GET ALL VENDORS ---------------- */
 export const getAllVendors = async (req, res) => {
   try {
     const cacheKey = "vendors:all";
 
-    // 🟢 Use Safe Wrapper (Expire in 15 mins)
     const vendors = await fetchWithCache(cacheKey, 900, async () => {
       return await Vendor.findAll({
         attributes: { exclude: ["password"] }
@@ -21,7 +19,6 @@ export const getAllVendors = async (req, res) => {
   }
 };
 
-/* ---------------- APPROVE VENDOR ---------------- */
 export const approveVendor = async (req, res) => {
   try {
     const vendor = await Vendor.findByPk(req.params.id);
@@ -50,7 +47,6 @@ export const approveVendor = async (req, res) => {
   }
 };
 
-/* ---------------- REJECT VENDOR ---------------- */
 export const rejectVendor = async (req, res) => {
   try {
     const vendor = await Vendor.findByPk(req.params.id);

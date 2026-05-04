@@ -27,8 +27,8 @@ const VALID_TRANSITIONS = {
   ],
   PACKED: ["OUT_FOR_DELIVERY", "CANCELLED"],
   OUT_FOR_DELIVERY: ["DELIVERED", "CANCELLED"],
-  DELIVERED: [], // Terminal
-  CANCELLED: [], // Terminal
+  DELIVERED: [], 
+  CANCELLED: [],
 };
 
 export const checkout = async (req, res) => {
@@ -103,7 +103,7 @@ export const checkout = async (req, res) => {
           { items },
           {
             headers: { "x-internal-token": process.env.INTERNAL_API_KEY },
-            // 🟢 NEGATIVE CHECK: Fail fast after 5s to release MySQL locks
+            
             timeout: 5000,
           },
         );
@@ -125,7 +125,7 @@ export const checkout = async (req, res) => {
       }
     });
 
-    // Release idempotency lock immediately on success
+    
     await redis.del(idempotencyKey);
 
     res.status(201).json({
@@ -136,7 +136,7 @@ export const checkout = async (req, res) => {
       razorpayOrder: razorpayOrderData,
     });
   } catch (err) {
-    // Release idempotency lock on failure
+    
     await redis.del(idempotencyKey);
 
     if (stockReserved) {
@@ -149,7 +149,7 @@ export const checkout = async (req, res) => {
           { items },
           {
             headers: { "x-internal-token": process.env.INTERNAL_API_KEY },
-            timeout: 5000, // Timeout on rollback as well
+            timeout: 5000, 
           },
         );
       } catch (rollbackErr) {
@@ -157,20 +157,20 @@ export const checkout = async (req, res) => {
           `🚨 [CRITICAL SAGA FAILURE] Immediate rollback failed. Pushing to BullMQ...`,
         );
 
-        // 🟢 Push to BullMQ instead of the database!
+        
         await rollbackQueue.add(
-          "release-stock", // Name of the job
+          "release-stock", 
           {
             items,
             endpoint: `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/release`,
           },
           {
-            attempts: 10, // Retry up to 10 times before giving up entirely
+            attempts: 10, 
             backoff: {
-              type: "exponential", // Wait longer between each failed attempt
-              delay: 5000, // 1st retry: 5s, 2nd: 10s, 3rd: 20s, 4th: 40s...
+              type: "exponential", 
+              delay: 5000, 
             },
-            removeOnComplete: true, // Delete from Redis once successful to save memory
+            removeOnComplete: true, 
           },
         );
       }
@@ -196,7 +196,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
       if (!order) throw new Error("Order not found");
       orderUserId = order.userId;
 
-      // 🟢 NEGATIVE CHECK: Enforce strictly valid state transitions
+   
       if (
         !VALID_TRANSITIONS[order.status]?.includes(status) &&
         order.status !== status
@@ -226,7 +226,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
               { items: itemsToShip },
               {
                 headers: { "x-internal-token": process.env.INTERNAL_API_KEY },
-                timeout: 5000, // 🟢 Timeout prevents DB transaction from hanging
+                timeout: 5000,
               },
             );
           } catch (apiErr) {
@@ -253,7 +253,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
           });
 
           if (!existingAssignment) {
-            // 🟢 Pass 't' to your autoAssign function!
+           
             const result = await autoAssignDeliveryBoy(
               order.id,
               order.assignedArea,
@@ -328,11 +328,11 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
     let orderUserId = null;
     let activeBoyId = null;
 
-    // 🟢 Wrap everything in managed transaction
+   
     await sequelize.transaction(async (t) => {
       const item = await OrderItem.findOne({
         where: { id: itemId, orderId: orderId },
-        transaction: t, // 🟢 Add to query
+        transaction: t, 
       });
 
       if (!item) throw new Error("Item not found");
@@ -355,7 +355,7 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
       }
 
       item.status = status;
-      await item.save({ transaction: t }); // 🟢 Save via transaction
+      await item.save({ transaction: t }); 
 
       const allItems = await OrderItem.findAll({
         where: { orderId },
@@ -377,7 +377,7 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
               transaction: t,
             });
             if (!hasBoy) {
-              // Graceful abort of the parent order update, but item still updates
+              
               responseMsg = `Item updated to ${status}, but Parent Order not updated (No Delivery Boy assigned).`;
               return;
             }
@@ -637,7 +637,7 @@ export const adminCreateOrder = async (req, res) => {
     const selectedArea = address.area || "General";
     let order;
 
-    // 🟢 Start Managed Transaction
+    
     await sequelize.transaction(async (t) => {
       let shippingCharge = 0;
       const rateRecord = await ShippingRate.findOne({

@@ -26,9 +26,7 @@ const p = [
     [7, 0, 4, 6, 9, 1, 3, 2, 5, 8]
 ];
 
-// Validates that an entered number is Verhoeff compliant.
 export const validateVerhoeff = (num) => {
-    // Convert string to reversed integer array
     const myArray = String(num).split('').map(Number).reverse();
     let c = 0;
 

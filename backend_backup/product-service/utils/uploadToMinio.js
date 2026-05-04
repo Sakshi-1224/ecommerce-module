@@ -1,6 +1,8 @@
 import sharp from "sharp";
 import minioClient from "../config/minio.js";
+import dotenv from "dotenv";
 
+dotenv.config();
 export const uploadImageToMinio = async (file) => {
   const bucketName = "products";
 
@@ -8,7 +10,6 @@ export const uploadImageToMinio = async (file) => {
   if (!exists) {
     await minioClient.makeBucket(bucketName, "us-east-1");
 
-    // Set policy to 'Public' so the frontend can successfully load the images
     const policy = {
       Version: "2012-10-17",
       Statement: [
@@ -26,7 +27,7 @@ export const uploadImageToMinio = async (file) => {
 
   const objectName = `${Date.now()}-${file.originalname.split(" ").join("_")}.webp`;
 
-  // 🔥 Sharp optimization
+  
   const optimizedBuffer = await sharp(file.buffer)
     .resize(1000, 1000, { fit: "inside" })
     .webp({ quality: 75 })
@@ -42,5 +43,5 @@ export const uploadImageToMinio = async (file) => {
     },
   );
 
-  return `http://localhost:9000/${bucketName}/${objectName}`;
+  return `${process.env.MINIO_BUCKET_URL}/${bucketName}/${objectName}`;
 };

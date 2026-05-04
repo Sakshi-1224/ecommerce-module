@@ -1,23 +1,20 @@
 import { Client } from "minio";
 
 const minioClient = new Client({
-  endPoint: "localhost",
-  port: 9000,          
+  endPoint: process.env.MINIO_ENDPOINT,
+  port: process.env.MINIO_PORT,
   useSSL: false,
-  accessKey: "minioadmin",
-  secretKey: "minioadmin"
+  accessKey: process.env.MINIO_ACCESS_KEY,
+  secretKey: process.env.MINIO_SECRET_KEY
 });
 
-// Helper to ensure bucket exists
 export const initBucket = async (bucketName) => {
   try {
     const exists = await minioClient.bucketExists(bucketName);
     if (!exists) {
       await minioClient.makeBucket(bucketName, "us-east-1");
       console.log(`Bucket '${bucketName}' created successfully.`);
-      
-      // OPTIONAL: Set bucket policy to public read-only (so frontend can see images)
-      // For simple dev, you can also set this in the MinIO Console manually
+     
       const policy = {
         Version: "2012-10-17",
         Statement: [

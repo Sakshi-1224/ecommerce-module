@@ -567,7 +567,7 @@ export const getCODReconciliation = async (req, res) => {
 
 export const getDeliveryLocations = async (req, res) => {
   try {
-    // 🟢 Cache for 1 hour (3600 seconds)
+   
     const response = await fetchWithCache("delivery_locations:all", 3600, async () => {
       const boys = await DeliveryBoy.findAll({
         where: { active: true },

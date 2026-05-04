@@ -4,11 +4,10 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const redis = new Redis({
-  host: process.env.REDIS_HOST || "127.0.0.1",
-  port: process.env.REDIS_PORT || 6379,
+  host: process.env.REDIS_HOST ,
+  port: process.env.REDIS_PORT ,
   password: process.env.REDIS_PASSWORD || undefined,
   
-  // Retry strategy: prevents the app from hanging infinitely if Redis is down
   retryStrategy: (times) => {
     const maxDelay = 2000; 
     if (times > 5) {

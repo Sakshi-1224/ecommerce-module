@@ -1,7 +1,7 @@
 import autocannon from "autocannon";
 
-const url = "http://localhost:5007/api/products";   // your API url
-const duration = 30;                  // duration in seconds
+const url = "http://localhost:5007/api/products";  
+const duration = 30;                
 
 const instance = autocannon(
   {
@@ -21,5 +21,4 @@ const instance = autocannon(
   }
 );
 
-// Shows live progress in terminal
 autocannon.track(instance);

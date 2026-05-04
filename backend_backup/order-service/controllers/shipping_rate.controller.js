@@ -1,8 +1,8 @@
-import ShippingRate from "../models/ShippingRate.js"; // 🟢 IMPORT NEW MODEL
+import ShippingRate from "../models/ShippingRate.js"; 
 import { fetchWithCache, safeDeleteCache } from "../utils/redisWrapper.js";
 import DeliveryBoy from "../models/DeliveryBoy.js";
 
-// 1. ADD or UPDATE a Shipping Rate
+
 export const setShippingRate = async (req, res) => {
   try {
     
@@ -107,7 +107,7 @@ export const toggleShippingAreaStatus = async (req, res) => {
   }
 };
 
-// 3. DELETE a Shipping Rate
+
 export const deleteShippingRate = async (req, res) => {
   try {
     const { id } = req.params;
@@ -122,7 +122,6 @@ export const deleteShippingRate = async (req, res) => {
       attributes: ["id", "name", "assignedAreas"],
     });
 
-    // Check if the areaName exists in any boy's JSON array of assignedAreas
     const assignedBoys = allBoys.filter(
       (boy) => boy.assignedAreas && boy.assignedAreas.includes(record.areaName),
     );

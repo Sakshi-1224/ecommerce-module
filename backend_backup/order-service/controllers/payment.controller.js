@@ -5,9 +5,7 @@ import { Op } from "sequelize";
 import redis from "../config/redis.js"; 
 import sequelize from "../config/db.js";
 
-/* ======================
-   CREATE PAYMENT ORDER (Online Checkout)
-====================== */
+
 export const createPaymentOrder = async (req, res) => {
   try {
     const { amount, orderId } = req.body;
@@ -32,9 +30,7 @@ export const createPaymentOrder = async (req, res) => {
   }
 };
 
-/* ======================
-   VERIFY PAYMENT (Works for Initial Checkout AND "Pay Anytime")
-====================== */
+
 export const verifyPayment = async (req, res) => {
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature, orderId } = req.body;
@@ -59,21 +55,19 @@ export const verifyPayment = async (req, res) => {
       return res.status(400).json({ message: "Payment verification failed" });
     }
 
-    // 🟢 Mark as paid and save Razorpay ID for future auto-refunds
+   
     order.payment = true;
     order.paymentMethod = "RAZORPAY";
     order.codPaymentMode = null;
     order.razorpayPaymentId = razorpay_payment_id; 
     
-    // Only upgrade status to PROCESSING if it was stuck on PENDING.
-    // This preserves "PACKED" or "OUT_FOR_DELIVERY" if they pay later!
+   
     if (order.status === "PENDING") {
         order.status = "PROCESSING";
     }
     
     await order.save();
 
-    // Clear delivery boy cache if one is already assigned
     const assignment = await sequelize.models.DeliveryAssignment?.findOne({
       where: { orderId: orderId, status: { [Op.in]: ["ASSIGNED", "PICKED", "OUT_FOR_DELIVERY"] } }
     });
@@ -88,9 +82,7 @@ export const verifyPayment = async (req, res) => {
   }
 };
 
-/* ==========================================
-   🟢 GENERATE DYNAMIC QR FOR DELIVERY BOY
-========================================== */
+
 export const createDeliveryQR = async (req, res) => { 
   try {
     const { orderId } = req.body;
@@ -116,9 +108,7 @@ export const createDeliveryQR = async (req, res) => {
   }
 };
 
-/* ==========================================
-   🟢 CHECK PAYMENT STATUS (For Delivery App Polling)
-========================================== */
+
 export const checkPaymentStatus = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -133,14 +123,11 @@ export const checkPaymentStatus = async (req, res) => {
   }
 };
 
-/* ==========================================
-   🟢 RAZORPAY WEBHOOK (AUTO-UPDATE STATUS & CAPTURE ID)
-========================================== */
+
 export const razorpayWebhook = async (req, res) => {
   try {
     const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET; 
-    
-    // Validate signature ONLY if secret is set (allows dev/postman testing)
+  
     if (webhookSecret) {
       const signature = req.headers["x-razorpay-signature"];
       const expectedSignature = crypto
@@ -164,7 +151,7 @@ export const razorpayWebhook = async (req, res) => {
           order.payment = true;
           order.codPaymentMode = "QR"; 
           order.utrNumber = paymentEntity.acquirer_data?.rrn || paymentEntity.id; 
-          order.razorpayPaymentId = paymentEntity.id; // 🟢 Save for auto-refund!
+          order.razorpayPaymentId = paymentEntity.id; 
           await order.save();
           
           console.log(`✅ Webhook: Order #${orderId} marked as PAID via QR!`);

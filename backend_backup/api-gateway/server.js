@@ -21,7 +21,7 @@ const ADDRESS_SERVICE_URL = process.env.ADDRESS_SERVICE_URL;
 
 const app = express();
 
-// 1. Security Headers
+
 app.use(helmet());
 
 const corsOptions = {
@@ -32,7 +32,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options(/(.*)/, cors(corsOptions));
 
-// 🟢 2. Rate Limiting with Redis Store
+
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 200,
@@ -65,13 +65,13 @@ const authLimiter = rateLimit({
 
 app.use(globalLimiter);
 
-// 3. Apply Auth Limiter to specific sensitive paths BEFORE the proxy rules
+
 app.use("/api/auth/login", authLimiter);
 app.use("/api/auth/register", authLimiter);
 app.use("/api/vendor/login", authLimiter);
 app.use("/api/admin/login", authLimiter);
 
-// 4. Proxy Configuration with Correlation IDs
+
 const proxy = (target) => {
   return createProxyMiddleware({
     target,
@@ -79,7 +79,6 @@ const proxy = (target) => {
     proxyTimeout: 10000,
     timeout: 10000,
 
-    // Inject Correlation ID for Distributed Tracing
     onProxyReq: (proxyReq, req, res) => {
       const correlationId =
         req.headers["x-correlation-id"] || crypto.randomUUID();

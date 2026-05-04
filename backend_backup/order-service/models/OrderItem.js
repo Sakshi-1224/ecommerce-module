@@ -44,7 +44,7 @@ const OrderItem = sequelize.define("OrderItem", {
     },
 
     bankDetails: {
-      type: DataTypes.JSON, // To store Account No, IFSC, Bank Name, etc.
+      type: DataTypes.JSON, 
       allowNull: true,
     },
 

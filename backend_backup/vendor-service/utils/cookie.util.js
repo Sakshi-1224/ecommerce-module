@@ -1,4 +1,3 @@
-// user-service/utils/cookie.util.js
 
 const normalizeSameSite = (value) => {
   const raw = (value || "strict").toLowerCase();
@@ -36,14 +35,14 @@ export const getClearAuthCookieOptions = () => {
 export const getCsrfCookieOptions = () => {
   const authOptions = getAuthCookieOptions();
   return {
-    httpOnly: false, // Must be false if frontend JS needs to read it
+    httpOnly: false, 
     secure: authOptions.secure,
     sameSite: authOptions.sameSite,
     path: "/",
   };
 };
 
-// --- Your Action Functions ---
+// --- Action Functions ---
 
 export const sendTokenCookie = (res, token) => {
   const options = getAuthCookieOptions();

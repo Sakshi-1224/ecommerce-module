@@ -13,15 +13,11 @@ changePassword
 
 const router = express.Router();
 
-/* =======================
-   AUTH
-======================= */
+
 router.post("/register", register);
 router.post("/login", login);
 router.post("/logout", auth, logout);
-/* =======================
-   PROFILE
-======================= */
+
 router.get("/me", auth, vendor, getProfile);
 router.put("/change-password", auth, vendor, changePassword);
 

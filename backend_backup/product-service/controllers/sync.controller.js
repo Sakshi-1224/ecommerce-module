@@ -11,7 +11,7 @@ const syncPayloadSchema = z.object({
 });
 
 export const reserveStock = async (req, res) => {
-  // 1. Zod Validation before starting transaction
+
   const parseResult = syncPayloadSchema.safeParse(req.body);
   if (!parseResult.success) {
     return res.status(400).json({ message: "Invalid payload", errors: parseResult.error.errors });

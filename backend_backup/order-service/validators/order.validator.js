@@ -1,10 +1,5 @@
 import { z } from "zod";
 
-// ==========================================
-// 1. REUSABLE BASE SCHEMAS (Keeps code DRY)
-// ==========================================
-
-// Defines exactly what a single item in the cart must look like
 const orderItemSchema = z.object({
   productId: z.number().int().positive("Product ID must be a valid positive integer"),
   vendorId: z.number().int().positive("Vendor ID must be a valid positive integer"),
@@ -22,19 +17,11 @@ const addressSchema = z.object({
 
 const validStatuses = ["PENDING", "PROCESSING", "PACKED", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"];
 
-// ==========================================
-// 2. ROUTE-SPECIFIC VALIDATION SCHEMAS
-// ==========================================
-
-/**
- * Validation for user checkout
- * Route: POST /checkout
- */
 export const checkoutSchema = z.object({
   body: z.object({
     items: z.array(orderItemSchema)
       .min(1, "Cart cannot be empty. Please add items to checkout.")
-      // 🟢 NEGATIVE CHECK: Prevent duplicate products to avoid inventory bypass
+     
       .refine(
         (items) => {
           const productIds = items.map((item) => item.productId);
@@ -50,16 +37,13 @@ export const checkoutSchema = z.object({
   }),
 });
 
-/**
- * Validation for Admin creating an order on behalf of a user
- * Route: POST /admin/create
- */
+
 export const adminCreateOrderSchema = z.object({
   body: z.object({
     userId: z.number().int().positive("User ID is required and must be valid"),
     items: z.array(orderItemSchema)
       .min(1, "Cart cannot be empty.")
-      // 🟢 NEGATIVE CHECK: Enforce uniqueness here as well
+    
       .refine(
         (items) => {
           const productIds = items.map((item) => item.productId);
@@ -73,10 +57,7 @@ export const adminCreateOrderSchema = z.object({
   }),
 });
 
-/**
- * Validation for updating the parent Order status
- * Route: PUT /admin/order/:id/status
- */
+
 export const updateOrderStatusSchema = z.object({
   params: z.object({
     id: z.string().regex(/^\d+$/, "Order ID must be a numeric string"),
@@ -88,10 +69,7 @@ export const updateOrderStatusSchema = z.object({
   }),
 });
 
-/**
- * Validation for updating an individual Order Item status
- * Route: PUT /admin/order/:orderId/item/:itemId/status
- */
+
 export const updateOrderItemStatusSchema = z.object({
   params: z.object({
     orderId: z.string().regex(/^\d+$/, "Order ID must be a numeric string"),
@@ -104,10 +82,7 @@ export const updateOrderItemStatusSchema = z.object({
   }),
 });
 
-/**
- * Validation for Pagination (e.g., getUserOrders)
- * Route: GET /user/orders?page=1&limit=10
- */
+
 export const paginationQuerySchema = z.object({
   query: z.object({
     page: z.string().regex(/^\d+$/, "Page must be a number").transform(Number).optional(),

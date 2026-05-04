@@ -29,9 +29,6 @@ const Vendor = sequelize.define("Vendor", {
     allowNull: false
   },
 
-  /* =====================
-     BUSINESS DETAILS
-  ===================== */
   businessName: {
     type: DataTypes.STRING,
     allowNull: false
@@ -44,7 +41,7 @@ const Vendor = sequelize.define("Vendor", {
 
   businessDescription: {
     type: DataTypes.TEXT,
-    allowNull: true   // ✅ optional
+    allowNull: true  
   },
 
   yearsInBusiness: {
@@ -57,9 +54,6 @@ const Vendor = sequelize.define("Vendor", {
     allowNull: false
   },
 
-  /* =====================
-     KYC DETAILS
-  ===================== */
   aadharNumber: {
     type: DataTypes.STRING,
     allowNull: false
@@ -72,12 +66,10 @@ const Vendor = sequelize.define("Vendor", {
 
   gstNumber: {
     type: DataTypes.STRING,
-    allowNull: true   // ✅ optional
+    allowNull: true  
   },
 
-  /* =====================
-     BANK DETAILS
-  ===================== */
+  
   bankAccountHolderName: {
     type: DataTypes.STRING,
     allowNull: false
@@ -98,13 +90,10 @@ const Vendor = sequelize.define("Vendor", {
     allowNull: false
   },
 
-  /* =====================
-     STATUS
-  ===================== */
   status: {
     type: DataTypes.STRING,
     allowNull: false,
-    defaultValue: "PENDING" // PENDING | APPROVED | REJECTED
+    defaultValue: "PENDING" 
   }
 });
 

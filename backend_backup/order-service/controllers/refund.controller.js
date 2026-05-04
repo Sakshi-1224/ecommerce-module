@@ -27,13 +27,11 @@ export const cancelOrderItem = async (req, res) => {
     if (!["PENDING", "PROCESSING"].includes(item.status))
       throw new Error("Item cannot be cancelled now");
 
-    // Get true/false if a refund needs to be processed
     const isRefundDue = await processAutomaticRefund(order, [item], t, req);
 
     item.status = "CANCELLED";
     item.returnReason = reason;
 
-    // NEW LOGIC: Require admin approval for prepaid refunds
     if (order.paymentMethod !== "COD" && isRefundDue) {
       item.refundStatus = "REQUESTED";
       item.refundMethod = "ORIGINAL_SOURCE";
@@ -57,7 +55,7 @@ export const cancelOrderItem = async (req, res) => {
         `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/release`,
         { items: [{ productId: item.productId, quantity: item.quantity }] },
         {
-          headers: { "x-internal-token": process.env.INTERNAL_API_KEY }, // 🟢 ADD THIS HERE
+          headers: { "x-internal-token": process.env.INTERNAL_API_KEY }, 
         },
       );
     } catch (e) {
@@ -100,7 +98,6 @@ export const cancelFullOrder = async (req, res) => {
       (i) => i.status !== "CANCELLED",
     );
 
-    // Get true/false if a refund needs to be processed
     const isRefundDue = await processAutomaticRefund(
       order,
       itemsToCancel,
@@ -113,7 +110,6 @@ export const cancelFullOrder = async (req, res) => {
       item.status = "CANCELLED";
       item.returnReason = reason || "Customer Cancelled";
 
-      // NEW LOGIC: Require admin approval for prepaid refunds
       if (order.paymentMethod !== "COD" && isRefundDue) {
         item.refundStatus = "REQUESTED";
         item.refundMethod = "ORIGINAL_SOURCE";
@@ -137,7 +133,7 @@ export const cancelFullOrder = async (req, res) => {
         `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/release`,
         { items: itemsToRelease },
         {
-          headers: { "x-internal-token": process.env.INTERNAL_API_KEY }, // 🟢 ADD THIS HERE
+          headers: { "x-internal-token": process.env.INTERNAL_API_KEY }, 
         },
       );
     } catch (e) {
@@ -160,7 +156,7 @@ export const requestReturn = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { orderId, itemId } = req.params;
-    // 🟢 FIX 1: Extract refundMethod and bankDetails here
+   
     const { reason, refundMethod, bankDetails } = req.body;
     const userId = req.user.id;
 
@@ -198,7 +194,7 @@ export const requestReturn = async (req, res) => {
 
     const parentOrder = await Order.findByPk(orderId, { transaction: t });
 
-    // --- UPDATED LOGIC: Isolate 'CASH' payments from 'QR' and Online ---
+  
     if (
       parentOrder.paymentMethod === "COD" &&
       parentOrder.codPaymentMode === "CASH"
@@ -224,11 +220,11 @@ export const requestReturn = async (req, res) => {
       item.refundMethod = refundMethod;
       item.bankDetails = bankDetails;
     } else {
-      // Applies to standard Online Payments AND COD payments made via QR
+      
       item.refundMethod = "ORIGINAL_SOURCE";
     }
 
-    // 🟢 FIX 2: Group all item updates together and save once
+   
     item.refundStatus = "REQUESTED";
     item.returnReason = reason;
     await item.save({ transaction: t });
@@ -262,7 +258,7 @@ export const updateRefundStatusAdmin = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { orderId, itemId } = req.params;
-    // Accept status and returnDropMethod from Admin UI
+  
     const { status, returnDropMethod } = req.body;
 
     const item = await OrderItem.findOne({
@@ -280,7 +276,6 @@ export const updateRefundStatusAdmin = async (req, res) => {
     let assignedBoyId = null;
     let assignedBoyName = null;
 
-    // --- CREDITED LOGIC (Online & Cash Management) ---
     if (status === "CREDITED") {
       const order = await Order.findByPk(item.orderId, { transaction: t });
 
@@ -288,7 +283,7 @@ export const updateRefundStatusAdmin = async (req, res) => {
         targetUserId = order.userId;
         const refundAmount = parseFloat(item.price) * parseInt(item.quantity);
 
-        // 🟢 AUTOMATIC REFUND (For Online Payments & COD-QR)
+        
         if (
           item.refundMethod === "ORIGINAL_SOURCE" &&
           order.razorpayPaymentId
@@ -309,7 +304,7 @@ export const updateRefundStatusAdmin = async (req, res) => {
               .json({ message: "Payment Gateway Refund Failed. Try again." });
           }
         }
-        // 🟢 CASH REFUNDS (Strictly for physical cash)
+       
         else if (
           order.paymentMethod === "COD" &&
           order.codPaymentMode === "CASH"
@@ -330,7 +325,6 @@ export const updateRefundStatusAdmin = async (req, res) => {
       await item.save({ transaction: t });
     }
 
-    // --- APPROVED LOGIC (Auto-Assign Delivery Boy or Warehouse Drop) ---
     else if (status === "APPROVED") {
       item.refundStatus = "APPROVED";
       if (returnDropMethod) {
@@ -351,7 +345,7 @@ export const updateRefundStatusAdmin = async (req, res) => {
               " (Customer will drop off item at the Warehouse)";
             assignedBoyName = "Warehouse Drop-off";
           } else {
-            // Call existing auto-assigner and pass "RETURN_PICKUP"
+           
             const assignResult = await autoAssignDeliveryBoy(
               order.id,
               order.assignedArea,
@@ -372,7 +366,6 @@ export const updateRefundStatusAdmin = async (req, res) => {
       await item.save({ transaction: t });
     }
 
-    // --- COMPLETED LOGIC (Stock Restoration) ---
     else if (status === "COMPLETED") {
       if (item.refundStatus === "COMPLETED") {
         await t.rollback();
@@ -407,7 +400,7 @@ export const updateRefundStatusAdmin = async (req, res) => {
       assignmentMessage = " (Stock Updated)";
     }
 
-    // --- ANY OTHER STATUS ---
+   
     else {
       const order = await Order.findByPk(item.orderId, {
         attributes: ["userId"],
@@ -435,7 +428,7 @@ export const getCancelledRefundOrders = async (req, res) => {
     const { count, rows } = await OrderItem.findAndCountAll({
       where: {
         status: "CANCELLED",
-        // 🟢 ADDED "REQUESTED" SO ADMIN CAN SEE PENDING PREPAID CANCELLATIONS
+        
         refundStatus: { [Op.in]: ["REQUESTED", "CANCELLED", "CREDITED"] },
       },
       include: [
@@ -443,7 +436,7 @@ export const getCancelledRefundOrders = async (req, res) => {
           model: Order,
           required: true,
           where: {
-            paymentMethod: { [Op.ne]: "COD" }, // Only show prepaid orders needing actual refunds
+            paymentMethod: { [Op.ne]: "COD" }, 
           },
           attributes: [
             "id",
@@ -470,7 +463,7 @@ export const getCancelledRefundOrders = async (req, res) => {
           `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/batch`,
           {
             params: { ids: productIds.join(",") },
-            headers: { "x-internal-token": process.env.INTERNAL_API_KEY }, // 🟢 ADD THIS HERE
+            headers: { "x-internal-token": process.env.INTERNAL_API_KEY }, 
           },
         );
         data.forEach((p) => (productMap[p.id] = p));
@@ -514,7 +507,7 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
             "paymentMethod",
             "codPaymentMode",
           ],
-          // 🟢 FIX 1: Removed the buggy nested DeliveryAssignment include from here
+         
         },
       ],
       order: [
@@ -529,13 +522,12 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
     );
 
     const productIds = new Set();
-    const orderIds = new Set(); // 🟢 FIX 2: Collect Order IDs
+    const orderIds = new Set(); 
     uniqueRows.forEach((item) => {
       if (item.productId) productIds.add(item.productId);
       if (item.orderId) orderIds.add(item.orderId);
     });
 
-    // --- Fetch Products ---
     let productMap = {};
     if (productIds.size > 0) {
       try {
@@ -543,7 +535,7 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
         const response = await axios.get(
           `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/batch?ids=${idsStr}`,
           {
-            headers: { "x-internal-token": process.env.INTERNAL_API_KEY }, // 🟢 ADD THIS HERE
+            headers: { "x-internal-token": process.env.INTERNAL_API_KEY }, 
           },
         );
         response.data.forEach((p) => {
@@ -554,22 +546,21 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
       }
     }
 
-    // --- 🟢 FIX 3: Manually fetch ONLY active Return Tasks directly from the DB ---
     let returnTasks = [];
     if (orderIds.size > 0) {
       returnTasks = await DeliveryAssignment.findAll({
         where: {
           orderId: { [Op.in]: Array.from(orderIds) },
           reason: "RETURN_PICKUP",
-          status: { [Op.ne]: "FAILED" }, // Ignores Raju's cancelled task
+          status: { [Op.ne]: "FAILED" }, 
         },
         include: [{ model: DeliveryBoy, attributes: ["name", "phone"] }],
-        order: [["createdAt", "DESC"]], // Gets the newest one
+        order: [["createdAt", "DESC"]], 
       });
     }
 
     const formattedReturns = uniqueRows.map((item) => {
-      // 🟢 FIX 4: Instantly match the correct return task (Shyam) for this specific order
+      
       const pickupTask = returnTasks.find(
         (task) => task.orderId === item.orderId,
       );
@@ -601,7 +592,7 @@ export const getAllReturnOrdersAdmin = async (req, res) => {
         lastUpdated: item.updatedAt,
         customerName: item.Order.address?.fullName || "Guest",
         customerPhone: item.Order.address?.phone || "N/A",
-        pickupBoy: boyName, // 🟢 Now accurately shows Shyam Courier!
+        pickupBoy: boyName, 
       };
     });
 

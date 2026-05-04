@@ -16,7 +16,6 @@ router.post("/verify", auth, verifyPayment);
 router.post("/delivery-qr", auth, createDeliveryQR);
 router.get("/status/:orderId", auth, checkPaymentStatus);
 
-// 🟢 WEBHOOK ROUTE (No Auth Middleware)
 router.post("/webhook", razorpayWebhook);
 
 export default router;
