@@ -7,7 +7,6 @@ import redis from "../config/redis.js";
 import { fetchWithCache } from "../utils/redisWrapper.js";
 import { z } from "zod";
 
-
 const catalogQuerySchema = z.object({
   search: z.string().optional(),
   category: z.string().optional(),
@@ -31,7 +30,14 @@ export const getProductsBatch = async (req, res) => {
     const products = await fetchWithCache(cacheKey, 60, async () => {
       return await Product.findAll({
         where: { id: { [Op.in]: idArray } },
-        attributes: ["id", "name", "price", "images", "availableStock", "vendorId"], 
+        attributes: [
+          "id",
+          "name",
+          "price",
+          "images",
+          "availableStock",
+          "vendorId",
+        ],
         include: { model: Category, attributes: ["name"] },
       });
     });
@@ -82,13 +88,17 @@ export const getProducts = async (req, res) => {
           {
             model: Category,
             attributes: ["name"],
-            where: category && category !== "all" ? { name: category } : undefined,
-            required: false,
+            where:
+              category && category !== "all" ? { name: category } : undefined,
+            required:
+              category && category !== "all" && category !== "All"
+                ? true
+                : false,
           },
         ],
         order: orderCondition,
         limit,
-        offset
+        offset,
       });
     });
 

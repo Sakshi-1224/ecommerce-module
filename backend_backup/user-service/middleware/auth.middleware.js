@@ -2,8 +2,21 @@ import jwt from "jsonwebtoken";
 import redis from "../config/redis.js";
 
 const authMiddleware = async (req, res, next) => {
-  const token = req.cookies.jwt;
+  let token;
 
+  // 1. First, check if the token is in the Authorization header (Sent by Flutter)
+  if (
+    req.headers.authorization &&
+    req.headers.authorization.startsWith("Bearer")
+  ) {
+    token = req.headers.authorization.split(" ")[1];
+  }
+  // 2. Fallback: check if the token is in the cookies (Sent by Web Browsers)
+  else if (req.cookies && req.cookies.jwt) {
+    token = req.cookies.jwt;
+  }
+
+  // If no token is found in either place, reject the request
   if (!token) {
     return res
       .status(401)

@@ -16,14 +16,22 @@ app.use(cookieParser());
 
 const csrfProtection = csrf({ cookie: true });
 
+const mobileCsrfBypass = (req, res, next) => {
+  if (req.headers["x-app-client"] === "mobile") {
+    return next();
+  }
+  return csrfProtection(req, res, next);
+};
+
 defineAssociations();
 
 app.get("/api/auth/csrf-token", csrfProtection, (req, res) => {
   res.json({ csrfToken: req.csrfToken() });
 });
 
-app.use("/api/auth", csrfProtection, authRoutes);
-app.use("/api/addresses", csrfProtection, addressRoutes);
+// Apply CSRF protection to your routes
+app.use("/api/auth", mobileCsrfBypass, authRoutes);
+app.use("/api/addresses", mobileCsrfBypass, addressRoutes);
 
 app.use((err, req, res, next) => {
 
