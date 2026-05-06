@@ -2,7 +2,7 @@ import sequelize from "./config/db.js";
 import Category from "./models/Category.js";
 import Product from "./models/Product.js";
 import dotenv from "dotenv";
-import axios from "axios"; // 🟢 ADDED: Import axios to talk to the Vendor service
+import axios from "axios";
 
 dotenv.config();
 
@@ -16,7 +16,7 @@ const extractJwtCookie = (setCookieHeader) => {
     (c) => typeof c === "string" && c.startsWith("jwt="),
   );
   if (!jwtSetCookie) return null;
-  return jwtSetCookie.split(";")[0]?.trim() || null; // "jwt=<token>"
+  return jwtSetCookie.split(";")[0]?.trim() || null; 
 };
 
 const seedProducts = async () => {
@@ -25,7 +25,6 @@ const seedProducts = async () => {
 
     await sequelize.sync();
 
-    // 1. Create Categories (these don't depend on vendor-service)
     const [electronics] = await Category.findOrCreate({
       where: { name: "Electronics" },
       defaults: { name: "Electronics" },
@@ -78,11 +77,10 @@ const seedProducts = async () => {
       where: { name: "Combos & Offers" },
       defaults: { name: "Combos & Offers" },
     });
-    // 🟢 1. Fetch real vendors from your API Gateway / Vendor Service
+    
     console.log("🔄 Fetching live vendors from Vendor Service...");
     let realVendorId;
 
-    // Allow bypassing cross-service auth for local/dev
     if (process.env.SEED_VENDOR_ID) {
       realVendorId = process.env.SEED_VENDOR_ID;
       console.log(`✅ Using SEED_VENDOR_ID=${realVendorId}`);
@@ -102,7 +100,7 @@ const seedProducts = async () => {
           password: "Admin@123",
         });
 
-        // admin-service sets the JWT as an HttpOnly cookie named "jwt"
+       
         const jwtCookie = extractJwtCookie(
           loginResponse.headers?.["set-cookie"],
         );
@@ -149,7 +147,7 @@ const seedProducts = async () => {
     }
 
     await Product.destroy({ where: {} });
-    // 3. Create Products using the dynamic realVendorId
+ 
     await Product.bulkCreate(
       [
         {
@@ -159,7 +157,7 @@ const seedProducts = async () => {
           totalStock: 50,
           warehouseStock: 40,
           CategoryId: electronics.id,
-          vendorId: realVendorId, // 🟢 Injecting the real database ID here
+          vendorId: realVendorId, 
           images: [
             "https://img.freepik.com/premium-photo/photo-wireless-headphones_1029469-18128.jpg",
           ],
@@ -171,7 +169,7 @@ const seedProducts = async () => {
           totalStock: 100,
           warehouseStock: 50,
           CategoryId: clothing.id,
-          vendorId: realVendorId, // 🟢 Injecting the real database ID here
+          vendorId: realVendorId,
           images: [
             "https://th.bing.com/th/id/OIP.uUHWw_qUuuPphnghYUcjjgHaJQ?w=208&h=260&c=7&r=0&o=7&dpr=1.3&pid=1.7&rm=3",
           ],

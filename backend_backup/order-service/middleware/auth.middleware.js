@@ -9,7 +9,6 @@ export default async (req, res, next) => {
   if (!token) return res.status(401).json({ message: "Unauthorized" });
 
   try {
-    // 🟢 1. Check Redis Blacklist (Only if Redis is healthy)
     if (redis.status === "ready") {
       const isBlacklisted = await redis.get(`blacklist:${token}`);
       if (isBlacklisted) {

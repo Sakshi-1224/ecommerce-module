@@ -16,7 +16,7 @@ export const loginDeliveryBoy = async (req, res) => {
         .json({ message: "Phone and Password are required" });
     }
 
-    // 🟢 RATE LIMIT CHECK
+    
     const attemptsKey = `login_attempts:delivery:${phone}`;
     const attempts = await redis.get(attemptsKey);
 
@@ -38,7 +38,7 @@ export const loginDeliveryBoy = async (req, res) => {
     const isMatch = await bcrypt.compare(password, boy.password);
     if (!isMatch) return await handleFailedLogin();
 
-    // 🟢 CLEAR RATE LIMIT & CACHE
+   
     await redis.del(attemptsKey);
 
     const token = jwt.sign(
@@ -67,12 +67,10 @@ export const logoutDeliveryBoy = async (req, res) => {
 
     if (!token) return res.status(400).json({ message: "No Token Provided" });
 
-    // 🟢 BLACKLIST TOKEN & CLEAR USER CACHE
     await redis.set(`blacklist:${token}`, "true", "EX", 604800);
-
-    // Clear the specific delivery boy's task cache on logout
-    if (req.user && req.user.id) {
-      await redis.del(`tasks:boy:${req.user.id}`);
+    
+    if(req.user && req.user.id) {
+        await redis.del(`tasks:boy:${req.user.id}`);
     }
 
     res.json({ message: "Logged out successfully" });
@@ -85,8 +83,7 @@ export const logoutDeliveryBoy = async (req, res) => {
 export const getProfile = async (req, res) => {
   try {
     const boyId = req.user.id;
-
-    // Exclude password from the profile payload
+    
     const boy = await DeliveryBoy.findByPk(boyId, {
       attributes: { exclude: ["password"] },
     });
@@ -102,7 +99,7 @@ export const getProfile = async (req, res) => {
   }
 };
 
-// 🟢 Change Delivery Boy Password
+
 export const changePassword = async (req, res) => {
   try {
     const { oldPassword, newPassword } = req.body;
@@ -120,14 +117,13 @@ export const changePassword = async (req, res) => {
       return res.status(404).json({ message: "Delivery boy not found" });
     }
 
-    // Verify old password
+   
     const isMatch = await bcrypt.compare(oldPassword, boy.password);
     if (!isMatch) {
       return res.status(400).json({ message: "Invalid old password" });
     }
 
-    // The 'beforeUpdate' hook in models/DeliveryBoy.js will automatically hash this
-    boy.password = newPassword;
+    boy.password = newPassword; 
     await boy.save();
 
     res.json({ message: "Password updated successfully" });

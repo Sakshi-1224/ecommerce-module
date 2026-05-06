@@ -21,7 +21,7 @@ router.get("/me", authMiddleware, me);
 router.put(
   "/profile",
   authMiddleware,
-  upload.single("profilePic"), // Must match frontend FormData key
+  upload.single("profilePic"), 
   updateProfile
 );
 
@@ -29,6 +29,6 @@ router.post("/change-password", authMiddleware, changePassword);
 
 router.get("/admin/search", authMiddleware, admin, getUserByPhoneAdmin);
 
-//admin routes
+
 router.get("/users", authMiddleware, admin, getAllUsers);
 export default router;

@@ -12,7 +12,7 @@ const DeliveryBoy = sequelize.define("DeliveryBoy", {
     type: DataTypes.STRING,
     allowNull: false,
   },
-  // 🟢 LOGIN CREDENTIALS
+
   email: { 
     type: DataTypes.STRING, allowNull: false, unique: true 
   },
@@ -28,7 +28,6 @@ const DeliveryBoy = sequelize.define("DeliveryBoy", {
     type: DataTypes.BOOLEAN,
     defaultValue: true,
   },
-  // 📍 LOCATION & CAPACITY
   state: {
     type: DataTypes.STRING,
     allowNull: false,
@@ -40,8 +39,6 @@ const DeliveryBoy = sequelize.define("DeliveryBoy", {
     defaultValue: "Raipur",
   },
 
-  // 🟢 Specific Areas they cover (e.g. ["Vijay Nagar", "Palasia"])
-  // Used for Auto-Assignment & Dropdowns
   assignedAreas: {
     type: DataTypes.JSON,
     defaultValue: [],
@@ -49,12 +46,11 @@ const DeliveryBoy = sequelize.define("DeliveryBoy", {
   },
   maxOrders: {
     type: DataTypes.INTEGER,
-    defaultValue: 100, // Daily limit
+    defaultValue: 100, 
     allowNull: false,
   },
 });
 
-// 🔒 Hash Password Before Saving
 DeliveryBoy.beforeCreate(async (boy) => {
   if (boy.password) {
     const salt = await bcrypt.genSalt(10);

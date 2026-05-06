@@ -6,12 +6,12 @@ import authDeliveryBoy from "../middleware/deliveryAuth.middleware.js";
 
 const router = express.Router();
 
-// 🟢 Auth
+
 router.post("/login", loginDeliveryBoy);
 router.post("/logout", authDeliveryBoy, logoutDeliveryBoy);
-// 🟢 Tasks (Protected)
-router.get("/my-tasks", authDeliveryBoy, getMyTasks); // View Assigned Orders
-router.put("/update-status/:assignmentId", authDeliveryBoy, updateTaskStatus); // Mark Delivered
+
+router.get("/my-tasks", authDeliveryBoy, getMyTasks); 
+router.put("/update-status/:assignmentId", authDeliveryBoy, updateTaskStatus); 
 
 router.get("/profile", authDeliveryBoy, getProfile);
 router.put("/change-password", authDeliveryBoy, changePassword);

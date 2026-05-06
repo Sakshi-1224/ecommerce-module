@@ -6,7 +6,9 @@ import minioClient, { initBucket } from "../config/minioClient.js";
 import redis from "../config/redis.js";
 import Address from "../models/Address.js";
 import { sendTokenCookie, clearTokenCookie } from "../utils/cookie.util.js";
+import dotenv from "dotenv";
 
+dotenv.config();
 const BUCKET_NAME = "user-profiles";
 initBucket(BUCKET_NAME);
 
@@ -106,7 +108,7 @@ export const register = async (req, res) => {
 
 export const login = async (req, res) => {
   try {
-    // 1. Zod Validation
+   
     const parseResult = loginSchema.safeParse(req.body);
     if (!parseResult.success) {
       return res
@@ -128,7 +130,6 @@ export const login = async (req, res) => {
 
     const attemptsKey = `user_login_attempts:${phone}`;
 
-    // 2. Redis Brute-Force Protection
     if (redis.status === "ready") {
       const attempts = await redis.get(attemptsKey);
       if (attempts && parseInt(attempts) >= 5) {
@@ -150,13 +151,12 @@ export const login = async (req, res) => {
       return res.status(401).json({ message: "Invalid credentials" });
     };
 
-    // 3. Timing Attack Mitigation
+   
     const hashToCompare = user ? user.password : dummyHash;
     const isMatch = await bcrypt.compare(password, hashToCompare);
 
     if (!user || !isMatch) return await handleFailedLogin();
 
-    // Reset attempts
     if (redis.status === "ready") await redis.del(attemptsKey);
 
     const token = jwt.sign(
@@ -211,10 +211,7 @@ export const logout = async (req, res) => {
   }
 };
 
-/* ======================================================
-   🟢 ME FUNCTION (CRITICAL FIX FOR PROFILE PAGE)
-   Maps DB columns to Frontend keys (accountNumber, ifscCode)
-====================================================== */
+
 export const me = async (req, res) => {
   try {
     const user = await User.findByPk(req.user.id, {
@@ -225,7 +222,6 @@ export const me = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // 🟢 Manually construct the response to ensure keys match Frontend
     res.json({
       id: user.id,
       name: user.name,
@@ -253,7 +249,7 @@ export const changePassword = async (req, res) => {
     const { oldPassword, newPassword } = parseResult.data;
     const user = await User.findByPk(req.user.id);
 
-    // Timing attack mitigation here too
+   
     const hashToCompare = user ? user.password : dummyHash;
     const isMatch = await bcrypt.compare(oldPassword, hashToCompare);
 
@@ -316,7 +312,7 @@ export const updateProfile = async (req, res) => {
         file.size,
         { "Content-Type": file.mimetype },
       );
-      user.profilePic = `http://localhost:9000/${BUCKET_NAME}/${fileName}`;
+      user.profilePic = `${process.env.MINIO_BUCKET_URL}/${BUCKET_NAME}/${fileName}`;
     }
 
     await user.save();
@@ -347,11 +343,10 @@ export const getUserByPhoneAdmin = async (req, res) => {
     const user = await User.findOne({
       where: { phone },
       attributes: { exclude: ["password"] },
-      // 🟢 FIX: Use the 'as' alias defined in associations.js
       include: [
         {
           model: Address,
-          as: "addresses", // <--- CRITICAL FIX
+          as: "addresses", 
         },
       ],
     });
@@ -362,7 +357,7 @@ export const getUserByPhoneAdmin = async (req, res) => {
 
     res.json(user);
   } catch (err) {
-    console.error("Search Error:", err); // Check your terminal, you will see the alias error there
+    console.error("Search Error:", err); 
     res.status(500).json({ message: "Internal server error" });
   }
 };

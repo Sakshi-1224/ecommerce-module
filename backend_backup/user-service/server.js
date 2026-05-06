@@ -12,9 +12,8 @@ dotenv.config();
 const app = express();
 
 app.use(express.json());
-app.use(cookieParser()); // Must be added before CSRF and Routes
+app.use(cookieParser()); 
 
-// Initialize CSRF protection (stores secret in a cookie)
 const csrfProtection = csrf({ cookie: true });
 
 const mobileCsrfBypass = (req, res, next) => {
@@ -26,7 +25,6 @@ const mobileCsrfBypass = (req, res, next) => {
 
 defineAssociations();
 
-// Provide a route for the React frontend to fetch the CSRF token
 app.get("/api/auth/csrf-token", csrfProtection, (req, res) => {
   res.json({ csrfToken: req.csrfToken() });
 });
@@ -36,7 +34,7 @@ app.use("/api/auth", mobileCsrfBypass, authRoutes);
 app.use("/api/addresses", mobileCsrfBypass, addressRoutes);
 
 app.use((err, req, res, next) => {
-  // Catch CSRF token errors specifically
+
   if (err.code === "EBADCSRFTOKEN") {
     return res.status(403).json({ message: "Invalid CSRF token" });
   }

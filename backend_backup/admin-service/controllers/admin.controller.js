@@ -2,7 +2,7 @@ import axios from "axios";
 import { z } from "zod";
 import Admin from "../models/Admin.js";
 import bcrypt from "bcrypt";
-import redis from "../config/redis.js"; // 🟢 1. Import Redis
+import redis from "../config/redis.js"; 
 import { fetchWithCache } from "../utils/redisWrapper.js";
 
 const ORDER = process.env.ORDER_SERVICE_URL;

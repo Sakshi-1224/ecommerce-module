@@ -4,9 +4,8 @@ import dotenv from "dotenv";
 import { z } from "zod";
 
 dotenv.config();
-const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL || "http://localhost:5002/api/products";
+const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL;
 
-// 🟢 Zod Schemas
 const addToCartSchema = z.object({
   productId: z.union([z.string(), z.number()], { required_error: "Product ID is required" }),
   quantity: z.number().int().positive("Quantity must be a positive integer").default(1),
@@ -16,15 +15,14 @@ const updateQuantitySchema = z.object({
   quantity: z.number().int().positive("Quantity must be a positive integer"),
 });
 
-// 🟢 Reusable Axios Config for Timeouts
-const axiosConfig = { timeout: 4000 }; // Fail fast after 4 seconds
+
+const axiosConfig = { timeout: 4000 };
 
 export const addToCart = async (req, res) => {
   try {
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ message: "Unauthorized: User ID missing" });
 
-    // 1. Zod Validation
     const parseResult = addToCartSchema.safeParse(req.body);
     if (!parseResult.success) {
       return res.status(400).json({ message: "Invalid input", errors: parseResult.error.errors });
@@ -32,7 +30,6 @@ export const addToCart = async (req, res) => {
 
     const { productId, quantity } = parseResult.data;
 
-    // 2. Timeout-Protected Inter-Service Call
     let product;
     try {
       const response = await axios.get(`${PRODUCT_SERVICE_URL}/${productId}`, axiosConfig);
@@ -44,7 +41,6 @@ export const addToCart = async (req, res) => {
       return res.status(404).json({ message: "Product not found" });
     }
 
-    // Stock Check
     const currentStock = product.availableStock ?? product.stock ?? 0;
     if (currentStock < quantity) {
       return res.status(400).json({ message: "Insufficient stock" });
@@ -90,7 +86,7 @@ export const updateQuantity = async (req, res) => {
       return res.status(403).json({ message: "Unauthorized cart access" });
     }
 
-    // 2. Timeout-Protected Call
+    
     let product;
     try {
       const response = await axios.get(`${PRODUCT_SERVICE_URL}/${item.productId}`, axiosConfig);
@@ -119,7 +115,7 @@ export const updateQuantity = async (req, res) => {
 
 export const getCart = async (req, res) => {
   try {
-    const userId = req.params.userId; // Assuming route has :userId, or use req.user.id
+    const userId = req.params.userId;
     if (!userId) return res.status(400).json({ message: "User ID is required" });
 
     const cartItems = await CartItem.findAll({ where: { userId } });
@@ -147,7 +143,7 @@ export const getCart = async (req, res) => {
       });
     } catch (err) {
       console.error("Failed to batch fetch products:", err.message);
-      // If batch fetch fails, we might return empty or error out
+      
       return res
         .status(500)
         .json({ message: "Failed to load product details" });
@@ -159,7 +155,6 @@ export const getCart = async (req, res) => {
     for (const item of cartItems) {
       const product = productsMap[item.productId];
 
-      // Skip if product no longer exists (deleted)
       if (!product) continue;
 
       const subtotal = product.price * item.quantity;

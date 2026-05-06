@@ -12,9 +12,9 @@ import admin from "../middleware/admin.middleware.js";
 
 const router = express.Router();
 
-router.post("/shipping-rates", auth, admin, setShippingRate); // Add or Update
-router.get("/shipping-rates", auth, admin, getAllShippingRates); // View All
-router.delete("/shipping-rates/:id", auth, admin, deleteShippingRate); // Delete
+router.post("/shipping-rates", auth, admin, setShippingRate); 
+router.get("/shipping-rates", auth, admin, getAllShippingRates); 
+router.delete("/shipping-rates/:id", auth, admin, deleteShippingRate); 
 router.get("/calculate", auth, getShippingCharge);
 router.get("/shipping-rates/active", auth, getActiveShippingRates);
 router.patch("/shipping-rates/:id/status", auth, admin, toggleShippingAreaStatus);

@@ -14,11 +14,11 @@ const processAutomaticRefund = async (order, itemsToCancel, t, req) => {
 
   const refundAmount = order.amount - newOrderTotal;
   
-  // Update the parent order's new total
+  
   order.amount = newOrderTotal;
   await order.save({ transaction: t });
 
-  // Simply return true if money needs to be refunded (amount > 0)
+  
   return refundAmount > 0; 
 };
 

@@ -1,6 +1,5 @@
 import redis from "../config/redis.js";
 
-// Safe Fetch Wrapper
 export const fetchWithCache = async (key, ttl, fetchCallback) => {
   try {
     if (redis.status === "ready") {
@@ -24,18 +23,18 @@ export const fetchWithCache = async (key, ttl, fetchCallback) => {
   return freshData;
 };
 
-// Safe Invalidation Helper
+
 export const safeDeleteCache = async (keys) => {
-  if (redis.status !== "ready") return; // Skip if Redis is down
+  if (redis.status !== "ready") return; 
   
   try {
-    // Force array
+   
     const keysArray = Array.isArray(keys) ? keys : [keys];
-    // Filter out null/undefined keys
+    
     const validKeys = keysArray.filter(Boolean); 
     
     if (validKeys.length > 0) {
-      await redis.unlink(...validKeys); // Unlink is faster than Del
+      await redis.unlink(...validKeys); 
     }
   } catch (error) {
     console.error(`⚠️ Redis UNLINK error:`, error.message);

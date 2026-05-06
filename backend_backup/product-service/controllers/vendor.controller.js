@@ -3,7 +3,7 @@ import Category from "../models/Category.js";
 import { uploadImageToMinio } from "../utils/uploadToMinio.js";
 import { Op } from "sequelize";
 import sequelize from "../config/db.js";
-import redis from "../config/redis.js"; // 🟢 Import Redis
+import redis from "../config/redis.js"; 
 import { safeInvalidateCatalog } from "../utils/redisWrapper.js";
 
 export const getVendorProducts = async (req, res) => {
@@ -29,7 +29,6 @@ export const createProduct = async (req, res) => {
     if (stock < 0)
       return res.status(400).json({ message: "Stock cannot be negative" });
 
-    // 🛑 NEGATIVE CHECKS FOR FILES
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
         if (file.size === 0) {
@@ -37,7 +36,7 @@ export const createProduct = async (req, res) => {
             message: `File '${file.originalname}' is empty. Please upload a valid image.`,
           });
         }
-        const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+        const MAX_SIZE = 5 * 1024 * 1024; 
         if (file.size > MAX_SIZE) {
           return res.status(400).json({
             message: `File '${file.originalname}' exceeds the 5MB limit.`,
@@ -116,7 +115,6 @@ export const updateProduct = async (req, res) => {
       }
     }
 
-    // Smart Stock Update
     if (stock !== undefined && stock >= 0) {
       const difference = stock - product.totalStock;
       product.totalStock = stock;

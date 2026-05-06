@@ -9,7 +9,6 @@ import authMiddleware from "../middleware/auth.middleware.js";
 import { admin } from "../middleware/admin.middleware.js";
 const router = express.Router();
 
-// POST: Save new address
 router.post("/", authMiddleware, addAddress);
 router.get("/", authMiddleware, getAddresses);
 router.delete("/:id", authMiddleware, deleteAddress);

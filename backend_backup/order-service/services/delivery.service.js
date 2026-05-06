@@ -3,11 +3,11 @@ import DeliveryBoy from "../models/DeliveryBoy.js";
 import DeliveryAssignment from "../models/DeliveryAssignment.js";
 import { Op } from "sequelize";
 
-// 🟢 ADDED: `reason = null` as the 4th parameter
+
 export const autoAssignDeliveryBoy = async (orderId, area, transaction, reason = null) => {
   try {
     const existingAssignment = await DeliveryAssignment.findOne({
-      // 🟢 ADDED: `reason: reason` so it doesn't confuse a past delivery with a new return
+      
       where: { orderId, status: { [Op.ne]: "FAILED" }, reason: reason },
       transaction,
     });
@@ -49,7 +49,7 @@ export const autoAssignDeliveryBoy = async (orderId, area, transaction, reason =
     if (!bestBoy) return { success: false, message: `All boys fully booked` };
 
     await DeliveryAssignment.create(
-      // 🟢 ADDED: `reason: reason` to properly tag the new task in the database
+     
       { orderId, deliveryBoyId: bestBoy.id, status: "ASSIGNED", reason: reason },
       { transaction },
     );

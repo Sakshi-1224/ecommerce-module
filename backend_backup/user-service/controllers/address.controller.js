@@ -53,7 +53,7 @@ export const getAddresses = async (req, res) => {
   
     res.json(addresses);
   } catch (error) {
-    console.error("Get Addresses Error:", error); // 🔴 Log the real error to console
+    console.error("Get Addresses Error:", error); 
     res.status(500).json({ message: "Failed to fetch addresses" });
   }
 };
@@ -63,7 +63,6 @@ export const deleteAddress = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Ensure the address belongs to the logged-in user before deleting
     const deleted = await Address.destroy({
       where: { id, userId: req.user.id },
     });

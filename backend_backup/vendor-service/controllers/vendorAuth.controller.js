@@ -210,7 +210,7 @@ export const logout = async (req, res) => {
       await safeDeleteCache(`vendor:profile:${req.user.id}`);
     }
 
-    // 🟢 Clear the cookie
+    
     clearTokenCookie(res);
 
     res.json({ message: "Logged out successfully" });
@@ -237,13 +237,13 @@ export const changePassword = async (req, res) => {
       return res.status(404).json({ error: "Vendor not found" });
     }
 
-    // Check if the old password matches
+
     const isMatch = await bcrypt.compare(oldPassword, vendor.password);
     if (!isMatch) {
       return res.status(400).json({ error: "Invalid old password" });
     }
 
-    // Hash the new password and save
+   
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
