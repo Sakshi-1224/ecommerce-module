@@ -50,6 +50,11 @@ const globalLimiter = rateLimit({
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
+  skip: (req) => {
+    return (
+      req.ip === "127.0.0.1" || req.ip === "::1" || req.ip === "YOUR_MOBILE_IP"
+    );
+  },
   skipSuccessfulRequests: true,
   requestWasSuccessful: (req, res) => {
     return res.statusCode < 400;

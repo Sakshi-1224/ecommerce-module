@@ -11,7 +11,9 @@ export const loginDeliveryBoy = async (req, res) => {
     const { phone, password } = req.body;
 
     if (!phone || !password) {
-      return res.status(400).json({ message: "Phone and Password are required" });
+      return res
+        .status(400)
+        .json({ message: "Phone and Password are required" });
     }
 
     // 🟢 RATE LIMIT CHECK
@@ -19,8 +21,8 @@ export const loginDeliveryBoy = async (req, res) => {
     const attempts = await redis.get(attemptsKey);
 
     if (attempts && parseInt(attempts) >= 5) {
-      return res.status(429).json({ 
-        message: "Too many failed attempts. Account locked for 10 minutes." 
+      return res.status(429).json({
+        message: "Too many failed attempts. Account locked for 10 minutes.",
       });
     }
 
@@ -40,17 +42,16 @@ export const loginDeliveryBoy = async (req, res) => {
     await redis.del(attemptsKey);
 
     const token = jwt.sign(
-      { id: boy.id, role: "delivery_boy" }, 
+      { id: boy.id, role: "delivery_boy" },
       process.env.JWT_SECRET,
-      { expiresIn: "7d" }
+      { expiresIn: "7d" },
     );
 
     res.json({
       message: "Login Successful",
       token,
-      boy: { id: boy.id, name: boy.name, city: boy.city }
+      boy: { id: boy.id, name: boy.name, city: boy.city },
     });
-
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -68,10 +69,10 @@ export const logoutDeliveryBoy = async (req, res) => {
 
     // 🟢 BLACKLIST TOKEN & CLEAR USER CACHE
     await redis.set(`blacklist:${token}`, "true", "EX", 604800);
-    
+
     // Clear the specific delivery boy's task cache on logout
-    if(req.user && req.user.id) {
-        await redis.del(`tasks:boy:${req.user.id}`);
+    if (req.user && req.user.id) {
+      await redis.del(`tasks:boy:${req.user.id}`);
     }
 
     res.json({ message: "Logged out successfully" });
@@ -80,15 +81,14 @@ export const logoutDeliveryBoy = async (req, res) => {
   }
 };
 
-
 // 🟢 Get Delivery Boy Profile
 export const getProfile = async (req, res) => {
   try {
     const boyId = req.user.id;
-    
+
     // Exclude password from the profile payload
     const boy = await DeliveryBoy.findByPk(boyId, {
-      attributes: { exclude: ["password"] }
+      attributes: { exclude: ["password"] },
     });
 
     if (!boy) {
@@ -106,9 +106,11 @@ export const getProfile = async (req, res) => {
 export const changePassword = async (req, res) => {
   try {
     const { oldPassword, newPassword } = req.body;
-    
+
     if (!oldPassword || !newPassword) {
-      return res.status(400).json({ message: "Old and new passwords are required" });
+      return res
+        .status(400)
+        .json({ message: "Old and new passwords are required" });
     }
 
     const boyId = req.user.id;
@@ -125,7 +127,7 @@ export const changePassword = async (req, res) => {
     }
 
     // The 'beforeUpdate' hook in models/DeliveryBoy.js will automatically hash this
-    boy.password = newPassword; 
+    boy.password = newPassword;
     await boy.save();
 
     res.json({ message: "Password updated successfully" });

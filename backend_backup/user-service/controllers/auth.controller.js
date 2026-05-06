@@ -45,12 +45,10 @@ export const register = async (req, res) => {
   try {
     const parseResult = registerSchema.safeParse(req.body);
     if (!parseResult.success) {
-      return res
-        .status(400)
-        .json({
-          message: "Validation failed",
-          errors: parseResult.error.errors,
-        });
+      return res.status(400).json({
+        message: "Validation failed",
+        errors: parseResult.error.errors,
+      });
     }
 
     const { name, email, phone, password } = parseResult.data;
@@ -89,6 +87,7 @@ export const register = async (req, res) => {
 
     res.status(201).json({
       message: "User registered successfully",
+      token: token,
       user: {
         id: user.id,
         name: user.name,
@@ -133,11 +132,9 @@ export const login = async (req, res) => {
     if (redis.status === "ready") {
       const attempts = await redis.get(attemptsKey);
       if (attempts && parseInt(attempts) >= 5) {
-        return res
-          .status(429)
-          .json({
-            message: "Too many failed attempts. Account locked for 10 minutes.",
-          });
+        return res.status(429).json({
+          message: "Too many failed attempts. Account locked for 10 minutes.",
+        });
       }
     }
 
@@ -247,12 +244,10 @@ export const changePassword = async (req, res) => {
   try {
     const parseResult = changePasswordSchema.safeParse(req.body);
     if (!parseResult.success) {
-      return res
-        .status(400)
-        .json({
-          message: "Validation failed",
-          errors: parseResult.error.errors,
-        });
+      return res.status(400).json({
+        message: "Validation failed",
+        errors: parseResult.error.errors,
+      });
     }
 
     const { oldPassword, newPassword } = parseResult.data;
@@ -292,12 +287,10 @@ export const updateProfile = async (req, res) => {
   try {
     const parseResult = updateProfileSchema.safeParse(req.body);
     if (!parseResult.success) {
-      return res
-        .status(400)
-        .json({
-          message: "Validation failed",
-          errors: parseResult.error.errors,
-        });
+      return res.status(400).json({
+        message: "Validation failed",
+        errors: parseResult.error.errors,
+      });
     }
 
     const { name, email } = parseResult.data;

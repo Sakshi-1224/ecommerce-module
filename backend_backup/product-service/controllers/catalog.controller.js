@@ -7,7 +7,6 @@ import redis from "../config/redis.js"; // 🟢 Import Redis
 import { fetchWithCache } from "../utils/redisWrapper.js";
 import { z } from "zod";
 
-
 const catalogQuerySchema = z.object({
   search: z.string().optional(),
   category: z.string().optional(),
@@ -15,7 +14,7 @@ const catalogQuerySchema = z.object({
   minPrice: z.coerce.number().min(0).optional(),
   maxPrice: z.coerce.number().min(0).optional(),
   limit: z.coerce.number().min(1).max(100).default(50), // Cap at 100 max
-  page: z.coerce.number().min(1).default(1)
+  page: z.coerce.number().min(1).default(1),
 });
 
 export const getProductsBatch = async (req, res) => {
@@ -32,7 +31,14 @@ export const getProductsBatch = async (req, res) => {
     const products = await fetchWithCache(cacheKey, 60, async () => {
       return await Product.findAll({
         where: { id: { [Op.in]: idArray } },
-        attributes: ["id", "name", "price", "images", "availableStock", "vendorId"], 
+        attributes: [
+          "id",
+          "name",
+          "price",
+          "images",
+          "availableStock",
+          "vendorId",
+        ],
         include: { model: Category, attributes: ["name"] },
       });
     });
@@ -51,10 +57,11 @@ export const getProducts = async (req, res) => {
       return res.status(400).json({ message: "Invalid query parameters" });
     }
 
-    const { category, sort, search, minPrice, maxPrice, limit, page } = parseResult.data;
-    
+    const { category, sort, search, minPrice, maxPrice, limit, page } =
+      parseResult.data;
+
     // Normalize safely
-    const cacheKey = `products:search:${category || 'all'}:${sort}:${search || ''}:${minPrice || 0}:${maxPrice || 'max'}:${limit}:${page}`;
+    const cacheKey = `products:search:${category || "all"}:${sort}:${search || ""}:${minPrice || 0}:${maxPrice || "max"}:${limit}:${page}`;
 
     const products = await fetchWithCache(cacheKey, 60, async () => {
       let whereCondition = {};
@@ -78,19 +85,24 @@ export const getProducts = async (req, res) => {
 
       const offset = (page - 1) * limit;
 
-      return await Product.findAndCountAll({ // Use findAndCountAll for pagination
+      return await Product.findAndCountAll({
+        // Use findAndCountAll for pagination
         where: whereCondition,
         include: [
           {
             model: Category,
             attributes: ["name"],
-            where: category && category !== "all" ? { name: category } : undefined,
-            required: false,
+            where:
+              category && category !== "all" ? { name: category } : undefined,
+            required:
+              category && category !== "all" && category !== "All"
+                ? true
+                : false,
           },
         ],
         order: orderCondition,
         limit,
-        offset
+        offset,
       });
     });
 

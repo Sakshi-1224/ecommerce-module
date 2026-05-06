@@ -17,6 +17,13 @@ app.use(cookieParser()); // Must be added before CSRF and Routes
 // Initialize CSRF protection (stores secret in a cookie)
 const csrfProtection = csrf({ cookie: true });
 
+const mobileCsrfBypass = (req, res, next) => {
+  if (req.headers["x-app-client"] === "mobile") {
+    return next();
+  }
+  return csrfProtection(req, res, next);
+};
+
 defineAssociations();
 
 // Provide a route for the React frontend to fetch the CSRF token
@@ -25,8 +32,8 @@ app.get("/api/auth/csrf-token", csrfProtection, (req, res) => {
 });
 
 // Apply CSRF protection to your routes
-app.use("/api/auth", csrfProtection, authRoutes);
-app.use("/api/addresses", csrfProtection, addressRoutes);
+app.use("/api/auth", mobileCsrfBypass, authRoutes);
+app.use("/api/addresses", mobileCsrfBypass, addressRoutes);
 
 app.use((err, req, res, next) => {
   // Catch CSRF token errors specifically
