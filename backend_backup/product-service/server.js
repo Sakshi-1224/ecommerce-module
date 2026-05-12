@@ -6,7 +6,7 @@ import productRoutes from "./routes/product.routes.js";
 dotenv.config();
 
 const app = express();
-
+app.disable("x-powered-by");
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -20,9 +20,11 @@ app.use((err, req, res, next) => {
   });
 });
 
-sequelize.sync().then(() => {
-  console.log("Product DB connected");
-  app.listen(5002, () => {
-    console.log("Product Service running on port 5002");
-  });
+await sequelize.sync();
+
+console.log("Product DB connected");
+
+
+app.listen(5002, () => {
+  console.log("Product Service running on port 5002");
 });

@@ -6,13 +6,12 @@ const authMiddleware = async (req, res, next) => {
 
   // 1. First, check if the token is in the Authorization header (Sent by Flutter)
   if (
-    req.headers.authorization &&
-    req.headers.authorization.startsWith("Bearer")
+    req.headers.authorization?.startsWith("Bearer")
   ) {
     token = req.headers.authorization.split(" ")[1];
   }
   // 2. Fallback: check if the token is in the cookies (Sent by Web Browsers)
-  else if (req.cookies && req.cookies.jwt) {
+  else if (req.cookies?.jwt) {
     token = req.cookies.jwt;
   }
 
@@ -38,6 +37,7 @@ const authMiddleware = async (req, res, next) => {
 
     next();
   } catch (err) {
+    console.log("Authentication Error:", err);
     res.status(401).json({ message: "Invalid or expired token" });
   }
 };

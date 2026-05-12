@@ -2,7 +2,7 @@ import axios from "axios";
 import { z } from "zod";
 import Admin from "../models/Admin.js";
 import bcrypt from "bcrypt";
-import redis from "../config/redis.js"; 
+
 import { fetchWithCache } from "../utils/redisWrapper.js";
 
 const ORDER = process.env.ORDER_SERVICE_URL;
@@ -22,7 +22,7 @@ const changePasswordSchema = z
 
 export const changePassword = async (req, res) => {
   try {
-    if (!req.user || !req.user.id) {
+    if (!req.user?.id) {
       return res.status(401).json({ message: "Unauthorized access" });
     }
 

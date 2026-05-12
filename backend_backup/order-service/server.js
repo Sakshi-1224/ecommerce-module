@@ -11,11 +11,10 @@ import "./services/sagaQueue.js";
 dotenv.config();
 
 const app = express();
-
+app.disable("x-powered-by");
 app.use(
   express.json({
     verify: (req, res, buf) => {
-      
       if (req.originalUrl.includes("/webhook")) {
         req.rawBody = buf.toString();
       }
@@ -38,8 +37,8 @@ app.use((err, req, res, next) => {
   });
 });
 
-sequelize.sync({ alter: true }).then(() => {
-  app.listen(process.env.PORT, () =>
-    console.log(`Order Service running on ${process.env.PORT}`),
-  );
-});
+await sequelize.sync();
+
+app.listen(process.env.PORT, () =>
+  console.log(`Order Service running on ${process.env.PORT}`),
+);

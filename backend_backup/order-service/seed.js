@@ -22,13 +22,19 @@ const seedOrderService = async () => {
     await ShippingRate.bulkCreate(areas, { ignoreDuplicates: true });
 
     // 2. Seed Delivery Boy
+    const seedPassword = process.env.SEED_PASSWORD;
+    if (!seedPassword) {
+      throw new Error(
+        "Missing SEED_PASSWORD in environment variables. Cannot seed DeliveryBoy.",
+      );
+    }
     await DeliveryBoy.findOrCreate({
       where: { email: "raju@test.com" },
       defaults: {
         name: "Raju Courier",
         email: "raju@test.com",
         phone: "9999999990",
-        password: "Password@123",
+        password: seedPassword,
         state: "Madhya Pradesh",
         city: "Indore",
         assignedAreas: ["Vijay Nagar", "Palasia", "General"],

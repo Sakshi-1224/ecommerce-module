@@ -1,14 +1,6 @@
 import Order from "../models/Order.js";
 import OrderItem from "../models/OrderItem.js";
 import { Op } from "sequelize";
-import DeliveryBoy from "../models/DeliveryBoy.js";
-import DeliveryAssignment from "../models/DeliveryAssignment.js";
-import ShippingRate from "../models/ShippingRate.js";
-import sequelize from "../config/db.js";
-import axios from "axios";
-import redis from "../config/redis.js";
-import razorpay from "../config/razorpay.js";
-import { fetchWithCache } from "../utils/redisWrapper.js";
 
 const getSalesFilter = (vendorId = null, dateFilter = {}) => {
   const where = {
@@ -44,8 +36,7 @@ export const getAdminStats = async (req, res) => {
       dateFilter = { createdAt: { [Op.between]: [startDate, endDate] } };
     }
 
-    // 🟢 1. Item Sales (Net Revenue from Products)
-    // Keeps existing logic: Sums DELIVERED items, excludes RETURNS
+   
     const itemSalesData = await OrderItem.findAll({
       where: getSalesFilter(null, dateFilter),
       attributes: [
@@ -56,12 +47,11 @@ export const getAdminStats = async (req, res) => {
       ],
       raw: true,
     });
-    const totalItemSales = parseFloat(itemSalesData[0]?.totalItemSales || 0);
+    const totalItemSales = Number.parseFloat(
+      itemSalesData[0]?.totalItemSales || 0,
+    );
 
-    // 🟢 2. Shipping Sales (Revenue from Delivery Charges)
-    // Logic: Sum shippingCharge for all orders that reached delivery stage.
-    // We include 'RETURN_REQUESTED' because shipping is usually non-refundable
-    // or at least collected initially.
+    
     const shippingData = await Order.findAll({
       where: {
         status: { [Op.in]: ["DELIVERED", "RETURN_REQUESTED"] },
@@ -75,12 +65,14 @@ export const getAdminStats = async (req, res) => {
       ],
       raw: true,
     });
-    const totalShipping = parseFloat(shippingData[0]?.totalShipping || 0);
+    const totalShipping = Number.parseFloat(
+      shippingData[0]?.totalShipping || 0,
+    );
 
-    // 🟢 3. Final Total Sales = Items + Shipping
+   
     const totalSales = totalItemSales + totalShipping;
 
-    // --- Counts (Keep existing logic) ---
+   
     const totalOrders = await Order.count({
       where: {
         status: { [Op.ne]: "CANCELLED" },
@@ -102,7 +94,7 @@ export const getAdminStats = async (req, res) => {
     });
 
     res.json({
-      totalSales, // Now includes Shipping!
+      totalSales, 
       totalOrders,
       pendingOrders,
       todayOrders,
@@ -166,7 +158,7 @@ export const getVendorStats = async (req, res) => {
     });
 
     res.json({
-      totalSales: parseFloat(totalSales),
+      totalSales: Number.parseFloat(totalSales),
       totalOrders,
       pendingOrders,
       todayOrders,
@@ -184,14 +176,12 @@ export const vendorSalesReport = async (req, res) => {
 
     let dateCondition = {};
 
-   
     if (startDate && endDate) {
       const start = new Date(startDate);
       const end = new Date(endDate);
       end.setHours(23, 59, 59, 999);
       dateCondition = { createdAt: { [Op.between]: [start, end] } };
-    } 
-    else if (type && type !== "all") {
+    } else if (type && type !== "all") {
       let startOfPeriod;
       if (type === "weekly")
         startOfPeriod = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -213,15 +203,15 @@ export const vendorSalesReport = async (req, res) => {
 
     const items = await OrderItem.findAll({
       where: filter,
-      order: [["createdAt", "DESC"]], // Show newest sales first
+      order: [["createdAt", "DESC"]], 
     });
 
     let totalSales = 0;
-    
+
     const detailedItems = items.map((item) => {
       const itemTotal = Number(item.price) * Number(item.quantity);
       totalSales += itemTotal;
-      
+
       return {
         itemId: item.id,
         orderId: item.orderId,
@@ -230,12 +220,12 @@ export const vendorSalesReport = async (req, res) => {
         unitPrice: item.price,
         itemTotal: itemTotal,
         saleDate: item.createdAt,
-        status: item.status
+        status: item.status,
       };
     });
 
     res.json({
-      totalSales: parseFloat(totalSales.toFixed(2)),
+      totalSales: Number.parseFloat(totalSales.toFixed(2)),
       totalItemsSold: detailedItems.length,
       items: detailedItems,
     });
@@ -281,17 +271,17 @@ export const adminVendorSalesReport = async (req, res) => {
     const result = {
       vendorId,
       period: type,
-      totalSales: parseFloat(totalSales),
+      totalSales: Number.parseFloat(totalSales),
     };
     res.json(result);
   } catch (err) {
+    console.error("Admin Vendor Sales Report Error:", err);
     res.status(500).json({ message: "Failed to fetch vendor sales report" });
   }
 };
 
 export const adminTotalSales = async (req, res) => {
   try {
-
     const salesData = await OrderItem.findAll({
       where: getSalesFilter(null),
       attributes: [[sequelize.literal("SUM(price * quantity)"), "totalSales"]],
@@ -301,7 +291,6 @@ export const adminTotalSales = async (req, res) => {
     const total = salesData[0]?.totalSales || 0;
     const result = { totalSales: total };
 
-    
     res.json(result);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -310,9 +299,9 @@ export const adminTotalSales = async (req, res) => {
 
 export const adminAllVendorsSalesReport = async (req, res) => {
   try {
-    // 🟢 FIX: Used getSalesFilter to exclude returns, and fixed the SUM logic to include quantity
+    
     const sales = await OrderItem.findAll({
-      where: getSalesFilter(null), // Replaces raw { status: "DELIVERED" }
+      where: getSalesFilter(null), 
       attributes: [
         "vendorId",
         [sequelize.literal("COALESCE(SUM(price * quantity), 0)"), "totalSales"],
@@ -321,10 +310,10 @@ export const adminAllVendorsSalesReport = async (req, res) => {
       raw: true,
     });
 
-    // Ensure totalSales is parsed as a number in the JSON response
-    const formattedSales = sales.map(s => ({
-        vendorId: s.vendorId,
-        totalSales: parseFloat(s.totalSales)
+  
+    const formattedSales = sales.map((s) => ({
+      vendorId: s.vendorId,
+      totalSales: Number.parseFloat(s.totalSales),
     }));
 
     const result = { vendors: formattedSales };

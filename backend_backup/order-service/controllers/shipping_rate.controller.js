@@ -1,11 +1,9 @@
-import ShippingRate from "../models/ShippingRate.js"; 
+import ShippingRate from "../models/ShippingRate.js";
 import { fetchWithCache, safeDeleteCache } from "../utils/redisWrapper.js";
 import DeliveryBoy from "../models/DeliveryBoy.js";
 
-
 export const setShippingRate = async (req, res) => {
   try {
-    
     const { areaName, rate, isActive } = req.body;
 
     if (!areaName || rate === undefined) {
@@ -15,9 +13,9 @@ export const setShippingRate = async (req, res) => {
     }
 
     const cleanArea = areaName.trim();
-    const cleanRate = parseFloat(rate);
+    const cleanRate = Number.parseFloat(rate);
 
-    if (isNaN(cleanRate) || cleanRate < 0) {
+    if (Number.isNaN(cleanRate) || cleanRate < 0) {
       return res
         .status(400)
         .json({ message: "Rate must be a positive number." });
@@ -49,7 +47,6 @@ export const setShippingRate = async (req, res) => {
   }
 };
 
-
 export const getAllShippingRates = async (req, res) => {
   try {
     const rates = await fetchWithCache(
@@ -61,10 +58,10 @@ export const getAllShippingRates = async (req, res) => {
     );
     res.json(rates);
   } catch (err) {
+    console.error("Fetch Rates Error:", err);
     res.status(500).json({ message: "Failed to fetch rates" });
   }
 };
-
 
 export const getActiveShippingRates = async (req, res) => {
   try {
@@ -80,6 +77,7 @@ export const getActiveShippingRates = async (req, res) => {
     );
     res.json(rates);
   } catch (err) {
+    console.error("Fetch Active Rates Error:", err);
     res.status(500).json({ message: "Failed to fetch active rates" });
   }
 };
@@ -103,10 +101,10 @@ export const toggleShippingAreaStatus = async (req, res) => {
       data: record,
     });
   } catch (err) {
+    console.error("Toggle Status Error:", err);
     res.status(500).json({ message: "Failed to toggle status" });
   }
 };
-
 
 export const deleteShippingRate = async (req, res) => {
   try {
@@ -117,13 +115,12 @@ export const deleteShippingRate = async (req, res) => {
       return res.status(404).json({ message: "Rate not found" });
     }
 
-    
     const allBoys = await DeliveryBoy.findAll({
       attributes: ["id", "name", "assignedAreas"],
     });
 
-    const assignedBoys = allBoys.filter(
-      (boy) => boy.assignedAreas && boy.assignedAreas.includes(record.areaName),
+    const assignedBoys = allBoys.filter((boy) =>
+      boy.assignedAreas?.includes(record.areaName),
     );
 
     if (assignedBoys.length > 0) {
@@ -142,7 +139,6 @@ export const deleteShippingRate = async (req, res) => {
     res.status(500).json({ message: "Failed to delete rate" });
   }
 };
-
 
 export const getShippingCharge = async (req, res) => {
   try {

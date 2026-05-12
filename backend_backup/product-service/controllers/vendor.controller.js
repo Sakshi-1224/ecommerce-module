@@ -1,14 +1,10 @@
 import Product from "../models/Product.js";
 import Category from "../models/Category.js";
 import { uploadImageToMinio } from "../utils/uploadToMinio.js";
-import { Op } from "sequelize";
-import sequelize from "../config/db.js";
-import redis from "../config/redis.js"; 
 import { safeInvalidateCatalog } from "../utils/redisWrapper.js";
 
 export const getVendorProducts = async (req, res) => {
   try {
- 
     const products = await Product.findAll({
       where: { vendorId: req.user.id },
       include: { model: Category },
@@ -20,46 +16,56 @@ export const getVendorProducts = async (req, res) => {
   }
 };
 
+// --- HELPER FUNCTION FOR createProduct ---
+const validateUploadedFiles = (files) => {
+  if (!files || files.length === 0) return null;
+
+  const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+
+  const allowedTypes = new Set([
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/jpg",
+  ]);
+
+  for (const file of files) {
+    if (file.size === 0) {
+      return `File '${file.originalname}' is empty. Please upload a valid image.`;
+    }
+
+    if (file.size > MAX_SIZE) {
+      return `File '${file.originalname}' exceeds the 5MB limit.`;
+    }
+
+    if (!allowedTypes.has(file.mimetype)) {
+      return `File '${file.originalname}' is not a supported image type.`;
+    }
+  }
+
+  return null;
+};
 export const createProduct = async (req, res) => {
   try {
     const { name, price, description, stock, categoryId } = req.body;
 
-    if (!name || !price || !categoryId)
+    if (!name || !price || !categoryId) {
       return res.status(400).json({ message: "Missing required fields" });
-    if (stock < 0)
-      return res.status(400).json({ message: "Stock cannot be negative" });
-
-    if (req.files && req.files.length > 0) {
-      for (const file of req.files) {
-        if (file.size === 0) {
-          return res.status(400).json({
-            message: `File '${file.originalname}' is empty. Please upload a valid image.`,
-          });
-        }
-        const MAX_SIZE = 5 * 1024 * 1024; 
-        if (file.size > MAX_SIZE) {
-          return res.status(400).json({
-            message: `File '${file.originalname}' exceeds the 5MB limit.`,
-          });
-        }
-        const allowedTypes = [
-          "image/jpeg",
-          "image/png",
-          "image/webp",
-          "image/jpg",
-        ];
-        if (!allowedTypes.includes(file.mimetype)) {
-          return res.status(400).json({
-            message: `File '${file.originalname}' is not a supported image type.`,
-          });
-        }
-      }
     }
+    if (stock < 0) {
+      return res.status(400).json({ message: "Stock cannot be negative" });
+    }
+
+    const fileValidationError = validateUploadedFiles(req.files);
+    if (fileValidationError) {
+      return res.status(400).json({ message: fileValidationError });
+    }
+
     let imageUrls = [];
     if (req.files && req.files.length > 0) {
       try {
         imageUrls = await Promise.all(
-          req.files.map((file) => uploadImageToMinio(file))
+          req.files.map((file) => uploadImageToMinio(file)),
         );
       } catch (err) {
         return res
@@ -81,7 +87,7 @@ export const createProduct = async (req, res) => {
       warehouseStock: 0,
     });
 
-await safeInvalidateCatalog();
+    await safeInvalidateCatalog();
 
     res.status(201).json({ message: "Product created", product });
   } catch (err) {
@@ -92,6 +98,7 @@ await safeInvalidateCatalog();
 export const updateProduct = async (req, res) => {
   try {
     const product = await Product.findByPk(req.params.id);
+
     if (!product) return res.status(404).json({ message: "Product not found" });
     if (req.user.role === "vendor" && product.vendorId !== req.user.id)
       return res.status(403).json({ message: "Unauthorized" });
@@ -106,11 +113,12 @@ export const updateProduct = async (req, res) => {
     if (req.files && req.files.length > 0) {
       try {
         const newUrls = await Promise.all(
-          req.files.map((file) => uploadImageToMinio(file))
+          req.files.map((file) => uploadImageToMinio(file)),
         );
         const currentImages = product.images || [];
         product.images = [...currentImages, ...newUrls];
       } catch (err) {
+        console.error("Image upload error during update:", err.message);
         return res.status(500).json({ message: "Image upload failed" });
       }
     }
@@ -119,14 +127,17 @@ export const updateProduct = async (req, res) => {
       const difference = stock - product.totalStock;
       product.totalStock = stock;
       product.availableStock += difference;
-      if (product.availableStock > product.totalStock)
+
+      if (product.availableStock > product.totalStock) {
         product.availableStock = product.totalStock;
+      }
     }
 
     await product.save();
-await safeInvalidateCatalog(product.id);
+    await safeInvalidateCatalog(product.id);
     res.json({ message: "Product updated", product });
   } catch (err) {
+    console.error("Product update error:", err.message);
     res.status(500).json({ message: "Update failed" });
   }
 };
@@ -134,6 +145,7 @@ await safeInvalidateCatalog(product.id);
 export const deleteProduct = async (req, res) => {
   try {
     const product = await Product.findByPk(req.params.id);
+
     if (!product) return res.status(404).json({ message: "Product not found" });
     if (req.user.role === "vendor" && product.vendorId !== req.user.id)
       return res.status(403).json({ message: "Unauthorized" });
@@ -141,20 +153,18 @@ export const deleteProduct = async (req, res) => {
     const productId = product.id;
 
     await product.destroy();
-
     await safeInvalidateCatalog(productId);
 
     res.json({ message: "Product deleted" });
-  } catch {
+  } catch (err) {
+    console.error("Product deletion error:", err.message);
     res.status(500).json({ message: "Delete failed" });
   }
 };
 
-
 export const getProductsByVendorId = async (req, res) => {
   try {
     const { vendorId } = req.params;
-
 
     const products = await Product.findAll({
       where: { vendorId: vendorId },
@@ -163,6 +173,7 @@ export const getProductsByVendorId = async (req, res) => {
 
     res.json(products);
   } catch (err) {
+    console.error("Fetch vendor products error:", err.message);
     res.status(500).json({ message: "Failed to fetch vendor products" });
   }
 };

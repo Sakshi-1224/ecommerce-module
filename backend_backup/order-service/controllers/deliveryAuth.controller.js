@@ -1,11 +1,9 @@
 import DeliveryBoy from "../models/DeliveryBoy.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import redis from "../config/redis.js"; // 🟢 1. Import Redis
+import redis from "../config/redis.js";
 
-/* ======================================================
-   🟢 DELIVERY BOY LOGIN (With Redis Rate Limiting)
-====================================================== */
+
 export const loginDeliveryBoy = async (req, res) => {
   try {
     const { phone, password } = req.body;
@@ -20,7 +18,7 @@ export const loginDeliveryBoy = async (req, res) => {
     const attemptsKey = `login_attempts:delivery:${phone}`;
     const attempts = await redis.get(attemptsKey);
 
-    if (attempts && parseInt(attempts) >= 5) {
+    if (attempts && Number.parseInt(attempts) >= 5) {
       return res.status(429).json({
         message: "Too many failed attempts. Account locked for 10 minutes.",
       });
@@ -57,9 +55,7 @@ export const loginDeliveryBoy = async (req, res) => {
   }
 };
 
-/* ======================================================
-   🟢 LOGOUT
-====================================================== */
+
 export const logoutDeliveryBoy = async (req, res) => {
   try {
     const authHeader = req.header("Authorization");
@@ -69,17 +65,18 @@ export const logoutDeliveryBoy = async (req, res) => {
 
     await redis.set(`blacklist:${token}`, "true", "EX", 604800);
     
-    if(req.user && req.user.id) {
+    if(req.user?.id) {
         await redis.del(`tasks:boy:${req.user.id}`);
     }
 
     res.json({ message: "Logged out successfully" });
   } catch (err) {
+    console.error("Delivery Boy Logout Error:", err);
     res.status(500).json({ message: "Logout Failed" });
   }
 };
 
-// 🟢 Get Delivery Boy Profile
+
 export const getProfile = async (req, res) => {
   try {
     const boyId = req.user.id;

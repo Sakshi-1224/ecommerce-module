@@ -1,5 +1,4 @@
 import Order from "../models/Order.js";
-
 import OrderItem from "../models/OrderItem.js";
 import { Op } from "sequelize";
 import DeliveryBoy from "../models/DeliveryBoy.js";
@@ -9,11 +8,10 @@ import sequelize from "../config/db.js";
 import axios from "axios";
 import redis from "../config/redis.js";
 import { rollbackQueue } from "../services/sagaQueue.js";
+import razorpay from "../config/razorpay.js";
 
 const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL;
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL;
-
-import razorpay from "../config/razorpay.js"; 
 
 const VALID_TRANSITIONS = {
   PENDING: ["PROCESSING", "CANCELLED"],
@@ -27,9 +25,273 @@ const VALID_TRANSITIONS = {
   ],
   PACKED: ["OUT_FOR_DELIVERY", "CANCELLED"],
   OUT_FOR_DELIVERY: ["DELIVERED", "CANCELLED"],
-  DELIVERED: [], 
+  DELIVERED: [],
   CANCELLED: [],
 };
+
+// ------------------------------------------------------------------
+// HELPER FUNCTIONS TO REDUCE COGNITIVE COMPLEXITY
+// ------------------------------------------------------------------
+
+const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
+  try {
+    const existingAssignment = await DeliveryAssignment.findOne({
+      where: {
+        orderId,
+        status: { [Op.ne]: "FAILED" },
+      },
+      transaction,
+    });
+
+    if (existingAssignment) {
+      const boy = await DeliveryBoy.findByPk(existingAssignment.deliveryBoyId, {
+        transaction,
+      });
+      return {
+        success: true,
+        boy,
+        message: "Already Assigned (Skipped Creation)",
+      };
+    }
+
+    const allBoys = await DeliveryBoy.findAll({
+      where: { active: true },
+      transaction,
+    });
+
+    const validBoys = allBoys.filter((boy) =>
+      boy.assignedAreas?.includes(area),
+    );
+
+    if (validBoys.length === 0) {
+      return {
+        success: false,
+        boy: null,
+        message: `No delivery boy found for area: ${area}`,
+      };
+    }
+
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    let bestBoy = null;
+    let minLoad = Infinity;
+
+    for (const boy of validBoys) {
+      const load = await DeliveryAssignment.count({
+        where: {
+          deliveryBoyId: boy.id,
+          createdAt: { [Op.gte]: startOfDay },
+          status: { [Op.notIn]: ["FAILED", "REASSIGNED"] },
+        },
+        distinct: true,
+        col: "orderId",
+        transaction,
+      });
+
+      if (load < boy.maxOrders && load < minLoad) {
+        minLoad = load;
+        bestBoy = boy;
+      }
+    }
+
+    if (!bestBoy) {
+      return {
+        success: false,
+        boy: null,
+        message: `All boys in ${area} are fully booked today`,
+      };
+    }
+
+    await DeliveryAssignment.create(
+      { orderId, deliveryBoyId: bestBoy.id, status: "ASSIGNED" },
+      { transaction },
+    );
+
+    return { success: true, boy: bestBoy, message: "Assigned Successfully" };
+  } catch (err) {
+    console.error("Auto-Assign Error:", err);
+    return { success: false, message: "Internal Error" };
+  }
+};
+
+const handlePackedStatus = async (order, t) => {
+  const itemsToShip = [];
+  const itemsToUpdate = [];
+
+  for (const item of order.OrderItems) {
+    if (item.status === "CANCELLED" || item.status === "PACKED") continue;
+    itemsToShip.push({ productId: item.productId, quantity: item.quantity });
+    itemsToUpdate.push(item);
+  }
+
+  if (itemsToShip.length > 0) {
+    try {
+      await axios.post(
+        `${process.env.PRODUCT_SERVICE_URL}/inventory/ship`,
+        { items: itemsToShip },
+        {
+          headers: { "x-internal-token": process.env.INTERNAL_API_KEY },
+          timeout: 5000,
+        },
+      );
+    } catch (error_) {
+      throw new Error(
+        error_.response?.data?.message || "Shipment Sync Failed or Timed Out",
+      );
+    }
+  }
+
+  for (const item of itemsToUpdate) {
+    item.status = "PACKED";
+    await item.save({ transaction: t });
+  }
+
+  order.status = "PACKED";
+  await order.save({ transaction: t });
+
+  let msg = "Order packed & Stock Deducted";
+
+  if (order.assignedArea) {
+    const existingAssignment = await DeliveryAssignment.findOne({
+      where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
+      transaction: t,
+    });
+
+    if (!existingAssignment) {
+      const result = await autoAssignDeliveryBoy(
+        order.id,
+        order.assignedArea,
+        t,
+      );
+
+      if (result?.success) {
+        msg += ` & Auto-Assigned to ${result.boy.name}`;
+      }
+    }
+  }
+  return msg;
+};
+
+const processOutForDelivery = async (order, t) => {
+  order.status = "OUT_FOR_DELIVERY";
+  await order.save({ transaction: t });
+
+  for (const item of order.OrderItems) {
+    if (item.status !== "CANCELLED" && item.status !== "DELIVERED") {
+      item.status = "OUT_FOR_DELIVERY";
+      await item.save({ transaction: t });
+    }
+  }
+};
+
+const processDelivered = async (order, activeAssignment, t) => {
+  order.status = "DELIVERED";
+  order.payment = true;
+
+  if (order.paymentMethod === "COD" && order.codPaymentMode !== "QR") {
+    order.codPaymentMode = "CASH";
+  }
+  await order.save({ transaction: t });
+
+  for (const item of order.OrderItems) {
+    if (item.status !== "CANCELLED") {
+      item.status = "DELIVERED";
+      await item.save({ transaction: t });
+    }
+  }
+
+  activeAssignment.status = "DELIVERED";
+  await activeAssignment.save({ transaction: t });
+};
+
+// --- MAIN FUNCTION ---
+
+const handleDeliveryStatus = async (order, status, t) => {
+  const activeAssignment = await DeliveryAssignment.findOne({
+    where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
+    transaction: t,
+  });
+
+  if (!activeAssignment) {
+    throw new Error(`Cannot mark as ${status}. No Delivery Boy assigned yet!`);
+  }
+
+  // FIX: Delegated logic to helper functions
+  if (status === "OUT_FOR_DELIVERY") {
+    await processOutForDelivery(order, t);
+  } else if (status === "DELIVERED") {
+    await processDelivered(order, activeAssignment, t);
+  }
+
+  return `Status updated to ${status}`;
+};
+
+const syncItemShipment = async (item) => {
+  try {
+    await axios.post(
+      `${process.env.PRODUCT_SERVICE_URL}/inventory/ship`,
+      { items: [{ productId: item.productId, quantity: item.quantity }] },
+      { headers: { "x-internal-token": process.env.INTERNAL_API_KEY } },
+    );
+  } catch (error_) {
+    throw new Error(error_.response?.data?.message || "Shipment Sync Failed");
+  }
+};
+
+const updateParentOrderIfNeeded = async (orderId, status, t) => {
+  const allItems = await OrderItem.findAll({
+    where: { orderId },
+    transaction: t,
+  });
+  const activeItems = allItems.filter((i) => i.status !== "CANCELLED");
+  const allMatch = activeItems.every((i) => i.status === status);
+
+  if (!allMatch || activeItems.length === 0) return { msg: "" };
+
+  const order = await Order.findByPk(orderId, { transaction: t });
+
+  if (status === "PACKED") {
+    console.log("All items PACKED.");
+    return { msg: "" };
+  }
+
+  if (order.status !== status) {
+    if (["OUT_FOR_DELIVERY", "DELIVERED"].includes(status)) {
+      const hasBoy = await DeliveryAssignment.findOne({
+        where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
+        transaction: t,
+      });
+
+      if (!hasBoy) {
+        return {
+          msg: `, but Parent Order not updated (No Delivery Boy assigned).`,
+        };
+      }
+    }
+
+    order.status = status;
+    if (status === "DELIVERED") {
+      order.payment = true;
+      const assignment = await DeliveryAssignment.findOne({
+        where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
+        order: [["createdAt", "DESC"]],
+        transaction: t,
+      });
+
+      if (assignment) {
+        assignment.status = "DELIVERED";
+        await assignment.save({ transaction: t });
+        // FIX: Removed unused 'activeBoyId' assignment
+      }
+    }
+    await order.save({ transaction: t });
+  }
+  return { msg: "" };
+};
+
+// ------------------------------------------------------------------
+// MAIN CONTROLLERS
+// ------------------------------------------------------------------
 
 export const checkout = async (req, res) => {
   let stockReserved = false;
@@ -38,6 +300,7 @@ export const checkout = async (req, res) => {
 
   const idempotencyKey = `checkout_lock_${req.user.id}`;
   const isLocked = await redis.get(idempotencyKey);
+
   if (isLocked) {
     return res
       .status(429)
@@ -66,8 +329,8 @@ export const checkout = async (req, res) => {
         );
       }
 
-      shippingCharge = parseFloat(rateRecord.rate);
-      finalPayableAmount = parseFloat(amount) + shippingCharge;
+      shippingCharge = Number.parseFloat(rateRecord.rate);
+      finalPayableAmount = Number.parseFloat(amount) + shippingCharge;
 
       order = await Order.create(
         {
@@ -103,14 +366,13 @@ export const checkout = async (req, res) => {
           { items },
           {
             headers: { "x-internal-token": process.env.INTERNAL_API_KEY },
-            
             timeout: 5000,
           },
         );
         stockReserved = true;
-      } catch (apiErr) {
+      } catch (error_) {
         throw new Error(
-          apiErr.response?.data?.message ||
+          error_.response?.data?.message ||
             "Stock reservation failed or timed out.",
         );
       }
@@ -125,7 +387,6 @@ export const checkout = async (req, res) => {
       }
     });
 
-    
     await redis.del(idempotencyKey);
 
     res.status(201).json({
@@ -136,7 +397,6 @@ export const checkout = async (req, res) => {
       razorpayOrder: razorpayOrderData,
     });
   } catch (err) {
-    
     await redis.del(idempotencyKey);
 
     if (stockReserved) {
@@ -149,28 +409,24 @@ export const checkout = async (req, res) => {
           { items },
           {
             headers: { "x-internal-token": process.env.INTERNAL_API_KEY },
-            timeout: 5000, 
+            timeout: 5000,
           },
         );
-      } catch (rollbackErr) {
+      } catch (error_) {
         console.error(
-          `🚨 [CRITICAL SAGA FAILURE] Immediate rollback failed. Pushing to BullMQ...`,
+          `🚨 [CRITICAL SAGA FAILURE] Immediate rollback failed: ${error_.message}. Pushing to BullMQ...`,
         );
 
-        
         await rollbackQueue.add(
-          "release-stock", 
+          "release-stock",
           {
             items,
             endpoint: `${process.env.PRODUCT_SERVICE_URL || PRODUCT_SERVICE_URL}/inventory/release`,
           },
           {
-            attempts: 10, 
-            backoff: {
-              type: "exponential", 
-              delay: 5000, 
-            },
-            removeOnComplete: true, 
+            attempts: 10,
+            backoff: { type: "exponential", delay: 5000 },
+            removeOnComplete: true,
           },
         );
       }
@@ -183,8 +439,6 @@ export const updateOrderStatusAdmin = async (req, res) => {
   try {
     const { status } = req.body;
     let responseMsg = `Status updated to ${status}`;
-    let autoAssignedBoyId = null;
-    let orderUserId = null;
 
     await sequelize.transaction(async (t) => {
       const order = await Order.findByPk(req.params.id, {
@@ -194,9 +448,7 @@ export const updateOrderStatusAdmin = async (req, res) => {
       });
 
       if (!order) throw new Error("Order not found");
-      orderUserId = order.userId;
 
-   
       if (
         !VALID_TRANSITIONS[order.status]?.includes(status) &&
         order.status !== status
@@ -207,106 +459,9 @@ export const updateOrderStatusAdmin = async (req, res) => {
       }
 
       if (status === "PACKED") {
-        const itemsToShip = [];
-        const itemsToUpdate = [];
-
-        for (const item of order.OrderItems) {
-          if (item.status === "CANCELLED" || item.status === "PACKED") continue;
-          itemsToShip.push({
-            productId: item.productId,
-            quantity: item.quantity,
-          });
-          itemsToUpdate.push(item);
-        }
-
-        if (itemsToShip.length > 0) {
-          try {
-            await axios.post(
-              `${process.env.PRODUCT_SERVICE_URL}/inventory/ship`,
-              { items: itemsToShip },
-              {
-                headers: { "x-internal-token": process.env.INTERNAL_API_KEY },
-                timeout: 5000,
-              },
-            );
-          } catch (apiErr) {
-            throw new Error(
-              apiErr.response?.data?.message ||
-                "Shipment Sync Failed or Timed Out",
-            );
-          }
-        }
-
-        for (const item of itemsToUpdate) {
-          item.status = "PACKED";
-          await item.save({ transaction: t });
-        }
-
-        order.status = "PACKED";
-        await order.save({ transaction: t });
-        responseMsg = "Order packed & Stock Deducted";
-
-        if (order.assignedArea) {
-          const existingAssignment = await DeliveryAssignment.findOne({
-            where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
-            transaction: t,
-          });
-
-          if (!existingAssignment) {
-           
-            const result = await autoAssignDeliveryBoy(
-              order.id,
-              order.assignedArea,
-              t,
-            );
-            if (result && result.success) {
-              responseMsg += ` & Auto-Assigned to ${result.boy.name}`;
-              autoAssignedBoyId = result.boy.id;
-            }
-          }
-        }
+        responseMsg = await handlePackedStatus(order, t);
       } else if (status === "OUT_FOR_DELIVERY" || status === "DELIVERED") {
-        const activeAssignment = await DeliveryAssignment.findOne({
-          where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
-          transaction: t,
-        });
-
-        if (!activeAssignment) {
-          throw new Error(
-            `Cannot mark as ${status}. No Delivery Boy assigned yet!`,
-          );
-        }
-
-        if (status === "OUT_FOR_DELIVERY") {
-          order.status = "OUT_FOR_DELIVERY";
-          await order.save({ transaction: t });
-          for (const item of order.OrderItems) {
-            if (item.status !== "CANCELLED" && item.status !== "DELIVERED") {
-              item.status = "OUT_FOR_DELIVERY";
-              await item.save({ transaction: t });
-            }
-          }
-        } else if (status === "DELIVERED") {
-          order.status = "DELIVERED";
-          order.payment = true;
-          if (order.paymentMethod === "COD" && order.codPaymentMode !== "QR") {
-            order.codPaymentMode = "CASH";
-          }
-          await order.save({ transaction: t });
-
-          for (const item of order.OrderItems) {
-            if (item.status !== "CANCELLED") {
-              item.status = "DELIVERED";
-              await item.save({ transaction: t });
-            }
-          }
-
-          if (activeAssignment) {
-            activeAssignment.status = "DELIVERED";
-            await activeAssignment.save({ transaction: t });
-            autoAssignedBoyId = activeAssignment.deliveryBoyId;
-          }
-        }
+        responseMsg = await handleDeliveryStatus(order, status, t);
       } else {
         order.status = status;
         await order.save({ transaction: t });
@@ -325,14 +480,11 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
     const { status } = req.body;
     const { orderId, itemId } = req.params;
     let responseMsg = `Item updated to ${status}`;
-    let orderUserId = null;
-    let activeBoyId = null;
 
-   
     await sequelize.transaction(async (t) => {
       const item = await OrderItem.findOne({
         where: { id: itemId, orderId: orderId },
-        transaction: t, 
+        transaction: t,
       });
 
       if (!item) throw new Error("Item not found");
@@ -341,64 +493,15 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
         status === "PACKED" &&
         (item.status === "PENDING" || item.status === "PROCESSING")
       ) {
-        try {
-          await axios.post(
-            `${process.env.PRODUCT_SERVICE_URL}/inventory/ship`,
-            { items: [{ productId: item.productId, quantity: item.quantity }] },
-            { headers: { "x-internal-token": process.env.INTERNAL_API_KEY } },
-          );
-        } catch (apiErr) {
-          throw new Error(
-            apiErr.response?.data?.message || "Shipment Sync Failed",
-          );
-        }
+        await syncItemShipment(item);
       }
 
       item.status = status;
-      await item.save({ transaction: t }); 
+      await item.save({ transaction: t });
 
-      const allItems = await OrderItem.findAll({
-        where: { orderId },
-        transaction: t,
-      });
-      const activeItems = allItems.filter((i) => i.status !== "CANCELLED");
-      const allMatch = activeItems.every((i) => i.status === status);
-
-      const order = await Order.findByPk(orderId, { transaction: t });
-      orderUserId = order.userId; // Save for Cache
-
-      if (allMatch && activeItems.length > 0) {
-        if (status === "PACKED") {
-          console.log("All items PACKED.");
-        } else if (order.status !== status) {
-          if (["OUT_FOR_DELIVERY", "DELIVERED"].includes(status)) {
-            const hasBoy = await DeliveryAssignment.findOne({
-              where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
-              transaction: t,
-            });
-            if (!hasBoy) {
-              
-              responseMsg = `Item updated to ${status}, but Parent Order not updated (No Delivery Boy assigned).`;
-              return;
-            }
-          }
-
-          order.status = status;
-          if (status === "DELIVERED") {
-            order.payment = true;
-            const assignment = await DeliveryAssignment.findOne({
-              where: { orderId: order.id, status: { [Op.ne]: "FAILED" } },
-              order: [["createdAt", "DESC"]],
-              transaction: t,
-            });
-            if (assignment) {
-              assignment.status = "DELIVERED";
-              await assignment.save({ transaction: t });
-              activeBoyId = assignment.deliveryBoyId;
-            }
-          }
-          await order.save({ transaction: t });
-        }
+      const parentUpdate = await updateParentOrderIfNeeded(orderId, status, t);
+      if (parentUpdate.msg) {
+        responseMsg += parentUpdate.msg;
       }
     });
 
@@ -411,8 +514,8 @@ export const updateOrderItemStatusAdmin = async (req, res) => {
 
 export const getUserOrders = async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const page = Number.parseInt(req.query.page, 10) || 1;
+    const limit = Number.parseInt(req.query.limit, 10) || 10;
     const offset = (page - 1) * limit;
 
     const { count, rows } = await Order.findAndCountAll({
@@ -430,6 +533,7 @@ export const getUserOrders = async (req, res) => {
       currentPage: page,
     });
   } catch (err) {
+    console.error("Fetch User Orders Error:", err.message);
     res.status(500).json({ message: "Failed to fetch orders" });
   }
 };
@@ -441,7 +545,8 @@ export const getOrderById = async (req, res) => {
       include: OrderItem,
     });
     res.json(order);
-  } catch {
+  } catch (err) {
+    console.error("Get Order By Id Error:", err.message);
     res.status(500).json({ message: "Failed" });
   }
 };
@@ -453,7 +558,8 @@ export const trackOrder = async (req, res) => {
       include: OrderItem,
     });
     res.json(order);
-  } catch {
+  } catch (err) {
+    console.error("Track Order Error:", err.message);
     res.status(500).json({ message: "Failed" });
   }
 };
@@ -465,7 +571,8 @@ export const getAllOrdersAdmin = async (req, res) => {
       order: [["createdAt", "DESC"]],
     });
     res.json(orders);
-  } catch {
+  } catch (err) {
+    console.error("Get All Orders Admin Error:", err.message);
     res.status(500).json({ message: "Failed" });
   }
 };
@@ -487,9 +594,9 @@ export const getOrderByIdAdmin = async (req, res) => {
         },
       ],
     });
-
     res.json(order);
-  } catch {
+  } catch (err) {
+    console.error("Get Order By Id Admin Error:", err.message);
     res.status(500).json({ message: "Failed" });
   }
 };
@@ -538,92 +645,6 @@ export const getVendorOrders = async (req, res) => {
   }
 };
 
-const autoAssignDeliveryBoy = async (orderId, area, transaction) => {
-  try {
-    const existingAssignment = await DeliveryAssignment.findOne({
-      where: {
-        orderId,
-        status: { [Op.ne]: "FAILED" },
-      },
-      transaction,
-    });
-
-    if (existingAssignment) {
-      const boy = await DeliveryBoy.findByPk(existingAssignment.deliveryBoyId, {
-        transaction,
-      });
-      return {
-        success: true,
-        boy,
-        message: "Already Assigned (Skipped Creation)",
-      };
-    }
-
-    const allBoys = await DeliveryBoy.findAll({
-      where: { active: true },
-      transaction,
-    });
-
-    const validBoys = allBoys.filter(
-      (boy) => boy.assignedAreas && boy.assignedAreas.includes(area),
-    );
-
-    if (validBoys.length === 0) {
-      return {
-        success: false,
-        boy: null,
-        message: `No delivery boy found for area: ${area}`,
-      };
-    }
-
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-
-    let bestBoy = null;
-    let minLoad = Infinity;
-
-    for (const boy of validBoys) {
-      const load = await DeliveryAssignment.count({
-        where: {
-          deliveryBoyId: boy.id,
-          createdAt: { [Op.gte]: startOfDay },
-          status: { [Op.notIn]: ["FAILED", "REASSIGNED"] },
-        },
-        distinct: true,
-        col: "orderId",
-        transaction,
-      });
-
-      if (load < boy.maxOrders && load < minLoad) {
-        minLoad = load;
-        bestBoy = boy;
-      }
-    }
-
-    if (!bestBoy) {
-      return {
-        success: false,
-        boy: null,
-        message: `All boys in ${area} are fully booked today`,
-      };
-    }
-
-    await DeliveryAssignment.create(
-      {
-        orderId,
-        deliveryBoyId: bestBoy.id,
-        status: "ASSIGNED",
-      },
-      { transaction },
-    );
-
-    return { success: true, boy: bestBoy, message: "Assigned Successfully" };
-  } catch (err) {
-    console.error("Auto-Assign Error:", err);
-    return { success: false, message: "Internal Error" };
-  }
-};
-
 export const adminCreateOrder = async (req, res) => {
   try {
     const { userId, items, amount, address, paymentMethod } = req.body;
@@ -637,17 +658,17 @@ export const adminCreateOrder = async (req, res) => {
     const selectedArea = address.area || "General";
     let order;
 
-    
     await sequelize.transaction(async (t) => {
       let shippingCharge = 0;
+
       const rateRecord = await ShippingRate.findOne({
         where: { areaName: selectedArea },
         transaction: t,
       });
 
-      if (rateRecord) shippingCharge = parseFloat(rateRecord.rate);
+      if (rateRecord) shippingCharge = Number.parseFloat(rateRecord.rate);
 
-      const itemsTotal = parseFloat(amount);
+      const itemsTotal = Number.parseFloat(amount);
       const finalPayableAmount = itemsTotal + shippingCharge;
 
       order = await Order.create(
@@ -684,9 +705,9 @@ export const adminCreateOrder = async (req, res) => {
           { items },
           { headers: { "x-internal-token": process.env.INTERNAL_API_KEY } },
         );
-      } catch (apiErr) {
+      } catch (error_) {
         throw new Error(
-          apiErr.response?.data?.message || "Stock reservation failed",
+          error_.response?.data?.message || "Stock reservation failed",
         );
       }
     });

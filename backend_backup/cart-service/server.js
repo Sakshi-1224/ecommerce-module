@@ -6,7 +6,7 @@ import cartRoutes from "./routes/cart.routes.js";
 dotenv.config();
 
 const app = express();
-
+app.disable("x-powered-by");
 app.use(express.json());
 
 app.use("/api/cart", cartRoutes);
@@ -19,8 +19,8 @@ app.use((err, req, res, next) => {
   });
 });
 
-sequelize.sync().then(() => {
-  app.listen(5003, () => {
-    console.log("Cart Service running on port 5003");
-  });
+await sequelize.sync();
+
+app.listen(5003, () => {
+  console.log("Cart Service running on port 5003");
 });

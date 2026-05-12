@@ -1,5 +1,4 @@
 import Vendor from "../models/Vendor.js";
-import redis from "../config/redis.js"; 
 import { fetchWithCache, safeDeleteCache } from "../utils/redisWrapper.js";
 
 export const getAllVendors = async (req, res) => {

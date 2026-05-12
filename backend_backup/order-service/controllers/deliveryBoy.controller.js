@@ -5,9 +5,6 @@ import DeliveryBoy from "../models/DeliveryBoy.js";
 import DeliveryAssignment from "../models/DeliveryAssignment.js";
 import ShippingRate from "../models/ShippingRate.js";
 import sequelize from "../config/db.js";
-import axios from "axios";
-import redis from "../config/redis.js";
-import razorpay from "../config/razorpay.js";
 import { fetchWithCache, safeDeleteCache } from "../utils/redisWrapper.js";
 
 export const getAllDeliveryBoys = async (req, res) => {
@@ -17,6 +14,7 @@ export const getAllDeliveryBoys = async (req, res) => {
     });
     res.json(boys);
   } catch (err) {
+    console.error("Error fetching delivery boys:", err.message);
     res.status(500).json({ message: "Failed to fetch delivery boys" });
   }
 };
@@ -27,16 +25,16 @@ export const createDeliveryBoy = async (req, res) => {
 
     if (assignedAreas && assignedAreas.length > 0) {
       const validAreas = await ShippingRate.findAll({
-        where: { areaName: { [Op.in]: assignedAreas } }
+        where: { areaName: { [Op.in]: assignedAreas } },
       });
-      
+
       if (validAreas.length !== assignedAreas.length) {
-        return res.status(400).json({ 
-          message: "One or more selected areas do not exist. Please create them in Shipping Rates first." 
+        return res.status(400).json({
+          message:
+            "One or more selected areas do not exist. Please create them in Shipping Rates first.",
         });
       }
     }
-
 
     const newBoy = await DeliveryBoy.create({
       name,
@@ -55,6 +53,7 @@ export const createDeliveryBoy = async (req, res) => {
       deliveryBoy: newBoy,
     });
   } catch (err) {
+    console.error("Error creating delivery boy:", err.message);
     res.status(500).json({ message: "Failed to create", error: err.message });
   }
 };
@@ -122,13 +121,12 @@ export const deleteDeliveryBoy = async (req, res) => {
     if (!boy)
       return res.status(404).json({ message: "Delivery boy not found" });
 
-
     await DeliveryBoy.destroy({ where: { id } });
-
- await safeDeleteCache(["delivery_boys:all", "delivery_locations:all"]);
+    await safeDeleteCache(["delivery_boys:all", "delivery_locations:all"]);
 
     res.json({ message: "Deleted" });
   } catch (err) {
+    console.error("Error deleting delivery boy:", err.message);
     res.status(500).json({ message: "Failed to delete" });
   }
 };
@@ -142,18 +140,16 @@ export const updateDeliveryBoy = async (req, res) => {
     if (!boy) return res.status(404).json({ message: "Boy not found" });
 
     if (assignedAreas) {
-      // 🟢 NEW LOGIC: Validate areas on update
+    
       const validAreas = await ShippingRate.findAll({
-        where: { areaName: { [Op.in]: assignedAreas } }
+        where: { areaName: { [Op.in]: assignedAreas } },
       });
-      
+
       if (validAreas.length !== assignedAreas.length) {
-        return res.status(400).json({ 
-          message: "One or more selected areas do not exist in Shipping Rates." 
+        return res.status(400).json({
+          message: "One or more selected areas do not exist in Shipping Rates.",
         });
       }
-      
-    
     }
 
     await DeliveryBoy.update(req.body, { where: { id } });
@@ -161,6 +157,7 @@ export const updateDeliveryBoy = async (req, res) => {
 
     res.json({ message: "Delivery Boy Updated" });
   } catch (err) {
+    console.error("Error updating delivery boy:", err.message);
     res.status(500).json({ message: "Failed to update" });
   }
 };
@@ -169,13 +166,14 @@ export const reassignDeliveryBoy = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const rawId = req.params.orderId;
-    const orderId = parseInt(rawId, 10);
+    const orderId = Number.parseInt(rawId, 10);
     const { newDeliveryBoyId } = req.body;
 
-    if (isNaN(orderId)) {
+    if (Number.isNaN(orderId)) {
       await t.rollback();
       return res.status(400).json({ message: "Invalid Order ID" });
     }
+
     if (!newDeliveryBoyId) {
       await t.rollback();
       return res.status(400).json({ message: "Missing New Delivery Boy ID" });
@@ -186,19 +184,27 @@ export const reassignDeliveryBoy = async (req, res) => {
       await t.rollback();
       return res.status(404).json({ message: "Order not found" });
     }
+
     if (["DELIVERED", "CANCELLED", "RETURNED"].includes(order.status)) {
       await t.rollback();
-      return res.status(400).json({ message: `Cannot reassign. Order is already ${order.status}` });
+      return res
+        .status(400)
+        .json({ message: `Cannot reassign. Order is already ${order.status}` });
     }
 
-    const newBoy = await DeliveryBoy.findByPk(newDeliveryBoyId, { transaction: t });
+    const newBoy = await DeliveryBoy.findByPk(newDeliveryBoyId, {
+      transaction: t,
+    });
     if (!newBoy) {
       await t.rollback();
       return res.status(404).json({ message: "Delivery Boy not found" });
     }
+
     if (!newBoy.active) {
       await t.rollback();
-      return res.status(400).json({ message: "Cannot assign to an inactive Delivery Boy" });
+      return res
+        .status(400)
+        .json({ message: "Cannot assign to an inactive Delivery Boy" });
     }
 
     const currentAssignment = await DeliveryAssignment.findOne({
@@ -206,18 +212,20 @@ export const reassignDeliveryBoy = async (req, res) => {
       transaction: t,
     });
 
-    if (currentAssignment && currentAssignment.deliveryBoyId === newDeliveryBoyId) {
+    if (
+      currentAssignment &&
+      currentAssignment.deliveryBoyId === newDeliveryBoyId
+    ) {
       await t.rollback();
-      return res.status(400).json({ message: "Order is already assigned to this Delivery Boy" });
+      return res
+        .status(400)
+        .json({ message: "Order is already assigned to this Delivery Boy" });
     }
 
     let previousReason = null;
-    let oldBoyId = null;
 
     if (currentAssignment) {
-      oldBoyId = currentAssignment.deliveryBoyId;
       previousReason = currentAssignment.reason;
-
       currentAssignment.status = "FAILED";
       currentAssignment.reason = "Manual Reassignment by Admin";
       await currentAssignment.save({ transaction: t });
@@ -233,7 +241,9 @@ export const reassignDeliveryBoy = async (req, res) => {
       });
 
       if (activeReturnItems > 0) {
-        console.log(`⚠️ Detected return items for Order ${orderId}. Tagging as RETURN_PICKUP.`);
+        console.log(
+          `⚠️ Detected return items for Order ${orderId}. Tagging as RETURN_PICKUP.`,
+        );
         previousReason = "RETURN_PICKUP";
       }
     }
@@ -245,12 +255,13 @@ export const reassignDeliveryBoy = async (req, res) => {
         status: "ASSIGNED",
         reason: previousReason,
       },
-      { transaction: t }
+      { transaction: t },
     );
 
     await t.commit();
-
-    console.log(`✅ Reassigned Order ${orderId} to Boy ${newDeliveryBoyId} with reason: ${previousReason}`);
+    console.log(
+      `✅ Reassigned Order ${orderId} to Boy ${newDeliveryBoyId} with reason: ${previousReason}`,
+    );
     res.json({ message: "Reassignment Successful" });
   } catch (err) {
     if (!t.finished) await t.rollback();
@@ -281,8 +292,7 @@ export const getReassignmentOptions = async (req, res) => {
         },
       });
 
-      const isAreaMatch =
-        boy.assignedAreas && boy.assignedAreas.includes(targetArea);
+      const isAreaMatch = boy.assignedAreas?.includes(targetArea);
 
       options.push({
         id: boy.id,
@@ -331,7 +341,7 @@ export const getDeliveryBoyOrders = async (req, res) => {
             "status",
             "paymentMethod",
             "payment",
-            "codPaymentMode", // 🟢 ADDED: Need this to verify QR vs CASH
+            "codPaymentMode",
             "date",
             "assignedArea",
             "userId",
@@ -368,19 +378,24 @@ export const getDeliveryBoyOrders = async (req, res) => {
 
     const formatOrder = (a) => {
       const isReturnTask = a.reason === "RETURN_PICKUP";
-      
-      // 🟢 UPDATED: Only expect cash if it's COD, NOT cancelled, and (is unpaid OR was paid with actual CASH but not deposited)
+
       const isCodUnsettled =
         !isReturnTask &&
         a.Order.paymentMethod === "COD" &&
         a.Order.status !== "CANCELLED" &&
-        ((!a.Order.payment) || (a.Order.payment && a.Order.codPaymentMode === "CASH" && !a.cashDeposited));
+        (!a.Order.payment ||
+          (a.Order.payment &&
+            a.Order.codPaymentMode === "CASH" &&
+            !a.cashDeposited));
 
       let parsedAddress = a.Order.address;
+
       try {
         if (typeof parsedAddress === "string")
           parsedAddress = JSON.parse(parsedAddress);
-      } catch (e) {}
+      } catch (e) {
+        console.warn("Failed to parse address JSON:", e.message);
+      }
 
       return {
         assignmentId: a.id,
@@ -428,8 +443,14 @@ export const getDeliveryBoyCashStatus = async (req, res) => {
         {
           model: Order,
           where: { paymentMethod: "COD" },
-          // 🟢 ADDED codPaymentMode here
-          attributes: ["id", "amount", "status", "payment", "address", "codPaymentMode"], 
+          attributes: [
+            "id",
+            "amount",
+            "status",
+            "payment",
+            "address",
+            "codPaymentMode",
+          ],
         },
       ],
     });
@@ -447,7 +468,6 @@ export const getDeliveryBoyCashStatus = async (req, res) => {
       const isPhysicalCash = assignment.Order.codPaymentMode === "CASH";
       const isPendingPayment = !assignment.Order.payment;
 
-      // 🟢 UPDATED: Only count actual CASH towards the boy's cashOnHand limit (Ignore QR)
       if (isDelivered && isPhysicalCash && !assignment.cashDeposited) {
         cashOnHand += amt;
         activeOrders.push({
@@ -455,7 +475,10 @@ export const getDeliveryBoyCashStatus = async (req, res) => {
           orderId: assignment.Order.id,
           amount: amt,
         });
-      } else if (["ASSIGNED", "OUT_FOR_DELIVERY"].includes(assignment.status) && isPendingPayment) {
+      } else if (
+        ["ASSIGNED", "OUT_FOR_DELIVERY"].includes(assignment.status) &&
+        isPendingPayment
+      ) {
         pendingCash += amt;
         activeOrders.push({
           status: "PENDING_DELIVERY",
@@ -465,7 +488,7 @@ export const getDeliveryBoyCashStatus = async (req, res) => {
       } else if (
         assignment.cashDeposited &&
         assignment.depositedAt >= startOfDay &&
-        isPhysicalCash // 🟢 Only count actual cash deposits
+        isPhysicalCash
       ) {
         depositedToday += amt;
       }
@@ -477,6 +500,7 @@ export const getDeliveryBoyCashStatus = async (req, res) => {
       orders: activeOrders,
     });
   } catch (err) {
+    console.error("Error fetching cash status:", err.message);
     res.status(500).json({ message: "Failed", error: err.message });
   }
 };
@@ -506,6 +530,7 @@ export const settleCOD = async (req, res) => {
 
     res.json({ message: "Cash settled successfully", count: result[0] });
   } catch (err) {
+    console.error("Settlement Error:", err.message);
     res.status(500).json({ message: "Settlement failed", error: err.message });
   }
 };
@@ -521,8 +546,11 @@ export const getCODReconciliation = async (req, res) => {
       include: [
         {
           model: Order,
-          // 🟢 CRITICAL FIX: Only reconcile codPaymentMode: "CASH". We don't need to reconcile QR codes as money is already digital.
-          where: { paymentMethod: "COD", payment: true, codPaymentMode: "CASH" },
+          where: {
+            paymentMethod: "COD",
+            payment: true,
+            codPaymentMode: "CASH",
+          },
           attributes: ["id", "amount", "address", "updatedAt"],
         },
         { model: DeliveryBoy, attributes: ["id", "name", "phone"] },
@@ -561,46 +589,53 @@ export const getCODReconciliation = async (req, res) => {
 
     res.json(result);
   } catch (err) {
+    console.error("Reconciliation Error:", err.message);
     res.status(500).json({ message: "Failed", error: err.message });
   }
 };
 
 export const getDeliveryLocations = async (req, res) => {
   try {
-   
-    const response = await fetchWithCache("delivery_locations:all", 3600, async () => {
-      const boys = await DeliveryBoy.findAll({
-        where: { active: true },
-        attributes: ["state", "city", "assignedAreas"],
-      });
+    const response = await fetchWithCache(
+      "delivery_locations:all",
+      3600,
+      async () => {
+        const boys = await DeliveryBoy.findAll({
+          where: { active: true },
+          attributes: ["state", "city", "assignedAreas"],
+        });
 
-      const locationMap = {};
+        const locationMap = {};
 
-      boys.forEach((boy) => {
-        const { state, city, assignedAreas } = boy;
-        if (!locationMap[state]) locationMap[state] = {};
-        if (!locationMap[state][city]) locationMap[state][city] = new Set();
+        boys.forEach((boy) => {
+          const { state, city, assignedAreas } = boy;
+          if (!locationMap[state]) locationMap[state] = {};
+          if (!locationMap[state][city]) locationMap[state][city] = new Set();
 
-        if (Array.isArray(assignedAreas)) {
-          assignedAreas.forEach((area) => {
-            if (area) locationMap[state][city].add(area.trim());
-          });
+          if (Array.isArray(assignedAreas)) {
+            assignedAreas.forEach((area) => {
+              if (area) locationMap[state][city].add(area.trim());
+            });
+          }
+        });
+
+        const formattedResponse = {};
+        for (const s in locationMap) {
+          formattedResponse[s] = {};
+          for (const c in locationMap[s]) {
+            formattedResponse[s][c] = [...locationMap[s][c]].sort((a, b) =>
+              a.localeCompare(b),
+            );
+          }
         }
-      });
 
-      const formattedResponse = {};
-      for (const s in locationMap) {
-        formattedResponse[s] = {};
-        for (const c in locationMap[s]) {
-          formattedResponse[s][c] = [...locationMap[s][c]].sort();
-        }
-      }
-
-      return formattedResponse;
-    });
+        return formattedResponse;
+      },
+    );
 
     res.json(response);
   } catch (err) {
+    console.error("Error fetching locations:", err.message);
     res.status(500).json({ message: "Failed to fetch locations" });
   }
 };

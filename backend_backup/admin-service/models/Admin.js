@@ -1,6 +1,6 @@
 import { DataTypes } from "sequelize";
 import sequelize from "../config/db.js";
-import bcrypt from "bcrypt";
+
 
 const Admin = sequelize.define("Admin", {
   id: {

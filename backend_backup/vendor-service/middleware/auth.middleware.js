@@ -23,6 +23,7 @@ const authMiddleware = async (req, res, next) => {
     
     next();
   } catch (err) {
+    console.error("Authentication Error:", err);
     res.status(401).json({ message: "Invalid or expired token" });
   }
 };

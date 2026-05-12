@@ -75,6 +75,7 @@ export const deleteAddress = async (req, res) => {
 
     res.json({ message: "Address deleted successfully" });
   } catch (error) {
+    console.error("Delete Address Error:", error);
     res.status(500).json({ message: "Failed to delete address" });
   }
 };

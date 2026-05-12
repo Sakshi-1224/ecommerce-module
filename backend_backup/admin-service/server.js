@@ -4,12 +4,12 @@ import cookieParser from "cookie-parser";
 import sequelize, { connectDB } from "./config/db.js";
 import adminRoutes from "./routes/admin.routes.js";
 
-import Admin from "./models/Admin.js";
+
 
 dotenv.config();
 
 const app = express();
-
+app.disable("x-powered-by");
 app.use(express.json());
 app.use(cookieParser());
 

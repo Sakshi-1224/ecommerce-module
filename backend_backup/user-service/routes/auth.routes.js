@@ -7,10 +7,10 @@ import {
   changePassword,
   updateProfile,
   getUserByPhoneAdmin,
+  getAllUsers
 } from "../controllers/auth.controller.js";
 import authMiddleware from "../middleware/auth.middleware.js";
 import { admin } from "../middleware/admin.middleware.js";
-import { getAllUsers } from "../controllers/auth.controller.js";
 import upload from "../middleware/uploadMiddleware.js";
 const router = express.Router();
 

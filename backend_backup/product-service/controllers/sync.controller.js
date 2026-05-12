@@ -2,7 +2,6 @@ import { z } from "zod";
 import Product from "../models/Product.js";
 import sequelize from "../config/db.js";
 
-
 const syncPayloadSchema = z.object({
   items: z.array(z.object({
     productId: z.number().int().positive(),
@@ -11,7 +10,6 @@ const syncPayloadSchema = z.object({
 });
 
 export const reserveStock = async (req, res) => {
-
   const parseResult = syncPayloadSchema.safeParse(req.body);
   if (!parseResult.success) {
     return res.status(400).json({ message: "Invalid payload", errors: parseResult.error.errors });
@@ -63,7 +61,6 @@ export const releaseStock = async (req, res) => {
         if (product.reservedStock < 0) product.reservedStock = 0;
 
         product.availableStock = product.totalStock - product.reservedStock;
-
         await product.save({ transaction: t });
       }
     }
@@ -103,43 +100,48 @@ export const releaseStockafterreturn = async (req, res) => {
   }
 };
 
+// --- HELPER FUNCTIONS FOR shipStock ---
+
+const validateAndFetchProduct = async (item, t) => {
+  const product = await Product.findByPk(item.productId, { transaction: t });
+  
+  if (!product) throw new Error(`Product ID ${item.productId} not found`);
+  
+  if (product.warehouseStock < item.quantity) {
+    throw new Error(`Cannot Ship: Insufficient Warehouse Stock for '${product.name}'`);
+  }
+  
+  return product;
+};
+
+const processProductShipment = async (product, quantity, t) => {
+  // FIX: Using Math.max replaces 3 separate if statements
+  product.warehouseStock = Math.max(0, product.warehouseStock - quantity);
+  product.totalStock = Math.max(0, product.totalStock - quantity);
+  product.reservedStock = Math.max(0, product.reservedStock - quantity);
+  product.availableStock = product.totalStock - product.reservedStock;
+  
+  await product.save({ transaction: t });
+};
+
+// --------------------------------------
+
 export const shipStock = async (req, res) => {
   const t = await sequelize.transaction();
 
   try {
     const { items } = req.body;
+    const validatedProducts = [];
 
+    // Phase 1: Validate all items and cache the fetched products
     for (const item of items) {
-      const product = await Product.findByPk(item.productId, {
-        transaction: t,
-      });
-      if (!product) throw new Error(`Product ID ${item.productId} not found`);
-
-      if (product.warehouseStock < item.quantity) {
-        throw new Error(
-          `Cannot Ship: Insufficient Warehouse Stock for '${product.name}'`
-        );
-      }
+      const product = await validateAndFetchProduct(item, t);
+      validatedProducts.push({ product, quantity: item.quantity });
     }
 
-    for (const item of items) {
-      const product = await Product.findByPk(item.productId, {
-        transaction: t,
-      });
-
-      if (product) {
-        product.warehouseStock -= item.quantity;
-        product.totalStock -= item.quantity;
-        product.reservedStock -= item.quantity;
-
-        if (product.reservedStock < 0) product.reservedStock = 0;
-        if (product.totalStock < 0) product.totalStock = 0;
-        if (product.warehouseStock < 0) product.warehouseStock = 0;
-
-        product.availableStock = product.totalStock - product.reservedStock;
-
-        await product.save({ transaction: t });
-      }
+    // Phase 2: Update the cached products (no second DB fetch required!)
+    for (const { product, quantity } of validatedProducts) {
+      await processProductShipment(product, quantity, t);
     }
 
     await t.commit();
@@ -164,7 +166,6 @@ export const restockInventory = async (req, res) => {
       if (product) {
         product.warehouseStock += item.quantity;
         product.totalStock += item.quantity;
-
         await product.save({ transaction: t });
       }
     }

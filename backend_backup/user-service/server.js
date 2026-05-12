@@ -10,11 +10,16 @@ import addressRoutes from "./routes/address.routes.js";
 dotenv.config();
 
 const app = express();
-
+app.disable("x-powered-by");
 app.use(express.json());
 app.use(cookieParser()); 
 
-const csrfProtection = csrf({ cookie: true });
+const csrfProtection = csrf({cookie: {
+    // FIX: Conditionally set 'secure' to true in production (HTTPS)
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true, // Prevents client-side JS from reading the cookie
+    sameSite: "lax" // Protects against cross-site request forgery
+  }});
 
 const mobileCsrfBypass = (req, res, next) => {
   if (req.headers["x-app-client"] === "mobile") {
@@ -47,14 +52,14 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 5001;
-sequelize
-  .sync()
-  .then(() => {
-    console.log("User DB connected");
-    app.listen(PORT, () => {
-      console.log(`User Service running on port ${PORT}`);
-    });
-  })
-  .catch((err) => {
-    console.error("DB connection failed:", err.message);
+
+try {
+  await sequelize.sync();
+  console.log("User DB connected");
+  
+  app.listen(PORT, () => {
+    console.log(`User Service running on port ${PORT}`);
   });
+} catch (err) {
+  console.error("DB connection failed:", err.message);
+}

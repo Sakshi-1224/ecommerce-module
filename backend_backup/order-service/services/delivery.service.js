@@ -1,26 +1,41 @@
-import ShippingRate from "../models/ShippingRate.js";
 import DeliveryBoy from "../models/DeliveryBoy.js";
 import DeliveryAssignment from "../models/DeliveryAssignment.js";
 import { Op } from "sequelize";
 
-
-export const autoAssignDeliveryBoy = async (orderId, area, transaction, reason = null) => {
+export const autoAssignDeliveryBoy = async (
+  orderId,
+  area,
+  transaction,
+  reason = null,
+) => {
   try {
     const existingAssignment = await DeliveryAssignment.findOne({
-      
       where: { orderId, status: { [Op.ne]: "FAILED" }, reason: reason },
       transaction,
     });
 
     if (existingAssignment) {
-      const boy = await DeliveryBoy.findByPk(existingAssignment.deliveryBoyId, { transaction });
+      const boy = await DeliveryBoy.findByPk(existingAssignment.deliveryBoyId, {
+        transaction,
+      });
       return { success: true, boy, message: "Already Assigned" };
     }
 
-    const allBoys = await DeliveryBoy.findAll({ where: { active: true }, transaction });
-    const validBoys = allBoys.filter((boy) => boy.assignedAreas && boy.assignedAreas.includes(area));
+    const allBoys = await DeliveryBoy.findAll({
+      where: { active: true },
+      transaction,
+    });
 
-    if (validBoys.length === 0) return { success: false, message: `No delivery boy found for area: ${area}` };
+    const validBoys = allBoys.filter((boy) =>
+      boy.assignedAreas?.includes(area),
+    );
+
+    if (validBoys.length === 0) {
+      return {
+        success: false,
+        message: `No delivery boy found for area: ${area}`,
+      };
+    }
 
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
@@ -49,13 +64,18 @@ export const autoAssignDeliveryBoy = async (orderId, area, transaction, reason =
     if (!bestBoy) return { success: false, message: `All boys fully booked` };
 
     await DeliveryAssignment.create(
-     
-      { orderId, deliveryBoyId: bestBoy.id, status: "ASSIGNED", reason: reason },
+      {
+        orderId,
+        deliveryBoyId: bestBoy.id,
+        status: "ASSIGNED",
+        reason: reason,
+      },
       { transaction },
     );
 
     return { success: true, boy: bestBoy, message: "Assigned Successfully" };
   } catch (err) {
+    console.error("Auto-assign delivery boy error:", err);
     return { success: false, message: "Internal Error" };
   }
 };

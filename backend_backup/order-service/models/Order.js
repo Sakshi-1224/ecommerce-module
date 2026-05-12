@@ -16,7 +16,7 @@ const Order = sequelize.define(
 
     shippingCharge: { 
         type: DataTypes.FLOAT, 
-        defaultValue: 0.0, 
+        defaultValue: 0, 
         allowNull: false 
     },
 

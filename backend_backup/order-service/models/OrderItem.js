@@ -1,6 +1,5 @@
 import { DataTypes } from "sequelize";
 import sequelize from "../config/db.js";
-import Order from "./Order.js";
 
 const OrderItem = sequelize.define("OrderItem", {
   id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
@@ -16,7 +15,7 @@ const OrderItem = sequelize.define("OrderItem", {
       "DELIVERED",
       "OUT_FOR_DELIVERY",
       "CANCELLED",
-      "RETURNED"
+      "RETURNED",
     ),
     defaultValue: "PENDING",
   },
@@ -31,7 +30,7 @@ const OrderItem = sequelize.define("OrderItem", {
       "CANCELLED",
       "RETURNED",
       "CREDITED",
-      "COMPLETED"
+      "COMPLETED",
     ),
     defaultValue: "NONE",
   },
@@ -39,20 +38,23 @@ const OrderItem = sequelize.define("OrderItem", {
   returnReason: { type: DataTypes.STRING, allowNull: true },
 
   refundMethod: {
-      type: DataTypes.ENUM("ORIGINAL_SOURCE", "BANK_TRANSFER", "WAREHOUSE_COLLECT"),
-      allowNull: true,
-    },
+    type: DataTypes.ENUM(
+      "ORIGINAL_SOURCE",
+      "BANK_TRANSFER",
+      "WAREHOUSE_COLLECT",
+    ),
+    allowNull: true,
+  },
 
-    bankDetails: {
-      type: DataTypes.JSON, 
-      allowNull: true,
-    },
+  bankDetails: {
+    type: DataTypes.JSON,
+    allowNull: true,
+  },
 
-    returnDropMethod: {
-      type: DataTypes.ENUM("DELIVERY_BOY", "WAREHOUSE_DROP"),
-      allowNull: true,
-    },
-
+  returnDropMethod: {
+    type: DataTypes.ENUM("DELIVERY_BOY", "WAREHOUSE_DROP"),
+    allowNull: true,
+  },
 });
 
 export default OrderItem;

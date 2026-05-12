@@ -9,11 +9,16 @@ import adminVendorRoutes from "./routes/admin.vendor.routes.js";
 dotenv.config();
 
 const app = express();
-
+app.disable("x-powered-by");
 app.use(express.json());
 app.use(cookieParser());
 
-const csrfProtection = csrf({ cookie: true });
+const csrfProtection = csrf({ cookie: {
+    // FIX: Conditionally set 'secure' to true in production (HTTPS)
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true, // Prevents client-side JS from reading the cookie
+    sameSite: "lax" // Protects against cross-site request forgery
+  } });
 
 app.get("/api/vendor/csrf-token", csrfProtection, (req, res) => {
   res.json({ csrfToken: req.csrfToken() });
@@ -37,15 +42,16 @@ app.use((err, req, res, next) => {
 
 const port = process.env.PORT;
 
-sequelize
-  .sync()
-  .then(() => {
-    console.log("Vendor DB connected");
 
-    app.listen(port, () => {
-      console.log(`Vendor Service running on port ${port}`);
-    });
-  })
-  .catch((err) => {
-    console.error("Vendor DB connection failed:", err);
+try{
+  await sequelize.sync();
+  console.log("Vendor DB connected");
+  app.listen(port, () => {
+    console.log(`Vendor Service running on port ${port}`);
   });
+}
+catch(err) {
+    console.error("Vendor DB connection failed:", err);
+  };
+
+

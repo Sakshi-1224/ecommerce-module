@@ -1,3 +1,9 @@
 node_modules/
+coverage/
+.sonar/
+.scannerwork/
 .env
+sonar-project.properties
+dist/
+build/
 .env.*

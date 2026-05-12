@@ -92,6 +92,7 @@ export const updateQuantity = async (req, res) => {
       const response = await axios.get(`${PRODUCT_SERVICE_URL}/${item.productId}`, axiosConfig);
       product = response.data;
     } catch (error) {
+      console.error("Unable to verify stock at this time:", error.message);
       return res.status(503).json({ message: "Unable to verify stock at this time." });
     }
     

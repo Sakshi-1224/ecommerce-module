@@ -27,6 +27,7 @@ const authDeliveryBoy = async (req, res, next) => {
     req.user = verified;
     next();
   } catch (err) {
+    console.error("Delivery Boy Auth Error:", err.message);
     res.status(400).json({ message: "Invalid Token" });
   }
 };

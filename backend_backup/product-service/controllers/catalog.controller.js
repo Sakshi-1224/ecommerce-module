@@ -1,9 +1,6 @@
 import Product from "../models/Product.js";
 import Category from "../models/Category.js";
-import { uploadImageToMinio } from "../utils/uploadToMinio.js";
 import { Op } from "sequelize";
-import sequelize from "../config/db.js";
-import redis from "../config/redis.js"; 
 import { fetchWithCache } from "../utils/redisWrapper.js";
 import { z } from "zod";
 
@@ -13,8 +10,8 @@ const catalogQuerySchema = z.object({
   sort: z.enum(["price_low", "price_high", "newest"]).default("newest"),
   minPrice: z.coerce.number().min(0).optional(),
   maxPrice: z.coerce.number().min(0).optional(),
-  limit: z.coerce.number().min(1).max(100).default(50), 
-  page: z.coerce.number().min(1).default(1)
+  limit: z.coerce.number().min(1).max(100).default(50),
+  page: z.coerce.number().min(1).default(1),
 });
 
 export const getProductsBatch = async (req, res) => {
@@ -22,7 +19,9 @@ export const getProductsBatch = async (req, res) => {
     const { ids } = req.query;
     if (!ids) return res.json([]);
 
-    const idArray = ids.split(",").map((id) => parseInt(id));
+    // FIX: Used Number.parseInt with radix 10
+    const idArray = ids.split(",").map((id) => Number.parseInt(id, 10));
+
     if (idArray.length === 0) return res.json([]);
 
     const cacheKey = `products:batch:${ids}`;
@@ -52,13 +51,15 @@ export const getProductsBatch = async (req, res) => {
 export const getProducts = async (req, res) => {
   try {
     const parseResult = catalogQuerySchema.safeParse(req.query);
+
     if (!parseResult.success) {
       return res.status(400).json({ message: "Invalid query parameters" });
     }
 
-    const { category, sort, search, minPrice, maxPrice, limit, page } = parseResult.data;
-    
-    const cacheKey = `products:search:${category || 'all'}:${sort}:${search || ''}:${minPrice || 0}:${maxPrice || 'max'}:${limit}:${page}`;
+    const { category, sort, search, minPrice, maxPrice, limit, page } =
+      parseResult.data;
+
+    const cacheKey = `products:search:${category || "all"}:${sort}:${search || ""}:${minPrice || 0}:${maxPrice || "max"}:${limit}:${page}`;
 
     const products = await fetchWithCache(cacheKey, 60, async () => {
       let whereCondition = {};
@@ -77,12 +78,13 @@ export const getProducts = async (req, res) => {
       }
 
       let orderCondition = [["createdAt", "DESC"]];
+
       if (sort === "price_low") orderCondition = [["price", "ASC"]];
       if (sort === "price_high") orderCondition = [["price", "DESC"]];
 
       const offset = (page - 1) * limit;
 
-      return await Product.findAndCountAll({ 
+      return await Product.findAndCountAll({
         where: whereCondition,
         include: [
           {
@@ -90,10 +92,10 @@ export const getProducts = async (req, res) => {
             attributes: ["name"],
             where:
               category && category !== "all" ? { name: category } : undefined,
-            required:
-              category && category !== "all" && category !== "All"
-                ? true
-                : false,
+            // FIX: Removed unnecessary boolean literals ternary
+            required: Boolean(
+              category && category !== "all" && category !== "All",
+            ),
           },
         ],
         order: orderCondition,
@@ -124,6 +126,8 @@ export const getSingleProduct = async (req, res) => {
 
     res.json(product);
   } catch (error) {
+    // FIX: Handled the exception by logging it
+    console.error("Fetch Single Product Error:", error.message);
     res.status(500).json({ message: "Failed to fetch product" });
   }
 };
@@ -138,6 +142,8 @@ export const getAllCategories = async (req, res) => {
 
     res.json(categories);
   } catch (err) {
+    // FIX: Handled the exception by logging it
+    console.error("Fetch Categories Error:", err.message);
     res.status(500).json({ message: "Failed to fetch categories" });
   }
 };

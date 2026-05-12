@@ -38,7 +38,7 @@ export const adminLogin = async (req, res) => {
 
     if (redis.status === "ready") {
       const attempts = await redis.get(attemptsKey);
-      if (attempts && parseInt(attempts) >= 5) {
+      if (attempts && Number.parseInt(attempts, 10) >= 5) {
         return res.status(429).json({
           message: "Too many failed attempts. Account locked for 10 minutes.",
         });

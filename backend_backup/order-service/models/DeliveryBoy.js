@@ -1,6 +1,6 @@
 import { DataTypes } from "sequelize";
 import sequelize from "../config/db.js";
-import DeliveryAssignment from "./DeliveryAssignment.js";
+
 import bcrypt from "bcryptjs";
 const DeliveryBoy = sequelize.define("DeliveryBoy", {
   id: {

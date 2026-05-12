@@ -4,7 +4,7 @@ import redis from "../config/redis.js";
 const authMiddleware = async (req, res, next) => {
   const authHeader = req.headers.authorization;
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  if (!authHeader?.startsWith("Bearer ")) {
     return res.status(401).json({ message: "Invalid or missing Authorization header format" });
   }
 
@@ -32,6 +32,7 @@ const authMiddleware = async (req, res, next) => {
     
     next();
   } catch (err) {
+    console.error("Authentication Error:", err.message);
     res.status(401).json({ message: "Invalid token" });
   }
 };

@@ -13,7 +13,7 @@ const addressSchema = z.object({
   city: z.string().trim().optional(),
   pincode: z.string().trim().optional(),
   phone: z.string().trim().optional(),
-}).passthrough();
+});
 
 const validStatuses = ["PENDING", "PROCESSING", "PACKED", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"];
 

@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-import crypto from "crypto";
+import crypto from "node:crypto";
 dotenv.config();
 
 const internalAuth = (req, res, next) => {
@@ -22,6 +22,7 @@ const internalAuth = (req, res, next) => {
     req.isInternal = true; 
     next();
   } catch (err) {
+    console.error("Internal Auth Error:", err);
     return res.status(403).json({ message: "Forbidden. Token validation error." });
   }
 };
